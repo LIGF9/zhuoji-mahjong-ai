@@ -132,7 +132,8 @@ function buildCraftedState() {
   st.players[2].hand_tiles = [4, 5, 6, 15, 16, 17, 23, 24, 25, 26];
   st.players[2].ting_tiles = [];
   st.players[2].ting_types = [];
-  st.players[2].melds = [{ type: 3, label: "补杠", tile: 25, src: 2, ji: null }];
+  st.players[2].melds = [{ type: 3, label: "补杠", tile: 25, src: 2, ji: null },
+                         { type: 1, label: "碰", tile: 12, src: 1, ji: "横鸡" }];
   st.players[2].discards = [1];
   st.players[2].discard_tags = ["冲锋鸡"];
   st.players[2].hand_count = 10;
@@ -226,10 +227,61 @@ setTimeout(() => {
     const perpOk =
       w.document.querySelectorAll('.seat-left .melds .meld .mc:not(.rot):not(.rotr) img').length >= 1 &&
       w.document.querySelectorAll('.seat-right .melds .meld .mc:not(.rot):not(.rotr) img').length >= 1;
-    console.log(`构造态 流局+听牌 | 副露组=${meldCount}(应 5) 总览 ${r.ok ? 'OK' : 'FAIL'} | ${r.msgs.join(' | ') || '全部正确'}`);
+    // 横置牌必须位于组内「靠近来源玩家」的一端（指向来源）：
+    //   我/上家面板为正向（上家→组首、下家→组尾）；右家/对家面板屏幕镜像 → 组首尾对调；
+    //   结算总览一律按正向口径（与用户确认过的结算渲染一致）
+    const hengPosBad = [];
+    const expectHengIdx = (seat, src, n, mirror) => {
+      const r = ((src - seat) % 4 + 4) % 4, mid = n === 4 ? 2 : 1;
+      if (mirror) return r === 2 ? mid : (r === 3 ? n - 1 : 0);
+      return r === 3 ? 0 : r === 2 ? mid : n - 1;
+    };
+    const checkHeng = (rootSel, seat, mirror, rotStyled) => {
+      const root = rootSel === '#me-melds' ? w.document.getElementById('me-melds')
+                                           : w.document.querySelector(rootSel);
+      if (!root) return;
+      const meldEls = root.querySelectorAll('.meld');
+      const melds = st.players[seat].melds || [];
+      melds.forEach((m, i) => {
+        const hasHeng = m.type === 2 || (m.ji && m.type !== 4);
+        if (!hasHeng || !meldEls[i]) return;
+        const cells = Array.from(meldEls[i].querySelectorAll('.mc'));
+        const hIdx = cells.findIndex(c => rotStyled
+          ? !/(^|\s)rot/.test(c.className)          // 左右家：横置牌=组内无旋转竖牌
+          : /(^|\s)heng/.test(c.className));        // 我/对家/总览：横置牌=带 heng 类
+        const want = expectHengIdx(seat, m.src, cells.length, mirror);
+        if (hIdx !== want) hengPosBad.push(`${rootSel} meld${i}: got ${hIdx} want ${want}`);
+      });
+    };
+    checkHeng('#me-melds', 0, false, false);
+    checkHeng('.seat-right .melds', 1, true, true);
+    checkHeng('.seat-top .melds', 2, true, false);
+    checkHeng('.seat-left .melds', 3, false, true);
+    // 总览逐玩家（root=该 ovcard 的 .ovmelds，一律正向口径）
+    w.document.querySelectorAll('#res-pairs .ovcard').forEach((card, rel) => {
+      const seat = ((st.my_seat + rel) % 4 + 4) % 4;
+      const root = card.querySelector('.ovmelds');
+      if (!root) return;
+      const meldEls = root.querySelectorAll('.meld');
+      (st.players[seat].melds || []).forEach((m, i) => {
+        const hasHeng = m.type === 2 || (m.ji && m.type !== 4);
+        if (!hasHeng || !meldEls[i]) return;
+        const cells = Array.from(meldEls[i].querySelectorAll('.mc'));
+        const hIdx = cells.findIndex(c => /(^|\s)heng/.test(c.className));
+        const want = expectHengIdx(seat, m.src, cells.length, false);
+        if (hIdx !== want) hengPosBad.push(`ovcard rel${rel} meld${i}: got ${hIdx} want ${want}`);
+      });
+    });
+    const hengPosOk = hengPosBad.length === 0;
+    // 新摸进的牌不加黄色描边框（只保留投影）
+    const noGoldRing = /\.tile-mine\.newdraw\s*\{[^}]*\}/.test(html) &&
+      !/\.tile-mine\.newdraw\s*\{[^}]*232,184,75/.test(html);
+    console.log(`构造态 流局+听牌 | 副露组=${meldCount}(应 6) 总览 ${r.ok ? 'OK' : 'FAIL'} | ${r.msgs.join(' | ') || '全部正确'}`);
     console.log(`   结算顶部信息条: "${jb}" ${jbOk ? 'OK' : 'FAIL'}｜旧小字已移除 ${noSub ? 'OK' : 'FAIL'}`);
     console.log(`   对局中碰鸡小标已移除 ${chipOk ? 'OK' : `FAIL ${JSON.stringify(chips)}`}｜总览无小标=${ovChips === 0} ${ovChips === 0 ? 'OK' : 'FAIL'}｜左右家横置垂直=${perpOk ? 'OK' : 'FAIL'}`);
-    if (r.ok && meldCount === 5 && jbOk && noSub && chipOk && ovChips === 0 && perpOk) ok++; else bad++;
+    console.log(`   横置牌指向来源（对局面板/各座位+总览位置）${hengPosOk ? 'OK' : `FAIL ${hengPosBad.join('; ')}`}`);
+    console.log(`   新摸牌无黄色描边框 ${noGoldRing ? 'OK' : 'FAIL'}`);
+    if (r.ok && meldCount === 6 && jbOk && noSub && chipOk && ovChips === 0 && perpOk && hengPosOk && noGoldRing) ok++; else bad++;
   } catch (e) {
     bad++;
     console.log(`构造态 | RENDER THREW: ${String(e.stack).split('\n').slice(0, 7).join('\n    ')}`);

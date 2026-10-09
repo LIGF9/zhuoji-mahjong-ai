@@ -223,9 +223,10 @@ body {
 
 /* ============ 我的手牌 ============ */
 #hand { display: flex; align-items: flex-end; }
-/* 刚摸进的牌单独摆在手牌右侧，与现有手牌隔开一段（不插入排序位置） */
+/* 刚摸进的牌单独摆在手牌右侧，与现有手牌隔开一段（不插入排序位置）；
+   仅保留投影（不加黄色描边框） */
 #hand .drawsep { flex: 0 0 var(--draw-gap, 26px); align-self: stretch; pointer-events: none; }
-.tile-mine.newdraw { border-radius: 6px; box-shadow: 0 0 0 1px rgba(232,184,75,.5), 0 3px 12px rgba(0,0,0,.55); }
+.tile-mine.newdraw { border-radius: 6px; box-shadow: 0 3px 12px rgba(0,0,0,.55); }
 .tile-mine { position: relative; flex: 0 0 auto; width: var(--tile-w); height: var(--tile-h); transition: transform .1s; cursor: pointer; }
 .tile-mine img { width: 100%; height: 100%; display: block; border-radius: 6px; pointer-events: none; }
 .tile-mine.sel { transform: translateY(-26px); }   /* 上浮 1/4 牌高（推荐用指示器标注，不加框） */
@@ -465,6 +466,8 @@ table.res td img.tin { height: 24px; vertical-align: middle; border-radius: 2px;
 .setgroup .gbody select { width: 100%; min-width: 0; padding: 6px 8px; }
 .setgroup.disabled .gbody { opacity: .38; }
 .setgroup.disabled .gbody * { pointer-events: none; }
+/* 嵌套功能块（如「推荐自动上浮」嵌在「显示大师推荐」内）：与普通行留出间隔 */
+.setgroup .gbody .setgroup { margin: 5px 0 7px; }
 /* 开关控件（checkbox 换皮） */
 .switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto;
   width: 42px; height: 23px; border-radius: 12px; margin: 0; cursor: pointer;
@@ -496,8 +499,9 @@ table.res td img.tin { height: 24px; vertical-align: middle; border-radius: 2px;
   border: 1px solid rgba(232,184,75,.35); background: rgba(232,184,75,.10); color: #cfe0c4;
 }
 .numrow .chip:hover { background: rgba(232,184,75,.24); color: #f3ead6; }
-/* 玩家行：角色 / 名字输入 / 头像选择 */
-.plgrid { display: grid; grid-template-columns: 42px 1fr 124px; gap: 7px 10px; align-items: center; }
+/* 玩家行：角色 / 名字输入 / 头像选择 —— 三列固定宽度并整体居中（宽屏下名字框不再被拉得过宽） */
+.plgrid { display: grid; grid-template-columns: 42px 220px 124px; gap: 7px 10px;
+  align-items: center; justify-content: center; }
 .plgrid .who { font-size: 12px; color: #b9c9ae; }
 .plgrid input[type="text"], .plgrid select {
   font-family: inherit; background: #0e2c1a; color: #f3ead6; font-size: 13px;
@@ -787,6 +791,35 @@ table.res td img.tin { height: 24px; vertical-align: middle; border-radius: 2px;
         <section data-pane="play">
     <h4 class="setsec">出牌与推荐<span class="sechint">开关决定功能是否启用；关闭后其时间设置自动置灰</span></h4>
 
+    <div class="setgroup" id="grp-timeout">
+      <label class="ghead">
+        <span class="lbl">超时自动操作<span class="tip">轮到你后超过设定时间仍未操作，则自动执行（优先推荐；无推荐时按安全兜底）</span></span>
+        <input type="checkbox" id="set-timeouton" class="switch">
+      </label>
+      <div class="gbody">
+        <div class="setrow">
+          <div class="lbl">超时时间<span class="tip">轮到你后 N 秒自动操作；0=立即。可直接填任意秒数</span></div>
+          <div class="numrow">
+            <input id="set-timeout" type="number" min="0" max="600" step="0.5" value="15" list="dl-timeout">
+            <span class="unit">秒</span>
+            <span class="chips">
+              <button type="button" class="chip" data-for="set-timeout" data-v="0.5">立即</button>
+              <button type="button" class="chip" data-for="set-timeout" data-v="3">3</button>
+              <button type="button" class="chip" data-for="set-timeout" data-v="8">8</button>
+              <button type="button" class="chip" data-for="set-timeout" data-v="15">15</button>
+              <button type="button" class="chip" data-for="set-timeout" data-v="30">30</button>
+            </span>
+            <datalist id="dl-timeout">
+              <option value="0"></option><option value="1"></option><option value="3"></option>
+              <option value="8"></option><option value="12"></option><option value="15"></option>
+              <option value="20"></option><option value="30"></option><option value="45"></option>
+              <option value="60"></option>
+            </datalist>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="setgroup" id="grp-hint">
       <label class="ghead">
         <span class="lbl">显示大师推荐<span class="tip">轮到你时计算推荐出牌与操作建议</span></span>
@@ -822,62 +855,33 @@ table.res td img.tin { height: 24px; vertical-align: middle; border-radius: 2px;
             <option value="1">显示一行推荐原因</option>
           </select>
         </div>
-      </div>
-    </div>
-
-    <div class="setgroup" id="grp-timeout">
-      <label class="ghead">
-        <span class="lbl">超时自动操作<span class="tip">轮到你后超过设定时间仍未操作，则自动执行（优先推荐；无推荐时按安全兜底）</span></span>
-        <input type="checkbox" id="set-timeouton" class="switch">
-      </label>
-      <div class="gbody">
-        <div class="setrow">
-          <div class="lbl">超时时间<span class="tip">轮到你后 N 秒自动操作；0=立即。可直接填任意秒数</span></div>
-          <div class="numrow">
-            <input id="set-timeout" type="number" min="0" max="600" step="0.5" value="15" list="dl-timeout">
-            <span class="unit">秒</span>
-            <span class="chips">
-              <button type="button" class="chip" data-for="set-timeout" data-v="0.5">立即</button>
-              <button type="button" class="chip" data-for="set-timeout" data-v="3">3</button>
-              <button type="button" class="chip" data-for="set-timeout" data-v="8">8</button>
-              <button type="button" class="chip" data-for="set-timeout" data-v="15">15</button>
-              <button type="button" class="chip" data-for="set-timeout" data-v="30">30</button>
-            </span>
-            <datalist id="dl-timeout">
-              <option value="0"></option><option value="1"></option><option value="3"></option>
-              <option value="8"></option><option value="12"></option><option value="15"></option>
-              <option value="20"></option><option value="30"></option><option value="45"></option>
-              <option value="60"></option>
-            </datalist>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="setgroup" id="grp-float">
-      <label class="ghead">
-        <span class="lbl">推荐自动上浮<span class="tip">到设定时点自动把推荐打出的牌浮起，便于直接确认；需先开启「显示大师推荐」</span></span>
-        <input type="checkbox" id="set-floaton" class="switch">
-      </label>
-      <div class="gbody">
-        <div class="setrow">
-          <div class="lbl">上浮时机<span class="tip">-1=立即（拿到推荐就浮起）；0=自动（取超时时间的一半）；&gt;0=指定秒数。可直接填</span></div>
-          <div class="numrow">
-            <input id="set-floatat" type="number" min="-1" max="600" step="0.5" value="0" list="dl-floatat">
-            <span class="unit">秒</span>
-            <span class="chips">
-              <button type="button" class="chip" data-for="set-floatat" data-v="-1">立即</button>
-              <button type="button" class="chip" data-for="set-floatat" data-v="0">自动</button>
-              <button type="button" class="chip" data-for="set-floatat" data-v="3">3</button>
-              <button type="button" class="chip" data-for="set-floatat" data-v="5">5</button>
-              <button type="button" class="chip" data-for="set-floatat" data-v="10">10</button>
-            </span>
-            <datalist id="dl-floatat">
-              <option value="-1"></option><option value="0"></option><option value="1"></option>
-              <option value="3"></option><option value="5"></option><option value="8"></option>
-              <option value="10"></option><option value="15"></option><option value="20"></option>
-              <option value="30"></option>
-            </datalist>
+        <!-- 自动上浮是推荐的衍生功能，嵌在推荐块内（推荐关闭时随整块一起灰掉） -->
+        <div class="setgroup" id="grp-float">
+          <label class="ghead">
+            <span class="lbl">推荐自动上浮<span class="tip">到设定时点自动把推荐打出的牌浮起，便于直接确认；需先开启「显示大师推荐」</span></span>
+            <input type="checkbox" id="set-floaton" class="switch">
+          </label>
+          <div class="gbody">
+            <div class="setrow">
+              <div class="lbl">上浮时机<span class="tip">-1=立即（拿到推荐就浮起）；0=自动（取超时时间的一半）；&gt;0=指定秒数。可直接填</span></div>
+              <div class="numrow">
+                <input id="set-floatat" type="number" min="-1" max="600" step="0.5" value="0" list="dl-floatat">
+                <span class="unit">秒</span>
+                <span class="chips">
+                  <button type="button" class="chip" data-for="set-floatat" data-v="-1">立即</button>
+                  <button type="button" class="chip" data-for="set-floatat" data-v="0">自动</button>
+                  <button type="button" class="chip" data-for="set-floatat" data-v="3">3</button>
+                  <button type="button" class="chip" data-for="set-floatat" data-v="5">5</button>
+                  <button type="button" class="chip" data-for="set-floatat" data-v="10">10</button>
+                </span>
+                <datalist id="dl-floatat">
+                  <option value="-1"></option><option value="0"></option><option value="1"></option>
+                  <option value="3"></option><option value="5"></option><option value="8"></option>
+                  <option value="10"></option><option value="15"></option><option value="20"></option>
+                  <option value="30"></option>
+                </datalist>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1716,20 +1720,23 @@ function ovMeldCaption(m, ownerSeat, nameOfSeat) {
 }
 /* 座位的牌格旋转类：左家 rot（底朝左）、右家 rot rotr（底朝右）、我/对家无 */
 const SEAT_ROT = { 1: " rot rotr", 3: " rot" };
-/* 副露格子化：rc 为座位旋转类；type2/3 的横置杠牌在我/对家侧用 rot（底对齐），左右家侧与组内同向 */
-function meldCells(m, rc, ownerSeat) {
+/* 副露格子化：rc 为座位旋转类；type2/3 的横置杠牌在我/对家侧用 rot（底对齐），左右家侧与组内同向。
+   mirror=该座位面板在屏幕上是「镜像」显示（右家竖列、对家横行的组首都画在屏幕左/上），
+   横置牌位置需反转，使横牌始终位于组内靠近来源玩家的一端（指向来源）。 */
+function meldCells(m, rc, ownerSeat, mirror) {
   const c = (src, extra = "") =>
     `<span class="mc${rc || ""}${extra}"><img src="${src}" alt=""></span>`;
   const normal = tileImg(m.tile);
   // 被碰/杠走的冲锋鸡/横鸡：用专用牌面（冲.png/横.png）；普通幺鸡/翻鸡鸡牌用普通牌面
   const jiSrc = jiTileImg(m);
   const isJi = !!m.ji;                 // 该副露吃进的是鸡牌（冲锋鸡/横鸡/幺鸡/翻鸡）
-  // 横置牌位置 = 来源玩家（src）相对 owner 的方位：上家→最左、对家→居中、下家→最右
-  // （碰 3 张：居中=1、最右=2；杠 4 张：居中=2、最右=3）
+  // 横置牌位置 = 来源玩家（src）相对 owner 的方位：上家→组首、对家→居中、下家→组尾；
+  // 镜像座位（右家/对家的对局面板）组首尾在屏幕上对调 → 反转，让横牌指向来源玩家。
   const srcPos = (n) => {
     const mid = n === 4 ? 2 : 1;
     if (ownerSeat == null || !Number.isInteger(m.src)) return mid;
     const r = ((m.src - ownerSeat) % 4 + 4) % 4;   // 1=下家 2=对家 3=上家
+    if (mirror) return r === 2 ? mid : (r === 3 ? n - 1 : 0);
     return r === 3 ? 0 : r === 2 ? mid : n - 1;
   };
   if (m.type === 1) {
@@ -1763,10 +1770,10 @@ function meldCells(m, rc, ownerSeat) {
   }
   return c(MELD_BACK) + c(normal) + c(normal) + c(MELD_BACK);
 }
-function meldHTML(m, rc, ownerSeat) {
-  // 不加「点碰者」小标：横置牌的垂直方向 + 组内位置（上家→组首、对家→居中、
-  // 下家→组尾）已能指示来源；总览另有文字说明（结算页副露说明列）
-  return `<div class="meld">${meldCells(m, rc, ownerSeat)}</div>`;
+function meldHTML(m, rc, ownerSeat, mirror) {
+  // 不加「点碰者」小标：横置牌的垂直方向 + 组内位置（指向来源玩家的一端）已能指示来源；
+  // 总览另有文字说明（结算页副露说明列）
+  return `<div class="meld">${meldCells(m, rc, ownerSeat, mirror)}</div>`;
 }
 function renderOpp(rel, p, st) {
   const box = seatEl(rel);
@@ -1787,7 +1794,9 @@ function renderOpp(rel, p, st) {
     fan = Array.from({ length: p.hand_count }, back).join("");
   }
   fan += `<span class="mc${rc} ghost"></span>`.repeat(Math.max(0, slots - p.hand_count));
-  const melds = p.melds.map(m => meldHTML(m, rc, p.seat)).join("");
+  // 右家/对家的面板在屏幕上是镜像显示（组首画在屏幕上/左端）→ 横置牌位置需反转，
+  // 使横牌始终位于组内靠近来源玩家的一端（左家与我方为正向，无需镜像）
+  const melds = p.melds.map(m => meldHTML(m, rc, p.seat, rel === 1 || rel === 2)).join("");
   const cls = "player seat-" + ["", "right", "top", "left"][rel] +
     (st.turn === p.seat && !st.over ? " active" : "");
   if (box.className !== cls) box.className = cls;
