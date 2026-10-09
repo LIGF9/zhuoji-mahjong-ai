@@ -22,12 +22,29 @@
 * 脚本只把 token 用于 GitHub API 与本次 push，不落盘、不回显。
 
 Token 需要的最小权限（classic）：``repo``；若只想建公开仓库，``public_repo`` 即可。
+
+网络受限时的 SSH 回退
+---------------------
+部分网络会**单独屏蔽 ``github.com:443``**（但 ``api.github.com:443``、
+``github.com:22`` 正常，表现为 API 通、push 卡死/超时）。此时 ``--via auto``
+（默认）会先探测 443，不通则自动改走 SSH：
+
+    python scripts/publish_to_github.py --token-file .gh_token \\
+        --repo zhuoji-mahjong-ai --public --skip-commit
+
+SSH 需要一把已注册到仓库的**部署密钥**（write 权限即可，不碰账号其它仓库）：
+
+    ssh-keygen -t ed25519 -N "" -f ~/.ssh/zhuoji_deploy
+    # 再用 token 调 POST /repos/{owner}/{repo}/keys 注册公钥
+
+密钥路径可用 ``--ssh-key`` 指定，默认 ``~/.ssh/zhuoji_deploy``。
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import urllib.error
@@ -36,11 +53,43 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 API = "https://api.github.com"
+DEFAULT_SSH_KEY = "~/.ssh/zhuoji_deploy"
 
 
 def run(args: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(args, cwd=str(ROOT), text=True,
                           capture_output=True, **kw)
+
+
+def tcp_ok(host: str, port: int, timeout: float = 5.0) -> bool:
+    """探测 host:port 的 TCP 可达性（用于判断 github.com:443 是否被屏蔽）。"""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def ssh_command(key_path: str) -> str:
+    return (f'ssh -i "{key_path}" -o IdentitiesOnly=yes '
+            f'-o StrictHostKeyChecking=accept-new -o ConnectTimeout=20')
+
+
+def push_via_ssh(owner: str, repo: str, branch: str, key_path: str) -> subprocess.CompletedProcess:
+    """用部署密钥走 SSH 推送（先普通推，失败再 --force-with-lease，最后 --force）。"""
+    ssh_url = f"git@github.com:{owner}/{repo}.git"
+    env = os.environ.copy()
+    env["GIT_SSH_COMMAND"] = ssh_command(key_path)
+    ref = f"{branch}:{branch}"
+    result = run(["git", "push", ssh_url, ref], env=env)
+    if result.returncode == 0:
+        return result
+    print("      普通推送被拒，尝试 --force-with-lease ...")
+    result2 = run(["git", "push", "--force-with-lease", ssh_url, ref], env=env)
+    if result2.returncode == 0:
+        return result2
+    print("      仍被拒，改用 --force（会覆盖远端历史，请确认远端无他人提交）")
+    return run(["git", "push", "--force", ssh_url, ref], env=env)
 
 
 def api(path: str, token: str, method: str = "GET", payload: dict | None = None):
@@ -97,6 +146,10 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--skip-commit", action="store_true",
                     help="跳过自动提交（已提交过时用）")
+    ap.add_argument("--via", choices=("auto", "https", "ssh"), default="auto",
+                    help="推送通道：auto=探测 443，不通则走 SSH（默认）")
+    ap.add_argument("--ssh-key", default=DEFAULT_SSH_KEY,
+                    help=f"SSH 部署密钥路径（默认 {DEFAULT_SSH_KEY}）")
     args = ap.parse_args()
 
     priv = not args.public
@@ -172,7 +225,31 @@ def main() -> int:
 
     # ---- 5. 推送（token 只出现在本次进程参数里，不写进 .git/config）------
     auth_url = clone_url.replace("https://", f"https://{login}:{token}@")
+    ssh_url = f"git@github.com:{owner}/{args.repo}.git"
     run(["git", "remote", "remove", "origin"])
+
+    use_ssh = args.via == "ssh"
+    if args.via == "auto":
+        if tcp_ok("github.com", 443):
+            print("[5/5] github.com:443 可达 → 走 HTTPS")
+        else:
+            print("[5/5] github.com:443 不可达（常见于网络屏蔽）→ 改走 SSH")
+            use_ssh = True
+
+    if use_ssh:
+        key_path = str(Path(args.ssh_key).expanduser())
+        if not Path(key_path).is_file():
+            sys.exit(f"找不到 SSH 密钥：{key_path}")
+        run(["git", "remote", "add", "origin", ssh_url])
+        print(f"      正在用 {key_path} 推送 {args.branch} → {owner}/{args.repo} ...")
+        push = push_via_ssh(owner, args.repo, args.branch, key_path)
+        if push.returncode != 0:
+            sys.exit(f"SSH 推送失败：\n{push.stdout}\n{push.stderr}")
+        run(["git", "branch", f"--set-upstream-to=origin/{args.branch}", args.branch])
+        print(f"\n完成 → {html_url}")
+        print("提示：token 未参与推送，也未写入 .git/config（remote 为 SSH 地址）。")
+        return 0
+
     run(["git", "remote", "add", "origin", clone_url])      # 干净地址
 
     print(f"[5/5] 正在推送 {args.branch} → {owner}/{args.repo} ...")
@@ -185,6 +262,17 @@ def main() -> int:
              "merge remote initial history", "FETCH_HEAD"])
         push = run(["git", "push", auth_url, f"{args.branch}:{args.branch}", "--force"])
     if push.returncode != 0:
+        if Path(str(Path(args.ssh_key).expanduser())).is_file():
+            print("      HTTPS 推送失败，回退到 SSH ...")
+            run(["git", "remote", "remove", "origin"])
+            run(["git", "remote", "add", "origin", ssh_url])
+            push = push_via_ssh(owner, args.repo, args.branch,
+                                str(Path(args.ssh_key).expanduser()))
+            if push.returncode == 0:
+                run(["git", "branch", f"--set-upstream-to=origin/{args.branch}", args.branch])
+                print(f"\n完成 → {html_url}")
+                print("提示：本次经 SSH 推送，token 未写入 .git/config。")
+                return 0
         sys.exit(f"推送失败：\n{push.stdout}\n{push.stderr}")
 
     run(["git", "branch", f"--set-upstream-to=origin/{args.branch}", args.branch])
