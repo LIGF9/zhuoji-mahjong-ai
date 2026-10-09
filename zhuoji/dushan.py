@@ -7,8 +7,11 @@
   （pair[a][b] = c[a] − c[b]）；未叫牌玩家鸡数无效，且要包鸡包杠。
 * **鸡的来源**：
   - 手中/副露幺鸡每只 1 分（金鸡时幺鸡 ×2）；
-  - 打出的鸡：冲锋鸡 +3（自己第一张打出的鸡牌）、横鸡 +2（全场第一张鸡
-    且非冲锋鸡）、幺鸡 +1；
+  - 打出的鸡：冲锋鸡 +3（自己第一张打出的鸡牌）、横鸡 +2（该鸡牌种全场第一张非
+    冲锋鸡，**以及该种横鸡轮内的跟打**，见下）、幺鸡 +1；
+  - **横鸡按牌种独立成轮且可同轮跟打**：某牌种首张非冲锋鸡开轮即横鸡；轮内其他家
+    跟打同种鸡也记横鸡；开轮者（或轮内已吃过横鸡者）再次出牌即收口，其后该种鸡
+    一律按幺鸡计；
   - 被碰/杠走的冲锋鸡/横鸡：分数归属碰/杠者，但只由打出者单向赔付
     （责任鸡，只在两人之间有效）；
   - 自摸胡牌 +3 鸡；热炮（杠后第一张被胡）+5 鸡；
@@ -207,12 +210,15 @@ class DushanGame(ZhuojiGame):
         self.baojiao = [False] * 4              # 报叫标记
         self.first_discard_done = [False] * 4   # 是否已打过第一张牌
         self.hengji_opened = False              # 全场第一张鸡（横鸡）是否已出现
-        self.hengji_active = False              # 兼容旧字段（教程口径无横鸡轮，恒 False）
-        self.hengji_starter: int | None = None
+        self.hengji_starter: int | None = None  # 本局第一个开出横鸡轮的玩家
         self.ji_events: list[tuple[int, float, str]] = []   # (打出者, 基础分, 类型名)
         # 横鸡按鸡牌种独立成轮（2026-10-08 用户口径：幺鸡与开局翻鸡种各算各的，
-        # 互不影响）：_hengji_done[牌种] = 该种鸡的全场横鸡已出现
+        # 互不影响）：_hengji_done[牌种] = 该种鸡的横鸡已出现（本局不再开新轮）。
         self._hengji_done: set[int] = set()
+        # 正在开放中的「横鸡轮」（2026-10-09 用户口径：横鸡可以同轮跟打）：
+        #   _hengji_rounds[牌种] = {"start": 开轮者, "seats": 轮内已吃横鸡的玩家集合}
+        # 轮内任何玩家跟打同种鸡都算横鸡；开轮者或轮内已打过者再次出牌 → 该轮收口。
+        self._hengji_rounds: dict[int, dict] = {}
         self._ji_tag_of_last = ["幺鸡"] * 4     # 各家最近一次打出的鸡牌类型名
         # ((玩家, 牌), 被碰/杠鸡的类型名) —— 存类型名而非分值，分值改由配置换算
         self._ji_val_by_meld: dict[tuple[int, int], str] = {}
@@ -228,6 +234,39 @@ class DushanGame(ZhuojiGame):
         self._any_discard = False               # 天胡判定用
         self.ji_tiles: set[int] = {YAOJI}       # 本局的鸡牌种（幺鸡 + 开局翻鸡新增）
         self.kaiju_flip: int | None = None      # 开局翻出的鸡牌指示牌（None=未启用）
+
+    # -- 横鸡轮（只读派生） --------------------------------------------------
+    @property
+    def hengji_active(self) -> bool:
+        """是否有任一种鸡牌正处于「横鸡轮」内（该种鸡此时跟打也算横鸡）。"""
+        return bool(self._hengji_rounds)
+
+    @property
+    def hengji_species(self) -> list[int]:
+        """当前仍开放横鸡轮的鸡牌种（升序）。"""
+        return sorted(self._hengji_rounds)
+
+    def ji_name_if_discarded(self, p: int, tile: int) -> str:
+        """玩家 ``p`` 现在打出 ``tile`` 会记成什么鸡牌：冲锋鸡/横鸡/幺鸡。
+
+        与 :meth:`_step_discard` 的判定同源，供 UI/教练提示复用（不改动状态）。
+        """
+        if tile not in self.ji_tiles:
+            return ""
+        if not self.first_discard_done[p]:
+            return "冲锋鸡"
+        if tile in self._hengji_done:
+            rnd = self._hengji_rounds.get(tile)
+            return "横鸡" if (rnd is not None and p not in rnd["seats"]) else "幺鸡"
+        return "横鸡"
+
+    def _close_hengji_rounds(self, p: int) -> None:
+        """弃牌前收口：开轮者或轮内已吃横鸡者再次出牌 → 该种横鸡轮结束。
+
+        与本次打出的牌无关（旧版实现口径），所以「收口那一手」打出的鸡牌按普通鸡计。
+        """
+        for sp in [s for s, r in self._hengji_rounds.items() if p in r["seats"]]:
+            del self._hengji_rounds[sp]
 
     def _start(self, dealer: int | None) -> None:  # noqa: D102
         # 独山状态必须先于基类初始化：_enter_self_phase 会用到报叫锁定
@@ -396,20 +435,31 @@ class DushanGame(ZhuojiGame):
         self.discards[p].append(t)
         self._any_discard = True
 
-        # 鸡牌判定（教程口径 + 2026-10-08 分种轮）：
+        # 横鸡轮收口：开轮者 / 轮内已吃横鸡者再次出牌 → 该种轮结束（与本次牌无关）
+        self._close_hengji_rounds(p)
+
+        # 鸡牌判定（教程口径 + 2026-10-08 分种轮 + 2026-10-09 同轮跟打）：
         #   冲锋鸡 = 自己打出的第一张牌，若为鸡牌（按其鸡牌种记账，每家最多一次）；
-        #   横鸡 = 该鸡牌种全场第一张且非冲锋鸡（**每种鸡牌独立成轮**：幺鸡的
-        #   横鸡出现后，开局翻鸡种的首张全场鸡仍可成横鸡，互不影响）；
+        #   横鸡   = 该鸡牌种全场第一张非冲锋鸡，**以及该种「横鸡轮」内其他家跟打的同种鸡牌**
+        #            （每种鸡独立成轮：幺鸡的轮不影响开局翻鸡种；一轮收口后该种再打即普通鸡）；
         #   其余为幺鸡（普通鸡）。
         if t in self.ji_tiles:
             if not self.first_discard_done[p]:
                 tag = "冲锋鸡"
-            elif t not in self._hengji_done:
-                self._hengji_done.add(t)
-                self.hengji_opened = True
-                tag = "横鸡"
+            elif t in self._hengji_done:
+                # 该种横鸡已出现过：轮内跟打仍算横鸡，轮已收口则按普通鸡
+                tag = "横鸡" if t in self._hengji_rounds else "幺鸡"
             else:
-                tag = "幺鸡"
+                self._hengji_done.add(t)
+                self._hengji_rounds[t] = {"start": p, "seats": {p}}
+                if not self.hengji_opened:
+                    self.hengji_opened = True
+                    self.hengji_starter = p
+                tag = "横鸡"
+            # 轮内参与者登记（含轮内打出的冲锋鸡）：该家再次出牌即触发收口
+            rnd = self._hengji_rounds.get(t)
+            if rnd is not None:
+                rnd["seats"].add(p)
             val = self.ji_value(tag)
             self.ji_events.append((p, val, tag))
             self._ji_tag_of_last[p] = tag

@@ -179,21 +179,24 @@ def test_chicken_discard_events():
     assert g.ji_events[-1] == (0, JI_CHONGFENG, "冲锋鸡")
     assert not g.hengji_opened
 
-    # 玩家 1 先打非鸡牌（首张用掉），再打 1条 → 全场第一张鸡且非冲锋鸡 → 横鸡
+    # 玩家 1 先打非鸡牌（首张用掉），再打 1条 → 全场第一张鸡且非冲锋鸡 → 横鸡开轮
     discard(1, tile_from(W, 2))
     discard(1, YAOJI)
     assert g.ji_events[-1] == (1, JI_HENG, "横鸡")
-    assert g.hengji_opened and not g.hengji_active   # 教程口径：无横鸡轮
+    assert g.hengji_opened and g.hengji_active          # 横鸡轮已开启（可同轮跟打）
+    assert g.hengji_species == [YAOJI]
 
-    # 玩家 2 首张打 1条 → 冲锋鸡优先于横鸡
+    # 玩家 2 首张打 1条 → 冲锋鸡优先于横鸡（该手也算本轮参与）
     discard(2, YAOJI)
     assert g.ji_events[-1] == (2, JI_CHONGFENG, "冲锋鸡")
+    assert g.hengji_active
 
-    # 玩家 2 再打 1条 → 幺鸡
+    # 玩家 2 再次出牌 → 已在本轮内 → 该轮收口，此手按普通鸡计
     discard(2, YAOJI)
     assert g.ji_events[-1] == (2, JI_YAO, "幺鸡")
+    assert not g.hengji_active
 
-    # 玩家 1 再打 1条 → 幺鸡（横鸡全场只一只）
+    # 玩家 1（开轮者）再打 1条 → 本种横鸡已开且轮已收口 → 普通鸡
     discard(1, YAOJI)
     assert g.ji_events[-1] == (1, JI_YAO, "幺鸡")
     print("ok 鸡事件")
@@ -874,7 +877,7 @@ def test_passport_per_tile():
 
 
 def test_chicken_species_hengji():
-    """分鸡种横鸡轮：幺鸡种与翻鸡种的横鸡各自独立，互不影响。"""
+    """分鸡种横鸡轮：幺鸡种与翻鸡种的横鸡各自独立，互不影响（轮内跟打算横鸡）。"""
     g = new_game()
     g.ji_tiles = {YAOJI, tile_from(B, 5)}     # 模拟开局翻鸡新增鸡种 5筒
     for p in range(4):
@@ -893,22 +896,78 @@ def test_chicken_species_hengji():
     # p0 首张打幺鸡 → 冲锋鸡（幺鸡种）
     discard(0, YAOJI)
     assert g.ji_events[-1] == (0, JI_CHONGFENG, "冲锋鸡")
-    # p1 首张打非鸡，再打 5筒（翻鸡种）→ 5筒种的横鸡
+    # p1 首张打非鸡，再打 5筒（翻鸡种）→ 5筒种的横鸡（开 5筒轮）
     discard(1, tile_from(T, 2))
     discard(1, tile_from(B, 5))
     assert g.ji_events[-1] == (1, JI_HENG, "横鸡")
+    assert g.hengji_species == [tile_from(B, 5)]
     # p2 首张打非鸡，再打幺鸡 → 幺鸡种的横鸡（分种轮：5筒开过横鸡不影响幺鸡种）
     discard(2, tile_from(B, 2))
     discard(2, YAOJI)
     assert g.ji_events[-1] == (2, JI_HENG, "横鸡")
-    # p3 首张打非鸡，再打 5筒 → 5筒种横鸡已开 → 普通幺鸡
+    assert g.hengji_species == sorted([tile_from(B, 5), YAOJI])
+    # p3 首张打非鸡，再打 5筒 → 仍在 5筒轮内跟打 → 横鸡
     discard(3, tile_from(W, 2))
     discard(3, tile_from(B, 5))
-    assert g.ji_events[-1] == (3, JI_YAO, "幺鸡")
-    # p0 再打幺鸡 → 幺鸡种横鸡已开 → 普通幺鸡
+    assert g.ji_events[-1] == (3, JI_HENG, "横鸡")
+    # p0 打幺鸡 → 仍在幺鸡轮内（p0 此前打的是冲锋鸡，未开轮）→ 横鸡
     discard(0, YAOJI)
-    assert g.ji_events[-1] == (0, JI_YAO, "幺鸡")
-    print("ok 分鸡种横鸡轮（每张鸡牌独立成轮）")
+    assert g.ji_events[-1] == (0, JI_HENG, "横鸡")
+    # p2（幺鸡轮开轮者）再出牌 → 两轮分别收口（p2 也曾在 5筒轮…未参与，只收幺鸡轮）
+    discard(2, tile_from(W, 2))
+    assert g.hengji_species == [tile_from(B, 5)] and g.hengji_active
+    # 轮外再打幺鸡 → 普通鸡
+    discard(2, YAOJI)
+    assert g.ji_events[-1] == (2, JI_YAO, "幺鸡")
+    # p3（5筒轮参与者）再出牌 → 5筒轮收口，此手打 5筒 按普通鸡计
+    discard(3, tile_from(B, 5))
+    assert g.ji_events[-1] == (3, JI_YAO, "幺鸡")
+    assert not g.hengji_active and g.hengji_opened
+    print("ok 分鸡种横鸡轮（每张鸡牌独立成轮，轮内跟打算横鸡）")
+
+
+def test_hengji_follow_discard():
+    """横鸡轮跟打（2026-10-09 用户口径）：轮内其他家跟打同种鸡同样记横鸡。"""
+    g = new_game()
+    g.ji_tiles = {YAOJI}
+    for p in range(4):
+        g.hands[p] = [0] * 27
+        for i, r in enumerate((2, 3, 4, 5, 6, 7)):
+            g.hands[p][tile_from((p + i) % 3, r)] += 1
+        g.hands[p][YAOJI] += 2
+
+    def discard(p, tile):
+        g.current = p
+        g.phase = Phase.DISCARD
+        g.step(Action("discard", tile))
+
+    def last(p):
+        assert g.ji_events and g.ji_events[-1][0] == p, g.ji_events[-3:]
+        return g.ji_events[-1][2]
+
+    # p0 首张非鸡（用掉首张），再打幺鸡 → 开轮，横鸡
+    discard(0, tile_from(T, 2))
+    discard(0, YAOJI)
+    assert last(0) == "横鸡" and g.hengji_active
+    # p1 首张非鸡 → 跟打幺鸡 → 横鸡（旧口径会误记普通鸡）
+    discard(1, tile_from(T, 3))
+    discard(1, YAOJI)
+    assert last(1) == "横鸡"
+    # p2 首张非鸡 → 跟打幺鸡 → 横鸡
+    discard(2, tile_from(T, 4))
+    discard(2, YAOJI)
+    assert last(2) == "横鸡"
+    # p1 已在本轮吃过横鸡，再次出牌 → 收口；此手打幺鸡按普通鸡计
+    discard(1, YAOJI)
+    assert last(1) == "幺鸡" and not g.hengji_active
+    # 轮外：p3 先打非鸡（用掉首张），再打幺鸡 → 普通鸡
+    discard(3, tile_from(T, 5))
+    discard(3, YAOJI)
+    assert last(3) == "幺鸡"
+    # 同一牌种本局不再开新轮：p0 再打幺鸡 → 普通鸡
+    discard(0, YAOJI)
+    assert last(0) == "幺鸡"
+    print("ok 横鸡轮同轮跟打（跟打算横鸡、收口后算普通鸡）")
 
 
 def test_ting_info_drop_winner():
@@ -1264,6 +1323,7 @@ if __name__ == "__main__":
     test_repao()
     test_chicken_discard_events()
     test_chicken_species_hengji()
+    test_hengji_follow_discard()
     test_ting_info_drop_winner()
     test_baojiao_auto()
     test_tsumo_payment()

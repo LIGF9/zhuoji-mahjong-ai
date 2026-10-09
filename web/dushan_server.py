@@ -964,6 +964,8 @@ class Session:
             "repao": bool(game.repao_discard),
             "hengji_active": bool(game.hengji_active),
             "hengji_opened": bool(game.hengji_opened),
+            # 正处于横鸡轮内的鸡牌种（轮内跟打同种鸡也算横鸡，前端提示芯片用）
+            "hengji_species": [int(t) for t in game.hengji_species],
             # 本局鸡牌种（幺鸡 + 开局翻鸡新增）与开局翻出的指示牌，前端显示与手牌标记
             "ji_tiles": sorted(int(t) for t in game.ji_tiles),
             "kaiju_flip": int(game.kaiju_flip) if game.kaiju_flip is not None else None,

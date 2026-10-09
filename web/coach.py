@@ -57,13 +57,12 @@ def _hand_ji(game: DushanGame, me: int) -> int:
     return sum(game.hands[me][t] for t in game.ji_tiles)
 
 
-def _ji_name_of_discard(game: DushanGame, me: int) -> str | None:
-    """这张鸡牌按引擎口径打出后会成为什么：冲锋鸡/横鸡/幺鸡。"""
-    if not game.first_discard_done[me]:
-        return "冲锋鸡"
-    if not game.hengji_opened:
-        return "横鸡"
-    return "幺鸡"
+def _ji_name_of_discard(game: DushanGame, me: int, tile: int) -> str | None:
+    """这张鸡牌按引擎口径打出后会成为什么：冲锋鸡/横鸡/幺鸡。
+
+    与引擎同源（``game.ji_name_if_discarded``）：横鸡轮内跟打同种鸡也算横鸡。
+    """
+    return game.ji_name_if_discarded(me, tile) or None
 
 
 def _winning_line(game: DushanGame, me: int, hand13: list[int]) -> str:
@@ -254,7 +253,7 @@ def explain_action_full(game: DushanGame, me: int, a: Action) -> dict:
 
     if t in game.ji_tiles:
         tags.append("鸡分")
-        name = _ji_name_of_discard(game, me)
+        name = _ji_name_of_discard(game, me, t)
         if name == "冲锋鸡":
             lines.append(f"【鸡分】首张打鸡＝冲锋鸡：终局对其他每家 +{JI_CHONGFENG:g}；"
                          f"若被碰/杠走，那张牌归对方（面 3/4 张），你另赔溢价 "
@@ -281,7 +280,7 @@ def explain_action_full(game: DushanGame, me: int, a: Action) -> dict:
 
     # 未听牌时打冲锋/横鸡会被包鸡
     if t in game.ji_tiles and not winning_tiles(h2, game.melds[me]):
-        name = _ji_name_of_discard(game, me)
+        name = _ji_name_of_discard(game, me, t)
         if name in ("冲锋鸡", "横鸡"):
             lines.append(f"【警告】你未听牌，打出的{name}终局要包鸡（赔其他每家）")
 

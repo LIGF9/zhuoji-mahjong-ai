@@ -334,7 +334,7 @@ hr { border: none; border-top: 1px solid var(--line); margin: 34px 0; }
 </tr>
 <tr>
 <td><strong>横鸡</strong></td>
-<td>该<strong>鸡牌种</strong>全场<strong>第一次被打出</strong>的鸡牌（且不是冲锋鸡）</td>
+<td>该<strong>鸡牌种</strong>全场<strong>第一次被打出</strong>的鸡牌（且不是冲锋鸡），<strong>以及该种「横鸡轮」内其他家跟打的同种鸡牌</strong></td>
 <td><strong>+2</strong></td>
 </tr>
 <tr>
@@ -353,6 +353,21 @@ hr { border: none; border-top: 1px solid var(--line); margin: 34px 0; }
 <li><strong>冲锋鸡不占用该牌种的横鸡名额。</strong> 甲第一张打幺鸡（冲锋鸡）之后，
    乙之后再打出幺鸡仍然可以拿幺鸡种的横鸡。</li>
 </ol>
+<h4>7.3.1 横鸡轮：可以同轮跟打（2026-10-09 口径）</h4>
+<p>某牌种的第一张非冲锋鸡打出时，<strong>该牌种开出一个「横鸡轮」</strong>：</p>
+<ul>
+<li><strong>轮内跟打也算横鸡</strong>：轮内其他家打出同种鸡牌，同样记 <strong>横鸡 +2</strong>（不是普通鸡 +1）。
+  例：甲打出幺鸡开轮（横鸡）；乙、丙先后跟打幺鸡 → 三家都是横鸡。</li>
+<li><strong>轮怎么收口</strong>：<strong>开轮者</strong>（或<strong>已在轮内打过同种鸡牌的人</strong>）<strong>再次出牌</strong>时，该轮结束。
+  收口那一手打出的鸡牌按<strong>普通鸡 +1</strong> 计；此后该种鸡牌一律按普通鸡计，<strong>本局不再开新轮</strong>。</li>
+<li><strong>按牌种各算各的</strong>：幺鸡轮收口不影响 5筒（翻鸡种）轮，反之亦然。</li>
+<li>轮内出现的<strong>冲锋鸡</strong>仍按冲锋鸡 +3 计（不降级），但该家的下一次出牌同样会触发该轮收口。</li>
+</ul>
+<blockquote>
+<p>引擎字段：<code>_hengji_done</code>（该种横鸡是否已出现）、<code>_hengji_rounds</code>（正在开放的轮：
+开轮者 + 轮内参与者）、派生只读量 <code>hengji_active</code> / <code>hengji_species</code>
+（快照下发，网页状态栏显示「🐔横鸡轮（跟打 X 算横鸡）」）。</p>
+</blockquote>
 <h3>7.4 责任鸡：被人碰/杠走的鸡牌</h3>
 <p>如果甲打出的<strong>鸡牌</strong>（冲锋鸡/横鸡/普通鸡都算）被乙<strong>碰</strong>或<strong>明杠</strong>：</p>
 <ul>
@@ -603,7 +618,7 @@ hr { border: none; border-top: 1px solid var(--line); margin: 34px 0; }
 <td>3（打出即计）</td>
 </tr>
 <tr>
-<td>横鸡（该牌种全场第一张被打出）</td>
+<td>横鸡（该牌种全场第一张被打出，或该种横鸡轮内跟打）</td>
 <td>2（打出即计）</td>
 </tr>
 <tr>
@@ -868,8 +883,8 @@ hr { border: none; border-top: 1px solid var(--line); margin: 34px 0; }
 <tr>
 <td>横鸡</td>
 <td>「全场第一张鸡牌」</td>
-<td><strong>按牌种独立成轮</strong>，每种鸡各有一轮</td>
-<td><code>_hengji_done</code></td>
+<td><strong>按牌种独立成轮 + 轮内跟打算横鸡</strong>，轮由开轮者再次出牌收口</td>
+<td><code>_hengji_done</code> / <code>_hengji_rounds</code></td>
 </tr>
 <tr>
 <td>冲锋鸡与横鸡</td>
@@ -1101,7 +1116,7 @@ hr { border: none; border-top: 1px solid var(--line); margin: 34px 0; }
 <tr>
 <td>横鸡</td>
 <td><code>JI_HENG</code></td>
-<td>某鸡牌种全场第一张被打出，+2</td>
+<td>某鸡牌种全场第一张被打出（+2）；该种横鸡轮内其他家跟打的同种鸡牌同样记横鸡</td>
 </tr>
 <tr>
 <td>责任鸡</td>

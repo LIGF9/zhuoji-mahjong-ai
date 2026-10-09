@@ -1437,7 +1437,11 @@ function updateCenter(st) {
   // 牌局结束印记：本局结束常显，下一局开始隐藏
   el("end-stamp").classList.toggle("hidden", !st.over);
   const warns = [];
-  if (st.hengji_active) warns.push("🐔横鸡轮");
+  // 横鸡轮：轮内跟打同种鸡也算横鸡，标出是哪几种鸡正处于轮内
+  if (st.hengji_active) {
+    const sp = (st.hengji_species || []).map(t => (TILES[t] || {}).cn || "").filter(Boolean);
+    warns.push("🐔横鸡轮" + (sp.length ? `（跟打 ${sp.join("、")} 算横鸡）` : ""));
+  }
   if (st.repao && !st.over) warns.push("🔥热炮");
   // 开局翻鸡：显示翻出的指示牌与本局新增鸡牌
   const kj = el("kaiju-info");
