@@ -54,6 +54,10 @@ web/static/assets/font/
 # === UI 视觉快照（体积大且可由 tests/ui_visual_snap.py 重新生成）===
 reports/ui_snaps/
 
+# === 网页运行时状态（每打一局就追加，不适合入库）===
+# 服务端会自动创建该目录与文件，删除无影响（/api/history、/api/stats 有 exists 容错）
+web/history/
+
 # === 凭据（绝不能进仓库）===
 .gh_token
 *.token
