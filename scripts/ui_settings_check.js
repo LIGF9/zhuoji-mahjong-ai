@@ -38,6 +38,8 @@ setTimeout(() => {
   // ---- S2：设置面板控件齐备 ----
   const ids = ['set-end-baoji', 'set-end-baogang', 'set-huang-baoji', 'set-huang-baogang',
     'set-huang-baodapai', 'set-strategy', 'set-timeout', 'set-hintdelay', 'set-briefreason',
+    'set-hinton', 'set-timeouton', 'set-floaton',
+    'grp-hint', 'grp-timeout', 'grp-float',
     'set-jiesuan-fanji', 'set-kaiju-fanji', 'set-mantiangji', 'set-nav', 'set-panes',
     'sp-name-0', 'sp-name-1', 'sp-name-2', 'sp-name-3', 'sp-ava-0', 'sp-ava-3',
     'pl-name-0', 'pl-ava-3', 'sc-zimo'];
@@ -322,6 +324,52 @@ setTimeout(() => {
   el('set-hintdelay').value = '0';
   el('btn-set-close').click();
   w.eval('SET.floatAt = 0; SET.timeout = 15; SET.hintDelay = 0; saveSet();');
+
+  // ---- S19：功能开关与时间设置分离（关闭功能 → 其时间设置置灰禁用） ----
+  el('btn-settings').click();
+  const fire = id => el(id).dispatchEvent(new w.Event('change', { bubbles: true }));
+  const grayed = id => el(id).disabled === true;
+  el('set-hinton').checked = false; fire('set-hinton');
+  check('S19 关「显示大师推荐」→ 策略/延迟/理由置灰',
+    grayed('set-strategy') && grayed('set-hintdelay') && grayed('set-briefreason')
+    && el('grp-hint').classList.contains('disabled'),
+    `strategy=${el('set-strategy').disabled} delay=${el('set-hintdelay').disabled} reason=${el('set-briefreason').disabled}`);
+  check('S19b 推荐总开关关闭时「自动上浮」整块禁用',
+    grayed('set-floaton') && el('grp-float').classList.contains('disabled'), '');
+  el('set-hinton').checked = true; fire('set-hinton');
+  check('S19c 重开推荐后参数恢复可用',
+    !grayed('set-strategy') && !grayed('set-hintdelay') && !grayed('set-floaton')
+    && !el('grp-hint').classList.contains('disabled'), '');
+  el('set-timeouton').checked = false; fire('set-timeouton');
+  check('S19d 关「超时自动操作」→ 超时时间置灰',
+    grayed('set-timeout') && el('grp-timeout').classList.contains('disabled'), '');
+  check('S19e 置灰时时间值仍保留（不因关闭被清零）',
+    el('set-timeout').value === '15', `值=${el('set-timeout').value}`);
+  el('set-floaton').checked = false; fire('set-floaton');
+  check('S19f 关「自动上浮」→ 上浮时机置灰',
+    grayed('set-floatat') && el('grp-float').classList.contains('disabled'), '');
+  el('btn-set-close').click();
+  check('S19g 开关与时间分开持久化',
+    w.localStorage.getItem('dushan_hinton') === '1'
+    && w.localStorage.getItem('dushan_timeouton') === '0'
+    && w.localStorage.getItem('dushan_floaton') === '0'
+    && w.localStorage.getItem('dushan_timeout') === '15',
+    `on=${w.localStorage.getItem('dushan_hinton')}/${w.localStorage.getItem('dushan_timeouton')}/${w.localStorage.getItem('dushan_floaton')} t=${w.localStorage.getItem('dushan_timeout')}`);
+  check('S19h 关闭后功能真的停用（SET 三态）',
+    w.eval('SET.hintOn') === true && w.eval('SET.timeoutOn') === false
+    && w.eval('SET.floatOn') === false,
+    `hint=${w.eval('SET.hintOn')} timeout=${w.eval('SET.timeoutOn')} float=${w.eval('SET.floatOn')}`);
+  el('btn-settings').click();
+  el('set-hinton').checked = true; fire('set-hinton');
+  el('set-timeouton').checked = true; fire('set-timeouton');
+  el('set-floaton').checked = true; fire('set-floaton');
+  el('btn-set-close').click();
+  check('S19i 恢复开关后参数重新可用',
+    w.eval('SET.hintOn && SET.timeoutOn && SET.floatOn') === true
+    && !el('set-timeout').disabled && !el('set-floatat').disabled, '');
+  // 旧配置迁移：timeout=0 且无独立开关键 → 关开关并把时间回落 15 秒
+  check('S19j 旧配置(timeout=0)迁移为「关闭 + 15 秒」',
+    /_timeoutLegacyOff/.test(html) && /dushan_timeouton/.test(html), '');
 
   const bad = results.filter(x => !x).length;
   console.log(`\nwindow errors: ${errs.length}${errs.length ? '\n' + errs.slice(0, 3).join('\n') : ''}`);

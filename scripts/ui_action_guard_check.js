@@ -44,7 +44,7 @@ const check = (name, ok, extra = '') => { results.push(ok); console.log(`${name}
 
 (async () => {
   await sleep(1500);                        // 等 boot
-  w.eval('SID = "e2e-guard"; SET.timeout = 0; SET.hintDelay = 0');
+  w.eval('SID = "e2e-guard"; SET.timeoutOn = false; SET.hintDelay = 0');
 
   // 构造「轮到我在响应阶段（可碰/过）」的决策点
   const st = JSON.parse(JSON.stringify(mid0));

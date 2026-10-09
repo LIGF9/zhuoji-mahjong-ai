@@ -447,6 +447,36 @@ table.res td img.tin { height: 24px; vertical-align: middle; border-radius: 2px;
   margin: 16px 0 9px; padding-bottom: 6px; border-bottom: 1px solid rgba(232,184,75,.28); }
 .modal h4.setsec:first-of-type { margin-top: 6px; }
 .modal h4.setsec .sechint { font-size: 11px; color: #8fa284; letter-spacing: 0; }
+/* 功能块：一个开关 + 其参数。关闭开关 → 该块参数置灰并禁用（视觉 + disabled 双保险） */
+.setgroup { border: 1px solid rgba(232,184,75,.20); border-radius: 11px;
+  padding: 2px 12px 4px; margin: 0 0 10px; background: rgba(255,255,255,.028); }
+.setgroup .ghead { display: flex; justify-content: space-between; align-items: center;
+  gap: 14px; padding: 10px 2px 9px; cursor: pointer; }
+.setgroup .ghead .lbl { color: #e7dfc6; font-size: 13.5px; }
+.setgroup .ghead .tip { display: block; font-size: 11px; color: #8fa284;
+  margin-top: 2px; line-height: 1.4; }
+.setgroup .gbody { border-top: 1px solid rgba(232,184,75,.14); padding-top: 2px;
+  transition: opacity .18s; }
+.setgroup .gbody .setrow { display: flex; flex-direction: column; align-items: stretch;
+  gap: 5px; padding: 8px 2px; font-size: 13px;
+  border-bottom: 1px solid rgba(255,255,255,.06); }
+.setgroup .gbody .setrow:last-of-type { border-bottom: none; }
+.setgroup .gbody .tip { margin-top: 0; }
+.setgroup .gbody select { width: 100%; min-width: 0; padding: 6px 8px; }
+.setgroup.disabled .gbody { opacity: .38; }
+.setgroup.disabled .gbody * { pointer-events: none; }
+/* 开关控件（checkbox 换皮） */
+.switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto;
+  width: 42px; height: 23px; border-radius: 12px; margin: 0; cursor: pointer;
+  background: #22301f; border: 1px solid rgba(232,184,75,.35); position: relative;
+  transition: background .18s, border-color .18s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px;
+  width: 17px; height: 17px; border-radius: 50%; background: #7e8d74;
+  transition: transform .18s, background .18s; }
+.switch:checked { background: rgba(29,158,117,.5); border-color: rgba(93,202,165,.8); }
+.switch:checked::after { transform: translateX(19px); background: #eafff5; }
+.switch:disabled { opacity: .38; cursor: not-allowed; }
+.switch:focus-visible { outline: 2px solid rgba(93,202,165,.7); outline-offset: 2px; }
 /* 两栏设置区：每格 = 标签 + 控件（纵向） */
 .setgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; }
 .setgrid .setrow { display: flex; flex-direction: column; align-items: stretch; gap: 5px;
@@ -715,77 +745,101 @@ table.res td img.tin { height: 24px; vertical-align: middle; border-radius: 2px;
         </section>
 
         <section data-pane="play">
-    <h4 class="setsec">出牌与推荐</h4>
-    <div class="setgrid">
-      <div class="setrow">
-        <div class="lbl">推荐策略<span class="tip">轮到你时按此策略计算推荐出牌</span></div>
-        <select id="set-strategy"></select>
-      </div>
-      <div class="setrow">
-        <div class="lbl">推荐出现时间<span class="tip">轮到你后延迟 N 秒才显示推荐（0=立即）；可直接填任意秒数</span></div>
-        <div class="numrow">
-          <input id="set-hintdelay" type="number" min="0" max="600" step="0.5" value="0" list="dl-hintdelay">
-          <span class="unit">秒</span>
-          <span class="chips">
-            <button type="button" class="chip" data-for="set-hintdelay" data-v="0">立即</button>
-            <button type="button" class="chip" data-for="set-hintdelay" data-v="3">3</button>
-            <button type="button" class="chip" data-for="set-hintdelay" data-v="5">5</button>
-            <button type="button" class="chip" data-for="set-hintdelay" data-v="10">10</button>
-          </span>
-          <datalist id="dl-hintdelay">
-            <option value="0"></option><option value="2"></option><option value="3"></option>
-            <option value="5"></option><option value="8"></option><option value="10"></option>
-            <option value="15"></option>
-          </datalist>
+    <h4 class="setsec">出牌与推荐<span class="sechint">开关决定功能是否启用；关闭后其时间设置自动置灰</span></h4>
+
+    <div class="setgroup" id="grp-hint">
+      <label class="ghead">
+        <span class="lbl">显示大师推荐<span class="tip">轮到你时计算推荐出牌与操作建议</span></span>
+        <input type="checkbox" id="set-hinton" class="switch">
+      </label>
+      <div class="gbody">
+        <div class="setrow">
+          <div class="lbl">推荐策略<span class="tip">轮到你时按此策略计算推荐出牌</span></div>
+          <select id="set-strategy"></select>
+        </div>
+        <div class="setrow">
+          <div class="lbl">出现时间<span class="tip">轮到你后延迟 N 秒才显示推荐（0=立即）；可直接填任意秒数</span></div>
+          <div class="numrow">
+            <input id="set-hintdelay" type="number" min="0" max="600" step="0.5" value="0" list="dl-hintdelay">
+            <span class="unit">秒</span>
+            <span class="chips">
+              <button type="button" class="chip" data-for="set-hintdelay" data-v="0">立即</button>
+              <button type="button" class="chip" data-for="set-hintdelay" data-v="3">3</button>
+              <button type="button" class="chip" data-for="set-hintdelay" data-v="5">5</button>
+              <button type="button" class="chip" data-for="set-hintdelay" data-v="10">10</button>
+            </span>
+            <datalist id="dl-hintdelay">
+              <option value="0"></option><option value="2"></option><option value="3"></option>
+              <option value="5"></option><option value="8"></option><option value="10"></option>
+              <option value="15"></option>
+            </datalist>
+          </div>
+        </div>
+        <div class="setrow">
+          <div class="lbl">简短推荐理由<span class="tip">操作区上方显示一行推荐原因（不重复已上浮的牌名），便于观察对局思路</span></div>
+          <select id="set-briefreason">
+            <option value="0">关闭</option>
+            <option value="1">显示一行推荐原因</option>
+          </select>
         </div>
       </div>
-      <div class="setrow">
-        <div class="lbl">超时自动操作<span class="tip">到时间没操作就自动执行推荐；0=关闭。可直接填任意秒数</span></div>
-        <div class="numrow">
-          <input id="set-timeout" type="number" min="0" max="600" step="0.5" value="15" list="dl-timeout">
-          <span class="unit">秒</span>
-          <span class="chips">
-            <button type="button" class="chip" data-for="set-timeout" data-v="0">关闭</button>
-            <button type="button" class="chip" data-for="set-timeout" data-v="0.5">立即</button>
-            <button type="button" class="chip" data-for="set-timeout" data-v="3">3</button>
-            <button type="button" class="chip" data-for="set-timeout" data-v="8">8</button>
-            <button type="button" class="chip" data-for="set-timeout" data-v="15">15</button>
-            <button type="button" class="chip" data-for="set-timeout" data-v="30">30</button>
-          </span>
-          <datalist id="dl-timeout">
-            <option value="0"></option><option value="1"></option><option value="3"></option>
-            <option value="8"></option><option value="12"></option><option value="15"></option>
-            <option value="20"></option><option value="30"></option><option value="45"></option>
-            <option value="60"></option>
-          </datalist>
+    </div>
+
+    <div class="setgroup" id="grp-timeout">
+      <label class="ghead">
+        <span class="lbl">超时自动操作<span class="tip">轮到你后超过设定时间仍未操作，则自动执行（优先推荐；无推荐时按安全兜底）</span></span>
+        <input type="checkbox" id="set-timeouton" class="switch">
+      </label>
+      <div class="gbody">
+        <div class="setrow">
+          <div class="lbl">超时时间<span class="tip">轮到你后 N 秒自动操作；0=立即。可直接填任意秒数</span></div>
+          <div class="numrow">
+            <input id="set-timeout" type="number" min="0" max="600" step="0.5" value="15" list="dl-timeout">
+            <span class="unit">秒</span>
+            <span class="chips">
+              <button type="button" class="chip" data-for="set-timeout" data-v="0.5">立即</button>
+              <button type="button" class="chip" data-for="set-timeout" data-v="3">3</button>
+              <button type="button" class="chip" data-for="set-timeout" data-v="8">8</button>
+              <button type="button" class="chip" data-for="set-timeout" data-v="15">15</button>
+              <button type="button" class="chip" data-for="set-timeout" data-v="30">30</button>
+            </span>
+            <datalist id="dl-timeout">
+              <option value="0"></option><option value="1"></option><option value="3"></option>
+              <option value="8"></option><option value="12"></option><option value="15"></option>
+              <option value="20"></option><option value="30"></option><option value="45"></option>
+              <option value="60"></option>
+            </datalist>
+          </div>
         </div>
       </div>
-      <div class="setrow">
-        <div class="lbl">推荐上浮时间<span class="tip">推荐打出的牌自动浮起的时间点：-1=立即（拿到推荐就浮起）；0=自动（取超时时间的一半）；&gt;0=指定秒数。可直接填</span></div>
-        <div class="numrow">
-          <input id="set-floatat" type="number" min="-1" max="600" step="0.5" value="0" list="dl-floatat">
-          <span class="unit">秒</span>
-          <span class="chips">
-            <button type="button" class="chip" data-for="set-floatat" data-v="-1">立即</button>
-            <button type="button" class="chip" data-for="set-floatat" data-v="0">自动</button>
-            <button type="button" class="chip" data-for="set-floatat" data-v="3">3</button>
-            <button type="button" class="chip" data-for="set-floatat" data-v="5">5</button>
-            <button type="button" class="chip" data-for="set-floatat" data-v="10">10</button>
-          </span>
-          <datalist id="dl-floatat">
-            <option value="-1"></option><option value="0"></option><option value="1"></option>
-            <option value="3"></option><option value="5"></option><option value="8"></option>
-            <option value="10"></option><option value="15"></option><option value="20"></option>
-            <option value="30"></option>
-          </datalist>
+    </div>
+
+    <div class="setgroup" id="grp-float">
+      <label class="ghead">
+        <span class="lbl">推荐自动上浮<span class="tip">到设定时点自动把推荐打出的牌浮起，便于直接确认；需先开启「显示大师推荐」</span></span>
+        <input type="checkbox" id="set-floaton" class="switch">
+      </label>
+      <div class="gbody">
+        <div class="setrow">
+          <div class="lbl">上浮时机<span class="tip">-1=立即（拿到推荐就浮起）；0=自动（取超时时间的一半）；&gt;0=指定秒数。可直接填</span></div>
+          <div class="numrow">
+            <input id="set-floatat" type="number" min="-1" max="600" step="0.5" value="0" list="dl-floatat">
+            <span class="unit">秒</span>
+            <span class="chips">
+              <button type="button" class="chip" data-for="set-floatat" data-v="-1">立即</button>
+              <button type="button" class="chip" data-for="set-floatat" data-v="0">自动</button>
+              <button type="button" class="chip" data-for="set-floatat" data-v="3">3</button>
+              <button type="button" class="chip" data-for="set-floatat" data-v="5">5</button>
+              <button type="button" class="chip" data-for="set-floatat" data-v="10">10</button>
+            </span>
+            <datalist id="dl-floatat">
+              <option value="-1"></option><option value="0"></option><option value="1"></option>
+              <option value="3"></option><option value="5"></option><option value="8"></option>
+              <option value="10"></option><option value="15"></option><option value="20"></option>
+              <option value="30"></option>
+            </datalist>
+          </div>
         </div>
-      </div>
-      <div class="setrow">
-        <div class="lbl">简短推荐理由<span class="tip">操作区上方显示一行推荐原因（不重复已上浮的牌名），便于观察对局思路</span></div>
-        <select id="set-briefreason">
-          <option value="0">关闭</option>
-          <option value="1">显示一行推荐原因</option>
-        </select>
       </div>
     </div>
 
@@ -1049,10 +1103,26 @@ function clampSetting(raw, lo, hi, def) {
   if (!Number.isFinite(n)) return def;
   return Math.min(hi, Math.max(lo, Math.round(n * 10) / 10));
 }
+/* 布尔开关：键缺失时取默认值（便于新增开关时兼容旧配置） */
+function loadBool(key, def) {
+  const v = localStorage.getItem(key);
+  return v === null ? def : v === "1";
+}
+/* 旧版把「关闭」编码进时间值本身（超时=0 = 不自动操作）。
+   一次性迁移：若没有独立开关键、而时间值为 0 → 关掉开关，并把时间恢复为默认 15 秒。 */
+const _timeoutRaw = localStorage.getItem("dushan_timeout");
+const _timeoutVal = clampSetting(_timeoutRaw, 0, 600, 15);
+const _timeoutLegacyOff = _timeoutRaw !== null && _timeoutVal === 0
+  && localStorage.getItem("dushan_timeouton") === null;
 const SET = {
   strategy: localStorage.getItem("dushan_strategy") || "model:master",
-  timeout: clampSetting(localStorage.getItem("dushan_timeout"), 0, 600, 15),
-  // 推荐上浮时间：-1=立即；0=自动（取超时时间的一半）；>0=指定秒数
+  // ---- 功能开关（与时间设置分离：关闭后其时间设置自动置灰）----
+  hintOn: loadBool("dushan_hinton", true),               // 显示大师推荐
+  timeoutOn: _timeoutLegacyOff ? false : loadBool("dushan_timeouton", true),
+  floatOn: loadBool("dushan_floaton", true),             // 推荐自动上浮
+  // ---- 时间参数（仅在对应开关打开时生效）----
+  timeout: _timeoutLegacyOff ? 15 : _timeoutVal,
+  // 推荐上浮时机：-1=立即；0=自动（取超时时间的一半）；>0=指定秒数
   floatAt: clampSetting(localStorage.getItem("dushan_floatat"), -1, 600, 0),
   // 推荐延迟：轮到我后等 N 秒才显示推荐（0=立即）；简短理由：在操作区上方直接显示一行大师建议
   hintDelay: clampSetting(localStorage.getItem("dushan_hintdelay"), 0, 600, 0),
@@ -1074,6 +1144,9 @@ const SET = {
 };
 function saveSet() {
   localStorage.setItem("dushan_strategy", SET.strategy);
+  localStorage.setItem("dushan_hinton", SET.hintOn ? "1" : "0");
+  localStorage.setItem("dushan_timeouton", SET.timeoutOn ? "1" : "0");
+  localStorage.setItem("dushan_floaton", SET.floatOn ? "1" : "0");
   localStorage.setItem("dushan_timeout", String(SET.timeout));
   localStorage.setItem("dushan_floatat", String(SET.floatAt));
   localStorage.setItem("dushan_hintdelay", String(SET.hintDelay));
@@ -1348,7 +1421,7 @@ function startTurnTimer() {
   stopTurnTimer();
   RECOMMEND = null; HALF_DONE = false; AUTOFLOAT_DONE = false;
   hideBriefTip();
-  if (!SET.timeout) return;   // 不自动操作；倒计时由 updateClock 空转显示
+  if (!SET.timeoutOn) return;   // 关闭超时自动操作；倒计时由 updateClock 空转显示
   TURN_TOTAL = SET.timeout;
   TURN_DEADLINE = Date.now() + TURN_TOTAL * 1000;
   setDigits(TURN_TOTAL);
@@ -1365,7 +1438,11 @@ function cancelHintTimer() {
 function scheduleHint() {
   cancelHintTimer();
   hideBriefTip();
-  if (SET.hintDelay > 0) HINT_TIMER = setTimeout(() => { HINT_TIMER = null; requestHint(); }, SET.hintDelay * 1000);
+  // 既不显示推荐、也不需要超时自动操作 → 完全不必请求（省一次前向）
+  if (!SET.hintOn && !SET.timeoutOn) return;
+  // 延迟只对「显示」有意义；不显示但需要自动操作时必须立刻算好备用
+  if (SET.hintDelay > 0 && SET.hintOn)
+    HINT_TIMER = setTimeout(() => { HINT_TIMER = null; requestHint(); }, SET.hintDelay * 1000);
   else requestHint();
 }
 function tickTurn() {
@@ -1373,7 +1450,9 @@ function tickTurn() {
   const left = (TURN_DEADLINE - Date.now()) / 1000;
   setDigits(Math.max(0, Math.ceil(left)));
   // 上浮时点：>0 用设置值（封顶自动操作时长）；-1=「立即」由 tryImmediateFloat 处理；否则默认自动操作时间的一半
-  const floatAt = SET.floatAt > 0 ? Math.min(SET.floatAt, TURN_TOTAL)
+  // 上浮功能关闭（或推荐已关闭）时用 -2 表示「本回合不上浮」
+  const floatAt = (!SET.floatOn || !SET.hintOn) ? -2
+                : SET.floatAt > 0 ? Math.min(SET.floatAt, TURN_TOTAL)
                 : SET.floatAt < 0 ? -1 : TURN_TOTAL / 2;
   if (floatAt >= 0 && !HALF_DONE && left <= floatAt) {
     HALF_DONE = true;
@@ -1383,7 +1462,7 @@ function tickTurn() {
 }
 /* 「立即（0 秒）」模式：不依赖计时器，拿到推荐就马上上浮（每回合只尝试一次） */
 function tryImmediateFloat() {
-  if (SET.floatAt >= 0 || AUTOFLOAT_DONE) return;
+  if (!SET.floatOn || !SET.hintOn || SET.floatAt >= 0 || AUTOFLOAT_DONE) return;
   if (!RECOMMEND) return;
   AUTOFLOAT_DONE = true;
   floatRecommended();
@@ -1391,6 +1470,7 @@ function tryImmediateFloat() {
 /* 时间过半：上浮推荐打出的牌（仅当玩家还没有手动选牌） */
 function floatRecommended() {
   const st = LAST_STATE;
+  if (!SET.floatOn || !SET.hintOn) return;
   if (SELECTED_IDX >= 0 || !st || !recommendLegalIn(st) || RECOMMEND.kind !== "discard") return;
   const hand = st.hand.slice().sort((a, b) => a - b);
   const idx = hand.indexOf(RECOMMEND.tile);
@@ -1459,7 +1539,7 @@ function requestHint() {
 function showBriefTip(r) {
   const t = el("brief-tip");
   if (!t) return;
-  if (!SET.briefReason || !r || !r.ok || !r.items || !r.items.length) { t.style.display = "none"; return; }
+  if (!SET.hintOn || !SET.briefReason || !r || !r.ok || !r.items || !r.items.length) { t.style.display = "none"; return; }
   const top = r.items[0];
   let txt = (r.tip || top.reason || "").trim();
   // 兜底：若原因以推荐动作/牌名开头（如"打 二万："），剥掉前缀避免与上浮牌重复
@@ -1509,7 +1589,7 @@ function render(st) {
   const tk = turnKey(st);
   if (tk) {
     if (tk !== TURN_KEY) { TURN_KEY = tk; SELECTED_IDX = -1; SELECTED = -1; startTurnTimer(); scheduleHint(); }
-    else if (!TURN_DEADLINE && SET.timeout && tk !== AUTO_FAIL_KEY) { /* 计时器异常中断则补一次 */
+    else if (!TURN_DEADLINE && SET.timeoutOn && tk !== AUTO_FAIL_KEY) { /* 计时器异常中断则补一次 */
       startTurnTimer();
     }
   } else if (TURN_KEY) {
@@ -1706,7 +1786,7 @@ function renderHand(st) {
   const gap = drawIdx >= 0 ? " + var(--draw-gap)" : "";
   el("hand").style.width = `calc(${slots} * var(--tile-w)${gap})`;
   // 推荐出牌（按所选策略）在第几张（下标始终对完整手牌数组）
-  const recIdx = (RECOMMEND && RECOMMEND.kind === "discard" && pend && pend.mode === "discard")
+  const recIdx = (SET.hintOn && RECOMMEND && RECOMMEND.kind === "discard" && pend && pend.mode === "discard")
     ? hand.indexOf(RECOMMEND.tile) : -1;
   const jiSet = st.ji_tiles && st.ji_tiles.length ? new Set(st.ji_tiles) : new Set([YAOJI]);
   // 按「渲染顺序」输出：先手牌（去掉新摸的那张），再间隔，最后把新摸的牌摆在最右
@@ -1754,7 +1834,7 @@ function renderRivers(st) {
 function renderPending(st) {
   const box = el("actions");
   const pend = st.pending;
-  const rec = RECOMMEND && recommendLegalIn(st) ? RECOMMEND : null;
+  const rec = SET.hintOn && RECOMMEND && recommendLegalIn(st) ? RECOMMEND : null;
   const sig = (st.over || !pend) ? "" :
     JSON.stringify(pend.buttons) + "|" + (rec ? rec.kind + ":" + rec.tile : "") + "|" + SET.recColor;
   if (box._sig === sig) return;
@@ -2510,10 +2590,14 @@ function fillSetSelects() {
   s.innerHTML = OPP_HTML();
   s.value = SET.strategy;
   if (s.value !== SET.strategy) { s.selectedIndex = 0; }
+  el("set-hinton").checked = SET.hintOn;
+  el("set-timeouton").checked = SET.timeoutOn;
+  el("set-floaton").checked = SET.floatOn;
   el("set-timeout").value = String(SET.timeout);
   el("set-floatat").value = String(SET.floatAt);
   el("set-hintdelay").value = String(SET.hintDelay);
   el("set-briefreason").value = SET.briefReason ? "1" : "0";
+  syncPlayGroups();          // 按开关状态同步置灰（关闭的功能其参数不可用）
   el("set-ind-color").value = SET.indColor;
   el("set-rec-color").value = SET.recColor;
   el("set-jiesuan-fanji").value = SET.jiesuan;
@@ -2530,6 +2614,29 @@ function fillSetSelects() {
     if (inp) inp.value = SET.score[k];
   }
 }
+/* ---- 「出牌与推荐」：开关 ↔ 参数联动 ----
+   开关只决定「功能是否启用」；关闭后其时间/策略控件置灰并 disabled（不可操作、不可误改）。
+   自动上浮依赖「显示大师推荐」，故推荐总开关关闭时它整块一起灰掉。 */
+function setGroupDisabled(groupId, off, ids) {
+  const g = el(groupId);
+  if (g) g.classList.toggle("disabled", off);
+  ids.forEach(id => { const n = el(id); if (n) n.disabled = off; });
+}
+function syncPlayGroups() {
+  const hSw = el("set-hinton"), tSw = el("set-timeouton"), fSw = el("set-floaton");
+  if (!hSw || !tSw || !fSw) return;
+  const hintOn = hSw.checked;
+  fSw.disabled = !hintOn;                       // 推荐关了 → 上浮开关也无意义
+  const floatOn = fSw.checked && hintOn;
+  setGroupDisabled("grp-hint", !hintOn, ["set-strategy", "set-hintdelay", "set-briefreason"]);
+  setGroupDisabled("grp-timeout", !tSw.checked, ["set-timeout"]);
+  setGroupDisabled("grp-float", !floatOn, ["set-floatat"]);
+  // 常用档 chip 随所属功能块一起置灰
+  el("set-panes").querySelectorAll(".chip[data-for]").forEach(ch => {
+    const owner = ch.closest(".setgroup");
+    if (owner) ch.disabled = owner.classList.contains("disabled");
+  });
+}
 /* ---- 设置面板：左侧分类导航（记忆上次分类） ---- */
 let SET_PANE = localStorage.getItem("dushan_setpane") || "who";
 function showSetPane(name) {
@@ -2541,6 +2648,11 @@ function showSetPane(name) {
   panes.querySelectorAll("section").forEach(s => s.classList.toggle("on", s.dataset.pane === name));
   panes.scrollTop = 0;
 }
+/* 开关改动即时反馈：立刻更新置灰状态（保存仍由「关闭」按钮统一提交） */
+["set-hinton", "set-timeouton", "set-floaton"].forEach(id => {
+  const n = el(id);
+  if (n) n.onchange = syncPlayGroups;
+});
 /* 时间类设置的常用档 chip：把值填进输入框（保存仍由「关闭」按钮统一提交） */
 el("set-panes").addEventListener("click", (ev) => {
   const c = ev.target.closest(".chip[data-for]");
@@ -2559,12 +2671,16 @@ el("btn-settings").onclick = () => {
 };
 el("btn-set-close").onclick = () => {
   SET.strategy = el("set-strategy").value;
-  SET.timeout = clampSetting(el("set-timeout").value, 0, 600, 0);
+  SET.hintOn = el("set-hinton").checked;
+  SET.timeoutOn = el("set-timeouton").checked;
+  SET.floatOn = el("set-floaton").checked;
+  SET.timeout = clampSetting(el("set-timeout").value, 0, 600, 15);
   SET.floatAt = clampSetting(el("set-floatat").value, -1, 600, 0);
   SET.hintDelay = clampSetting(el("set-hintdelay").value, 0, 600, 0);
   const briefWas = SET.briefReason;
   SET.briefReason = el("set-briefreason").value === "1";
-  // 关闭简短理由或改小时清除当前显示
+  // 关闭简短理由 / 关闭推荐总开关：立刻清掉当前的推荐展示
+  if (!SET.hintOn) { cancelHintTimer(); hideBriefTip(); }
   if (!SET.briefReason || (briefWas !== SET.briefReason)) hideBriefTip();
   cancelHintTimer();
   SET.indColor = el("set-ind-color").value;
@@ -2607,7 +2723,7 @@ el("btn-set-close").onclick = () => {
     render(LAST_STATE);
   }
   // 「立即（0 秒）」模式：若正轮到我的决策点，改完设置立刻上浮已有推荐
-  if (SET.floatAt < 0 && TURN_KEY && LAST_STATE && LAST_STATE.pending &&
+  if (SET.floatOn && SET.hintOn && SET.floatAt < 0 && TURN_KEY && LAST_STATE && LAST_STATE.pending &&
       LAST_STATE.turn === LAST_STATE.my_seat) {
     AUTOFLOAT_DONE = false;
     tryImmediateFloat();
