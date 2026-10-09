@@ -217,18 +217,19 @@ setTimeout(() => {
     const jbOk = jb.includes('本局鸡牌') && jb.includes('仅下鸡') && jb.includes('开局翻鸡');
     const noSub = !w.document.getElementById('res-sub');
     const meldCount = w.document.querySelectorAll('#res-pairs .ovcard .ovmelds .meld').length;
-    // 对局中被碰鸡牌：座位区/我的副露区应有「点碰者」小标；总览内不应重复出现
+    // 对局中被碰鸡牌：不再显示「点碰者」小标（横置牌的方向+位置已能指示来源）
     const chips = Array.from(w.document.querySelectorAll('#me-melds .msrc, .seat-left .msrc, .seat-right .msrc, .seat-top .msrc'))
       .map(x => x.textContent);
-    const chipOk = chips.some(c => c.startsWith('碰横鸡') && c.includes('大乔(抢听)'))
-      && chips.some(c => c.startsWith('碰冲锋鸡') && c.includes('王昭君(S7)'));
+    const chipOk = chips.length === 0;
     const ovChips = w.document.querySelectorAll('#res-pairs .msrc').length;
-    // 左家（rel3）组内被碰鸡牌应与组内垂直（rotb 反向旋转）
-    const rotbOk = w.document.querySelectorAll('.seat-left .meld .mc.rotb img').length >= 1;
+    // 左右家（rel3/rel1）组内被碰鸡牌应与组内垂直：组内牌带 rot/rotr，横置牌不带
+    const perpOk =
+      w.document.querySelectorAll('.seat-left .melds .meld .mc:not(.rot):not(.rotr) img').length >= 1 &&
+      w.document.querySelectorAll('.seat-right .melds .meld .mc:not(.rot):not(.rotr) img').length >= 1;
     console.log(`构造态 流局+听牌 | 副露组=${meldCount}(应 5) 总览 ${r.ok ? 'OK' : 'FAIL'} | ${r.msgs.join(' | ') || '全部正确'}`);
     console.log(`   结算顶部信息条: "${jb}" ${jbOk ? 'OK' : 'FAIL'}｜旧小字已移除 ${noSub ? 'OK' : 'FAIL'}`);
-    console.log(`   对局中碰鸡小标 ${JSON.stringify(chips)} ${chipOk ? 'OK' : 'FAIL'}｜总览无小标=${ovChips === 0} ${ovChips === 0 ? 'OK' : 'FAIL'}｜左家横置反向=${rotbOk ? 'OK' : 'FAIL'}`);
-    if (r.ok && meldCount === 5 && jbOk && noSub && chipOk && ovChips === 0 && rotbOk) ok++; else bad++;
+    console.log(`   对局中碰鸡小标已移除 ${chipOk ? 'OK' : `FAIL ${JSON.stringify(chips)}`}｜总览无小标=${ovChips === 0} ${ovChips === 0 ? 'OK' : 'FAIL'}｜左右家横置垂直=${perpOk ? 'OK' : 'FAIL'}`);
+    if (r.ok && meldCount === 5 && jbOk && noSub && chipOk && ovChips === 0 && perpOk) ok++; else bad++;
   } catch (e) {
     bad++;
     console.log(`构造态 | RENDER THREW: ${String(e.stack).split('\n').slice(0, 7).join('\n    ')}`);

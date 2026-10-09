@@ -146,23 +146,17 @@ body {
 .mc.rot img { transform: translate(-50%, -50%) rotate(90deg); }
 /* 右家：镜像旋转（底边朝右，对着右家玩家） */
 .mc.rotr img { transform: translate(-50%, -50%) rotate(-90deg); }
-/* 左家组内被碰鸡牌的横置牌：与组内 (+90°) 垂直 → -90°（须位于 rot 规则之后） */
-.mc.rotb img { transform: translate(-50%, -50%) rotate(-90deg); }
-/* 杠牌横置牌（heng）：格内横放；相邻牌盖住其端部色带（绿边+白阴影）与一圈
-   白边，使横置牌只露出俯视时的牌面；左右家纵排时改用下方遮挡 */
+/* 杠牌/碰鸡横置牌（heng）：格内横放（heng 只用于我/对家——左右家组内牌本身
+   已横放，与组内垂直的竖牌不需要旋转，故直接用无旋转的 .mc）；
+   相邻牌盖住其端部色带（绿边+白阴影）与一圈白边，使横置牌只露出俯视时的牌面 */
 .mc.heng { width: var(--tm-h); height: var(--tm-w); }
 /* 原图底部有 3 行透明像素 + 圆角底座，转 90° 后在端部留出一道空隙：
-   沿牌长轴向「原图底部」端平移 3% 牌长消除——+90° 转向时空隙在左端（图左移），
-   -90° 转向时空隙在右端（图右移） */
-.mc.heng:not(.rotr):not(.rotb) img {
+   沿牌长轴向「原图底部」端平移 3% 牌长消除（+90° 转向时空隙在左端，图左移） */
+.mc.heng img {
   transform: translate(calc(-50% - var(--tm-h) * 0.03), -50%) rotate(90deg); }
-.mc.heng.rotr img, .mc.heng.rotb img {
-  transform: translate(calc(-50% + var(--tm-h) * 0.03), -50%) rotate(-90deg); }
 /* 沿牌长轴微放大 3%，让牌面完全充满格子高度 */
 .mc.heng img { height: calc(var(--tm-h) * 1.03); }
 .meld .mc.heng:not(:last-child) { margin-right: calc(var(--tm-h) * -0.13); }
-.seat-left .melds .mc.heng:not(:last-child),
-.seat-right .melds .mc.heng:not(:last-child) { margin-right: 0; margin-bottom: calc(var(--tm-w) * -0.14); }
 .mc.added::after { content: ""; position: absolute; inset: 0; border: 2px solid var(--gold);
   border-radius: 4px; z-index: 2; pointer-events: none; }
 /* 横置牌不加黄框（补杠新增牌的标记只保留在竖牌上） */
@@ -179,14 +173,6 @@ body {
    组内底对齐——杠牌的横置牌底部与另外三张竖牌底部平齐 */
 .melds { display: flex; gap: 6px; align-items: flex-end; }
 .meld { display: flex; gap: 0; align-items: flex-end; }
-/* 被碰鸡牌的「点碰者」小标：浮在副露组上方，不占布局空间 */
-.meld.meld-cap { position: relative; }
-.meld.meld-cap .msrc {
-  position: absolute; left: 0; bottom: calc(100% + 2px); z-index: 6;
-  white-space: nowrap; font-size: 10px; line-height: 1; padding: 2px 5px;
-  border-radius: 7px; color: var(--gold); background: rgba(10, 20, 12, .82);
-  border: 1px solid rgba(232, 184, 75, .4); pointer-events: none;
-}
 .seat-top .melds { flex-direction: row; --tm-w: 28px; --tm-h: 44px; }
 .seat-left .melds, .seat-right .melds { flex-direction: column; --tm-w: 28px; --tm-h: 44px; }
 /* 左右家组内竖排，保持左对齐（横向）不受底对齐规则影响 */
@@ -1613,10 +1599,10 @@ function meldCells(m, rc, ownerSeat) {
   if (m.type === 1) {
     // 碰牌：普通碰保持三张竖排；碰鸡时横置一张同款鸡牌指示「鸡是谁的」（责任鸡归属）
     if (!isJi) return c(normal) + c(normal) + c(normal);
-    // 横置牌相对组内方向：我/对家（不旋转）用 heng（格内转90°）；
-    // 右家组内 -90° → 横牌 +90°（rot）；左家组内 +90° → 横牌 -90°（rot rotb），
-    // 保证被碰鸡牌在视觉上与组内其他牌垂直（结算页同款「横着摆一张」）
-    const hengCls = !rc ? " heng" : (rc.includes("rotr") ? " rot" : " rot rotb");
+    // 横置牌相对组内方向：我/对家组内竖放 → 横牌格内转 90°（heng）；
+    // 左右家组内牌本身已转 ±90° 横放 → 与组内垂直的是「不旋转的竖牌」。
+    // （此前左右家用 rot/rotb 反向旋转，但 ±90° 与组内只差 180°，视觉上仍同向——已修正）
+    const hengCls = rc ? "" : " heng";
     const cells = [c(normal), c(normal), c(normal)];
     cells[srcPos(3)] = `<span class="mc${hengCls}">` +
       `<img src="${jiSrc || normal}" alt=""></span>`;
@@ -1624,8 +1610,9 @@ function meldCells(m, rc, ownerSeat) {
   }
   if (m.type === 2) {
     // 明杠：横置一张指向放杠者（点杠那张，可能是鸡牌面）
+    const hengCls = rc ? "" : " heng";
     const cells = [c(normal), c(normal), c(normal), c(normal)];
-    cells[srcPos(4)] = `<span class="mc${rc || ""} heng"><img src="${jiSrc || normal}" alt=""></span>`;
+    cells[srcPos(4)] = `<span class="mc${hengCls}"><img src="${jiSrc || normal}" alt=""></span>`;
     return cells.join("");
   }
   if (m.type === 3) {
@@ -1633,32 +1620,17 @@ function meldCells(m, rc, ownerSeat) {
     // 例外——副露吃进的是鸡牌：从碰起就需要指向（横置一张指示来源），补杠后仍保留，
     // 因为鸡牌的责任溢价只在点碰/点杠的当事两名玩家之间有效。
     if (!isJi) return c(normal) + c(normal) + c(normal) + c(normal);
+    const hengCls = rc ? "" : " heng";
     const cells = [c(normal), c(normal), c(normal), c(normal)];
-    cells[srcPos(4)] = `<span class="mc${rc || ""} heng"><img src="${jiSrc || normal}" alt=""></span>`;
+    cells[srcPos(4)] = `<span class="mc${hengCls}"><img src="${jiSrc || normal}" alt=""></span>`;
     return cells.join("");
   }
   return c(MELD_BACK) + c(normal) + c(normal) + c(MELD_BACK);
 }
-function meldHTML(m, rc, ownerSeat, inGame) {
-  const cells = meldCells(m, rc, ownerSeat);
-  // 对局中被碰鸡牌显示「点碰者来源」小标（总览用 .cap 文字说明，不重复加）
-  const cap = (inGame && m.type === 1 && m.ji && Number.isInteger(m.src) && ownerSeat != null)
-    ? `碰${m.ji}·${seatNameOf(m.src)}` : "";
-  return cap
-    ? `<div class="meld meld-cap">${cells}<span class="msrc">${cap}</span></div>`
-    : `<div class="meld">${cells}</div>`;
-}
-/* 座位名（对局中小标用）：与玩家面板显示的名字同口径——
-   本地设置名优先，其次快照该座位的名字，最后回落 names 表 */
-function seatNameOf(seat) {
-  try {
-    const st = LAST_STATE;
-    if (!st || !Number.isInteger(seat)) return "";
-    if (seat === st.my_seat) return "你";
-    const rel = ((seat - st.my_seat) % 4 + 4) % 4;
-    const pp = st.players && st.players[rel];
-    return playerName(rel, (pp && pp.name) || (st.names && st.names[seat]) || "");
-  } catch (e) { return ""; }
+function meldHTML(m, rc, ownerSeat) {
+  // 不加「点碰者」小标：横置牌的垂直方向 + 组内位置（上家→组首、对家→居中、
+  // 下家→组尾）已能指示来源；总览另有文字说明（结算页副露说明列）
+  return `<div class="meld">${meldCells(m, rc, ownerSeat)}</div>`;
 }
 function renderOpp(rel, p, st) {
   const box = seatEl(rel);
@@ -1679,7 +1651,7 @@ function renderOpp(rel, p, st) {
     fan = Array.from({ length: p.hand_count }, back).join("");
   }
   fan += `<span class="mc${rc} ghost"></span>`.repeat(Math.max(0, slots - p.hand_count));
-  const melds = p.melds.map(m => meldHTML(m, rc, p.seat, true)).join("");
+  const melds = p.melds.map(m => meldHTML(m, rc, p.seat)).join("");
   const cls = "player seat-" + ["", "right", "top", "left"][rel] +
     (st.turn === p.seat && !st.over ? " active" : "");
   if (box.className !== cls) box.className = cls;
@@ -1699,7 +1671,7 @@ function renderOpp(rel, p, st) {
 }
 
 function renderMyMelds(melds, ownerSeat) {
-  setHTML(el("me-melds"), melds.map(m => meldHTML(m, "", ownerSeat, true)).join(""));
+  setHTML(el("me-melds"), melds.map(m => meldHTML(m, "", ownerSeat)).join(""));
 }
 
 function renderHand(st) {
