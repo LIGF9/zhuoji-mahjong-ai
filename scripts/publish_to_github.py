@@ -245,6 +245,8 @@ def main() -> int:
         push = push_via_ssh(owner, args.repo, args.branch, key_path)
         if push.returncode != 0:
             sys.exit(f"SSH 推送失败：\n{push.stdout}\n{push.stderr}")
+        # 显式 URL 推送不会更新 origin/* 引用，先 fetch 再设上游，否则 upstream 设不上
+        run(["git", "fetch", "origin"])
         run(["git", "branch", f"--set-upstream-to=origin/{args.branch}", args.branch])
         print(f"\n完成 → {html_url}")
         print("提示：token 未参与推送，也未写入 .git/config（remote 为 SSH 地址）。")
@@ -269,6 +271,7 @@ def main() -> int:
             push = push_via_ssh(owner, args.repo, args.branch,
                                 str(Path(args.ssh_key).expanduser()))
             if push.returncode == 0:
+                run(["git", "fetch", "origin"])
                 run(["git", "branch", f"--set-upstream-to=origin/{args.branch}", args.branch])
                 print(f"\n完成 → {html_url}")
                 print("提示：本次经 SSH 推送，token 未写入 .git/config。")
