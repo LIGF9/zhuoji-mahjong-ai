@@ -141,9 +141,9 @@ setTimeout(() => {
   check('S10 碰鸡横置指示来源家',
     hengIdx(up) === 0 && hengIdx(opp) === 1 && hengIdx(dn) === 2,
     `上家=${hengIdx(up)} 对家=${hengIdx(opp)} 下家=${hengIdx(dn)}（应 0/1/2）`);
-  check('S10b 幺鸡用原牌面、冲锋鸡用专用牌面',
-    up.includes('1条.png') && mj(3, '冲锋鸡').includes('冲.png')
-    && mj(3, '横鸡').includes('横.png'), '');
+  check('S10b 幺鸡用原牌面、冲锋鸡/横鸡带统一角标（冲/横）',
+    up.includes('1条.png') && mj(3, '冲锋鸡').includes('jitag chf') && mj(3, '冲锋鸡').includes('data-t="冲"')
+    && mj(3, '横鸡').includes('jitag hj') && mj(3, '横鸡').includes('data-t="横"'), '');
   check('S10c 普通碰保持三张竖排', hengIdx(mj(3, null)) === -1, mj(3, null));
 
   // ---- S11：默认名字 = 头像名(策略缩写) ----

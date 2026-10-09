@@ -207,6 +207,7 @@ setTimeout(() => {
     return Array.from(w.document.querySelectorAll('#res-pairs .pairs-big tr'));
   }
   const cellNum = tr => { const m = (tr.lastElementChild.textContent.match(/[+-]?\d+(?:\.\d+)?/) || ['0'])[0]; return parseFloat(m); };
+  const detNum = tr => { const m = (tr.children[3].textContent.match(/[+-]?\d+(?:\.\d+)?/) || ['0'])[0]; return parseFloat(m); };
   const cnt = (s, sub) => s.split(sub).length - 1;
 
   console.log('\n[单人视角·共享项置顶]');
@@ -224,17 +225,21 @@ setTimeout(() => {
     const shsum = rows.find(r => r.className.includes('shsum'));
     const total = rows.find(r => r.className === 'total');
     const heads = rows.filter(r => r.className === 'opphead');
-    check('出现「对三家均生效」区', html2.includes('对三家均生效'));
+    const shDets = rows.filter(r => r.className === 'det sh');
+    const uniDets = rows.filter(r => r.className === 'det');
+    check('不再出现「对三家均生效」组头', !html2.includes('对三家均生效'));
     check('共享项只列一次（自摸 ×1）', cnt(html2, '自摸') === 1, `n=${cnt(html2, '自摸')}`);
     check('逐家明细不再重复（横鸡 ×1）', cnt(html2, '横鸡') === 1, `n=${cnt(html2, '横鸡')}`);
-    check('人均标注出现', html2.includes('人均 +2') && html2.includes('×3'));
-    check('共享小计 = +18', shsum && cellNum(shsum) === 18, shsum ? shsum.lastElementChild.textContent : '无');
-    check('三家块头各 +6', heads.length === 3 && heads.every(h => cellNum(h) === 6),
-      heads.map(h => cellNum(h)).join(','));
+    check('共享行数值=人均（+2，且全表无 ×3 标记）',
+      shDets.some(r => detNum(r) === 2) && !html2.includes('×3'),
+      `shDets=${shDets.map(detNum).join(',')}`);
+    check('共享小计 = 人均 +6', shsum && cellNum(shsum) === 6, shsum ? shsum.lastElementChild.textContent : '无');
+    check('三家块头只留名字（单格、无数值）',
+      heads.length === 3 && heads.every(h => h.children.length === 1),
+      heads.map(h => h.children.length).join(','));
     check('本局总计 = +18', total && cellNum(total) === 18, total ? total.lastElementChild.textContent : '无');
-    const lhs = (shsum ? cellNum(shsum) : 0) +
-      rows.filter(r => r.className.includes('os')).reduce((a, r) => a + cellNum(r), 0);
-    check('恒等式：共享 + Σ独有 == 总计', Math.abs(lhs - cellNum(total)) < 1e-6, `${lhs} vs ${cellNum(total)}`);
+    const lhs = (shsum ? cellNum(shsum) : 0) * 3 + uniDets.reduce((a, r) => a + detNum(r), 0);
+    check('恒等式：共享人均×3 + Σ独有 == 总计', Math.abs(lhs - cellNum(total)) < 1e-6, `${lhs} vs ${cellNum(total)}`);
   } catch (e) { bad++; console.log('[共享项置顶] THREW: ' + String(e.stack).split('\n').slice(0, 4).join('\n    ')); }
 
   console.log('\n[单人视角·独有项留在各家]');
@@ -250,8 +255,9 @@ setTimeout(() => {
     const det = rows.filter(r => r.className.includes('det') && !r.className.includes('sh'));
     check('共享区只含杠分（×1）', cnt(html2, '杠分') === 1, `n=${cnt(html2, '杠分')}`);
     check('捉炮留在点炮者那块（×1）', cnt(html2, '捉炮') === 1, `n=${cnt(html2, '捉炮')}`);
-    check('块头净额含共享人均（+6/+3/+3）',
-      rows.filter(r => r.className === 'opphead').map(cellNum).join(',') === '6,3,3');
+    check('三家块头只留名字（单格、无数值）',
+      rows.filter(r => r.className === 'opphead').every(h => h.children.length === 1));
+    check('不再有「独有小计」行', !html2.includes('独有小计'));
     check('独有明细行只有 1 行', det.length === 1, `n=${det.length}`);
     check('本局总计 = +12', cellNum(rows.find(r => r.className === 'total')) === 12);
   } catch (e) { bad++; console.log('[独有项] THREW: ' + String(e.stack).split('\n').slice(0, 4).join('\n    ')); }
@@ -268,12 +274,26 @@ setTimeout(() => {
     check('CSS: 对手块头有上边框 + 左竖条',
       /\.paircard \.pairs-big tr\.opphead td \{[^}]*border-top: 2px solid/.test(html) &&
       /\.paircard \.pairs-big tr\.opphead td:first-child \{ padding-left: 10px; border-left: 3px solid/.test(html));
-    check('CSS: 对手块尾有下边框（块间封闭）',
-      /\.paircard \.pairs-big tr\.sum\.os td \{[^}]*border-bottom: 2px solid/.test(html));
     check('CSS: 共享区用冷色块与对手块区分',
       /\.paircard \.pairs-big tr\.det\.sh td \{ background: rgba\(138,196,255/.test(html));
     check('CSS: 块间有间隔行', /\.paircard \.pairs-big tr\.gap td \{ height: 14px/.test(html));
   } catch (e) { bad++; console.log('[块样式] THREW: ' + String(e.stack).split('\n').slice(0, 4).join('\n    ')); }
+
+  console.log('\n[鸡牌元素：红点 + 冲/横角标]');
+  try {
+    check('CSS: 手牌鸡牌右上角为红点（圆形 .jimark）',
+      /\.tile-mine \.jimark \{[^}]*border-radius: 50%/.test(html) &&
+      /\.ovhand \.ovtile \.jimark \{[^}]*border-radius: 50%/.test(html));
+    check('JS: 鸡牌标记不再使用 🐔 字符', !html.includes('>🐔<'));
+    check('JS: 角标生成（冲锋鸡→冲/横鸡→横/无标签→空）',
+      w.eval('jiTagHTML("冲锋鸡")').includes('data-t="冲"') &&
+      w.eval('jiTagHTML("横鸡")').includes('data-t="横"') &&
+      w.eval('jiTagHTML(null)') === '' && w.eval('jiTagHTML(undefined)') === '');
+    check('CSS: 角标配色 冲=红 / 横=蓝',
+      html.includes('.jitag.chf') && html.includes('.jitag.hj'));
+    check('JS: 牌河/副露不再引用冲.png/横.png 图',
+      !html.includes('assets/tiles/冲.png') && !html.includes('assets/tiles/横.png'));
+  } catch (e) { bad++; console.log('[鸡牌元素] THREW: ' + String(e.stack).split('\n').slice(0, 4).join('\n    ')); }
 
   console.log(`\nok=${ok} bad=${bad}`);
   if (errs.length) console.log('window errors:\n' + errs.slice(0, 5).join('\n'));
