@@ -23,12 +23,19 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from score_checkpoints import summarize  # noqa: E402
-from selfplay import choose_final  # noqa: E402
+from selfplay import SELECT_METRICS, choose_final, metric_score  # noqa: E402
+
+
+def _log(rows):
+    """rows: [(iter, avg_score, se)] → 新的 eval_log 结构。"""
+    return [{"iter": i, "score": s, "se": e, "eval": {"avg_score": s,
+                                                      "avg_score_se": e}}
+            for i, s, e in rows]
 
 
 def test_choose_final() -> None:
-    log = [(10, 6.25, 0.95), (20, 5.69, 0.97), (30, 5.66, 0.96),
-           (40, 7.23, 0.97), (50, 5.49, 0.97)]
+    log = _log([(10, 6.25, 0.95), (20, 5.69, 0.97), (30, 5.66, 0.96),
+                (40, 7.23, 0.97), (50, 5.49, 0.97)])
 
     which, note = choose_final(log, "max")
     assert which == "best" and "select=max" in note, (which, note)
@@ -38,7 +45,6 @@ def test_choose_final() -> None:
     assert which == "last" and "select=last" in note, (which, note)
     print("ok last 采用最后一轮")
 
-    # 最近 3 次（7.23 / 5.49 里含 3 次）均值 = (7.23 + 5.49)/2 ? 不是——取最近 3 个
     # 最近 3 个 = 5.66, 7.23, 5.49 -> 均值 6.13；中位数 = 5.69
     # 2×SE = 2×√(0.96²+0.97²+0.97²)/3 = 2×1.66/3 = 1.11
     # 6.13 + 1.11 = 7.24 > 5.69 → 不算退化 → last
@@ -47,8 +53,8 @@ def test_choose_final() -> None:
     print("ok guard 在无实质退化时采用最后一轮")
 
     # 构造实质退化：最后 3 次都远低于全程中位数
-    degraded = [(10, 8.0, 0.5), (20, 8.1, 0.5), (30, 8.0, 0.5),
-                (40, 8.2, 0.5), (50, 2.0, 0.5), (60, 2.1, 0.5), (70, 2.0, 0.5)]
+    degraded = _log([(10, 8.0, 0.5), (20, 8.1, 0.5), (30, 8.0, 0.5),
+                     (40, 8.2, 0.5), (50, 2.0, 0.5), (60, 2.1, 0.5), (70, 2.0, 0.5)])
     which, note = choose_final(degraded, "guard")
     assert which == "best", (which, note)
     assert "退化" in note, note
@@ -57,6 +63,47 @@ def test_choose_final() -> None:
     which, note = choose_final([], "guard")
     assert which == "best", (which, note)
     print("ok 没有评测记录时退回 best（不覆盖已有存档）")
+
+    # guard 的判据必须跟着 select-metric 走，不能偷偷用 avg_score
+    which, note = choose_final(log, "guard", "vs_anchor")
+    assert "vs_anchor" in note, note
+    print("ok guard 的判据随 --select-metric 切换（提示语里写明用的哪个指标）")
+
+
+def test_metric_score() -> None:
+    """选点分数：方向归一 + 复合代理 + 缺字段安全。"""
+    ev = {"avg_score": 5.5, "win_rate": 0.25, "bigfan20_rate": 0.10,
+          "bigfan15_rate": 0.18, "deal_in_rate": 0.02, "vs_anchor": 0.35}
+
+    assert metric_score(ev, "avg_score") == 5.5
+    assert metric_score(ev, "vs_anchor") == 0.35
+
+    # deal_in_rate 方向为负：越小越好 → 分数取负号
+    assert metric_score(ev, "deal_in_rate") == -0.02, metric_score(ev, "deal_in_rate")
+    low = dict(ev, deal_in_rate=0.01)
+    assert metric_score(low, "deal_in_rate") > metric_score(ev, "deal_in_rate")
+    print("ok 方向归一：点炮率越低分越高，其余越高分越高")
+
+    # 复合代理：降低点炮率 / 提高胡牌率 都应加分
+    assert metric_score(low, "composite") > metric_score(ev, "composite")
+    assert metric_score(dict(ev, win_rate=0.30), "composite") > \
+        metric_score(ev, "composite")
+    assert metric_score(dict(ev, bigfan20_rate=0.15), "composite") > \
+        metric_score(ev, "composite")
+    print("ok 复合代理 = win_rate + bigfan20_rate − deal_in_rate（等权定标）")
+
+    # 缺字段不应崩溃，缺到无法计算才返回 None
+    assert metric_score({"avg_score": 1.0}, "vs_anchor") is None
+    assert metric_score({}, "composite") is None
+    assert metric_score(None, "avg_score") is None
+    print("ok 指标缺失时返回 None（调用方会退化为 avg_score 并明说）")
+
+    # 所有 SELECT_METRICS 都要能被 metric_score 处理，且方向表非空
+    assert set(SELECT_METRICS) >= {"avg_score", "vs_anchor", "composite"}
+    for k in SELECT_METRICS:
+        assert isinstance(metric_score(ev, k), float), k
+    print(f"ok {len(SELECT_METRICS)} 个选点指标全部可用")
+
 
 
 def test_summarize() -> None:
@@ -116,5 +163,6 @@ def test_summarize() -> None:
 
 if __name__ == "__main__":
     test_choose_final()
+    test_metric_score()
     test_summarize()
     print("选点与对位评分口径测试全部通过 ✅")

@@ -40,6 +40,67 @@ from zhuoji.net import NetConfig, build_model  # noqa: E402
 
 HEAD_NAMES = ["discard", "self_kong", "respond"]
 
+# ---------------------------------------------------------------------------
+# 选点指标（方案 A）
+# ---------------------------------------------------------------------------
+# 每个指标 = (方向, 中文名)。方向 +1 = 越大越强。
+#
+# 为什么不再用 avg_score 的 argmax：``scripts/analyze_metric_noise.py`` 实测
+# 训练内评测是**确定性**的（temperature=0 + 固定教师种子 + 固定 seed0=4242），
+# 于是 ``avg_score_se≈0.97`` 不是重跑抖动，而是「这 40 副牌相对全体牌局的取样
+# 标准误」；用一阶差分测单次抖动、用各代均值测代际差，得到 F = 代际差/抖动：
+#
+#   avg_score        F = 1.00   ⇐ 旧依据，噪声等于信号，argmax 等于抽签
+#   deal_in_rate     F = 0.40   ⇐ 点炮率是 1~2.5% 的稀有事件，比旧指标还差
+#   win_rate         F = 1.29
+#   bigfan15_rate    F = 1.65
+#   bigfan20_rate    F = 2.06   ⇐ 目前信噪比最高
+#   vs_anchor        （新增，见下）
+#
+# ``vs_anchor`` 是最值得用的一项：把**锚点模型**（例如现任大师）放进同一桌
+# 轮换，逐副取 (本模型分 − 锚点分) 的**配对**均值。配对消掉了牌运方差，
+# 且方向天然明确（正 = 更强），口径与对外的 ``scripts/score_checkpoints.py``
+# 完全一致——训练内选点与对外晋升判定第一次用上了同一把尺子。
+SELECT_METRICS: dict[str, tuple[int, str]] = {
+    "avg_score": (+1, "评测均分（旧依据；F≈1.0，等于抽签）"),
+    "vs_anchor": (+1, "对锚点模型的同牌池配对净分差（P0 标尺口径）"),
+    "composite": (+1, "复合代理 = win_rate + bigfan20_rate − deal_in_rate（等权定标）"),
+    "bigfan20_rate": (+1, "大牌率20+（F≈2.1，方向待天梯确认）"),
+    "bigfan15_rate": (+1, "大牌率15+（F≈1.7）"),
+    "win_rate": (+1, "胡牌率（F≈1.3）"),
+    "deal_in_rate": (-1, "点炮率（F≈0.4，稀有事件，比旧指标更差）"),
+}
+
+# 复合代理的定标（把量纲不同的 rate 拉到可比尺度；分母取各指标在该牌池下的
+# 典型波动幅度，是**前置声明**的常数，不随训练过程拟合，避免用结果调参）
+_COMPOSITE_SCALE = {
+    "win_rate": (+1.0, 0.05),
+    "bigfan20_rate": (+1.0, 0.03),
+    "deal_in_rate": (-1.0, 0.02),
+}
+
+
+def metric_score(ev: dict | None, metric: str) -> float | None:
+    """从一次评测结果里取出选点分数（方向已归一到「越大越好」）。"""
+    if not ev:
+        return None
+    if metric == "composite":
+        total = 0.0
+        used = 0
+        for key, (sign, scale) in _COMPOSITE_SCALE.items():
+            v = ev.get(key)
+            if v is None:
+                continue
+            total += sign * float(v) / scale
+            used += 1
+        return total / used if used else None
+    v = ev.get(metric)
+    if v is None:
+        return None
+    sign = SELECT_METRICS.get(metric, (+1, ""))[0]
+    return sign * float(v)
+
+
 
 # ---------------------------------------------------------------------------
 # 采样
@@ -262,44 +323,47 @@ def _dump_ckpt(path, model, nc, args, it_no, evalr) -> None:
     }, path)
 
 
-def choose_final(eval_log: list[tuple[int, float, float]],
-                 select: str) -> tuple[str, str]:
+def choose_final(eval_log: list[dict], select: str, metric: str = "avg_score"
+                 ) -> tuple[str, str]:
     """决定 ``--out`` 最终保存哪个检查点。
 
-    返回 ``(which, note)``，``which`` ∈ ``{"best", "last"}``；
-    ``{"best"}`` 表示保留训练过程中已经写好的历史最佳检查点，不再覆盖。
+    ``eval_log`` 是 ``[{"iter": i, "score": s, "se": e}, ...]``，``score`` 已经
+    按 ``metric`` 归一成「越大越好」。返回 ``(which, note)``，
+    ``which`` ∈ ``{"best", "last"}``；``{"best"}`` 表示保留训练过程中已经写好的
+    历史最佳检查点（按同一 metric），不再覆盖。
 
     为什么要有 ``last`` / ``guard``
     ------------------------------
-    训练内评测（对固定的三位启发式教师、默认 40 副 = 160 局）的 ``avg_score_se``
-    实测约 0.97，即 95% 置信区间 **±1.9 分**；而真实的代际提升只有 **~0.3 分**
-    （S11 vs S7，2400 副对位赛 = +0.319 ± 0.288）。于是
-    ``argmax`` 评测分 = 在噪声里抽签，并且会把恰好抽高那一刻的检查点
-    当成"最好"（winner's curse）——历史 s7（8.60）评测分高于 s11（7.231）、
-    实际却更弱，就是这个原因。
+    训练内评测的 ``avg_score_se`` 实测约 0.97（= 这副固定 40 副牌相对全体牌局的
+    取样标准误，不是重跑抖动；评测是确定性的，重复评同一模型得到同一分数）。
+    代价是 95% 区间 **±1.9 分**，而真实代际提升只有 **~0.3 分**。
+    于是 ``argmax`` = 在噪声里抽签，并把恰好最高的那一刻当成"最好"
+    （winner's curse）——s7（8.60）评测分高于 s11（7.231）、实际却更弱。
 
     ``guard`` 只做一件事：**不追高，只在出现超出噪声的实质退化时回退**。
     回退判据是「最近 k 次评测的均值 + 2×SE 仍低于全程中位数」。
     """
+    note_metric = SELECT_METRICS.get(metric, (+1, metric))[1]
     if select == "max" or not eval_log:
-        return "best", "select=max（历史最佳教师评测分；该指标噪声大于代际差异）"
+        return "best", f"select=max（历史最佳 {metric}：{note_metric}）"
     if select == "last":
         return "last", "select=last：采用最后一轮"
     k = min(3, len(eval_log))
-    recent = [x[1] for x in eval_log[-k:]]
-    se_r = [x[2] for x in eval_log[-k:]]
+    recent = [x["score"] for x in eval_log[-k:]]
+    se_r = [x["se"] for x in eval_log[-k:]]
     m_r = sum(recent) / k
     # 各次评测相互独立：均值方差 = Σσᵢ²/k²，故 SE(均值) = √(Σσᵢ²)/k
     se_m = (sum(s * s for s in se_r) ** 0.5) / k
-    vals = sorted(x[1] for x in eval_log)
+    vals = sorted(x["score"] for x in eval_log)
     med = vals[len(vals) // 2] if len(vals) % 2 else \
         (vals[len(vals) // 2 - 1] + vals[len(vals) // 2]) / 2
+    label = f"指标 {metric}"
     if m_r + 2.0 * se_m < med:
-        return "best", (f"select=guard：最近 {k} 次评测均值 {m_r:.2f} 低于全程中位数 "
-                        f"{med:.2f} 达 {med - m_r:.2f}（> 2×SE={2 * se_m:.2f}），"
-                        f"判定为实质退化 → 保持历史最佳")
-    return "last", (f"select=guard：最近 {k} 次评测均值 {m_r:.2f} 未显著低于全程中位数 "
-                    f"{med:.2f}（2×SE={2 * se_m:.2f}）→ 采用最后一轮")
+        return "best", (f"select=guard（{label}）：最近 {k} 次评测均值 {m_r:.2f} 低于"
+                        f"全程中位数 {med:.2f} 达 {med - m_r:.2f}"
+                        f"（> 2×SE={2 * se_m:.2f}），判定为实质退化 → 保持历史最佳")
+    return "last", (f"select=guard（{label}）：最近 {k} 次评测均值 {m_r:.2f} 未显著低于"
+                    f"全程中位数 {med:.2f}（2×SE={2 * se_m:.2f}）→ 采用最后一轮")
 
 
 def main() -> int:
@@ -326,17 +390,39 @@ def main() -> int:
                     help="关闭自适应系数（默认开启）")
     ap.add_argument("--eval-rounds", type=int, default=25)
     ap.add_argument("--eval-every", type=int, default=5)
+    ap.add_argument("--eval-anchor", default="",
+                    help="把某个模型（裸文件名，不带 .pt，如 dushan_big_s11）作为"
+                         "**锚点**放进评测桌轮换，逐副记录 (本模型分 − 锚点分) 的配对"
+                         "均值与 SE，作为选点指标 ``vs_anchor``。这一项零额外算力"
+                         "（仍是同样的牌数与局数），但配对消掉了牌运方差，且口径与"
+                         "对外的 scripts/score_checkpoints.py 完全一致。留空则关闭。")
     ap.add_argument("--threads", type=int, default=8)
-    ap.add_argument("--save-every", type=int, default=0,
+    ap.add_argument("--save-every", type=int, default=50,
                     help="每 N 轮额外存一份周期性检查点（0=关闭），"
-                         "存到 <out 同目录>/_ckpts/。供训练后做对位评分选点——"
-                         "训练内的教师评测噪声太大，不该用来挑检查点。")
-    ap.add_argument("--select", choices=["max", "last", "guard"], default="max",
-                    help="最终 --out 保存哪个检查点。max=历史最佳教师评测分（旧行为；"
-                         "该指标 SE≈0.97，95%%CI≈±1.9 分，而真实代际提升只有 ~0.3 分，"
-                         "argmax 等于在噪声里抽签并被 winner's curse 高估）；"
-                         "last=最后一轮；guard=最后一轮，但最近若干次评测出现"
-                         "超出噪声的实质退化时回退到历史最佳。")
+                         "存到 <out 同目录>/_ckpts/。默认 50——训练内的指标噪声太大，"
+                         "绝不该用来挑检查点；把周期检查点留下来，事后用共用牌池对位"
+                         "评分才有得选。（历史 s1–s11 从未开这个开关，导致"
+                         "「代内重选」永久不可能。）")
+    ap.add_argument("--select", choices=["max", "last", "guard"], default="guard",
+                    help="最终 --out 保存哪个检查点。max=历史最佳（旧行为，等同于在"
+                         "噪声里抽签）；last=最后一轮；guard=最后一轮，但最近若干次"
+                         "评测出现超出噪声的实质退化时回退到历史最佳（默认）。")
+    ap.add_argument("--select-metric", choices=sorted(SELECT_METRICS), default="avg_score",
+                    help="选点（含 guard 判定与历史最佳）用哪个指标。"
+                         "avg_score=旧依据（F≈1.0，等于抽签）；"
+                         "vs_anchor=对锚点模型的配对净分差（需 --eval-anchor，推荐）；"
+                         "composite=win_rate+bigfan20_rate−deal_in_rate 等权定标；"
+                         "bigfan20_rate=目前信噪比最高（F≈2.1）；"
+                         "deal_in_rate=稀有事件，F≈0.4，比旧指标更差（保留以便复核）。")
+    ap.add_argument("--snapshot-pool", default="",
+                    help="跨代快照池：逗号分隔的模型裸名（不带 .pt），会被加载并**常驻**"
+                         "对手池（不参与最近 8 份的自有快照裁剪），让自我对弈同时面对"
+                         "「不同世代的自己」。零采集成本，是本机唯一能立刻做的"
+                         "对手池增强。例：--snapshot-pool dushan_big_s3,dushan_big_s7。")
+    ap.add_argument("--past-prob", type=float, default=0.3,
+                    help="一局里抽到「历史快照当对手」的概率（其余按 teacher-prob 分给"
+                         "教师，剩下的是纯自我对弈）。")
+
     ap.add_argument("--vectorized", action="store_true",
                     help="用向量化采集（多局合批推理 + 多进程，快约 3 倍）")
     ap.add_argument("--workers", type=int, default=6,
@@ -368,6 +454,51 @@ def main() -> int:
 
     print(f"从 {args.init} 初始化 (epoch={ck.get('epoch')}, val_loss={ck.get('val_loss')})")
     print(f"参数量 {model.n_params():,}；{args.iters} 轮 × {args.games_per_iter} 局/轮")
+    print(f"[选点] select={args.select} metric={args.select_metric}"
+          f"（{SELECT_METRICS.get(args.select_metric, (+1, '?'))[1]}）"
+          f" save-every={args.save_every} eval-every={args.eval_every}"
+          f" eval-rounds={args.eval_rounds}")
+
+    # ---- 跨代快照池（常驻对手，不参与自有快照裁剪） --------------------------
+    pool_extra = []
+    for stem in [s.strip() for s in args.snapshot_pool.split(",") if s.strip()]:
+        p = Path(stem)
+        if not p.is_absolute():
+            p = ROOT / "models" / (stem if stem.endswith(".pt") else f"{stem}.pt")
+        if not p.exists():
+            print(f"[pool] 跳过（不存在）：{p}")
+            continue
+        extra_ck = torch.load(p, map_location="cpu", weights_only=False)
+        enc = extra_ck.get("net") or nc
+        em = build_model(NetConfig(enc["channels"], enc["blocks"], enc["hidden"]))
+        em.load_state_dict(extra_ck["state_dict"])
+        em = em.eval()
+        for q in em.parameters():
+            q.requires_grad_(False)
+        pool_extra.append(em)
+        print(f"[pool] 常驻对手 +{p.name}（参数量 {em.n_params():,}）")
+    if args.snapshot_pool and not pool_extra:
+        print("[pool] 警告：--snapshot-pool 未加载到任何模型")
+
+    # ---- 评测锚点 ------------------------------------------------------------
+    anchor_model = None
+    if args.eval_anchor:
+        ap_path = Path(args.eval_anchor)
+        if not ap_path.is_absolute():
+            ap_path = ROOT / "models" / (args.eval_anchor
+                                         if args.eval_anchor.endswith(".pt")
+                                         else f"{args.eval_anchor}.pt")
+        if not ap_path.exists():
+            raise SystemExit(f"--eval-anchor 找不到模型：{ap_path}")
+        a_ck = torch.load(ap_path, map_location="cpu", weights_only=False)
+        a_nc = a_ck.get("net") or nc
+        anchor_model = build_model(NetConfig(a_nc["channels"], a_nc["blocks"],
+                                             a_nc["hidden"]))
+        anchor_model.load_state_dict(a_ck["state_dict"])
+        anchor_model = anchor_model.eval()
+        for q in anchor_model.parameters():
+            q.requires_grad_(False)
+        print(f"[eval] 锚点 = {ap_path.name}（参数量 {anchor_model.n_params():,}）")
 
     def make_eval():
         t1 = HeuristicBot(seed=101, weights=TEACHER_STYLES["balanced"])
@@ -376,14 +507,43 @@ def main() -> int:
         # HeuristicBot.name 是类属性，默认全是 "heuristic"；不复写的话三个教师
         # 在 play_duplicate 里会合并成同一行统计，看不出"打三个不同风格总和"。
         t1.name, t2.name, t3.name = "teacher1", "teacher2", "teacher3"
+        if anchor_model is not None:
+            # 锚点占一个座位：只剩 2 个教师位。仍是 4 座轮换、同一副牌，
+            # 所以 res["net"] 与 res["anchor"] 在第 r 副上是**配对**观测。
+            return [
+                NetAgent(model, seed=11, temperature=0.0, name="net"),
+                NetAgent(anchor_model, seed=11, temperature=0.0, name="anchor"),
+                t1, t2,
+            ]
         return [
             NetAgent(model, seed=11, temperature=0.0, name="net"),
             t1, t2, t3,
         ]
 
+    def run_eval():
+        """跑一次训练内评测，返回 ``(某座位的统计字典, 选点分数字典)``。"""
+        res, per_deal = play_duplicate(
+            make_eval, args.eval_rounds, seed0=4242,
+            game_factory=lambda s: GameCls(CfgCls(), seed=s),
+            return_per_deal=True)
+        scores: dict[str, float] = {}
+        if metric_score(res.get("net"), args.select_metric) is not None:
+            scores["_select"] = float(metric_score(res["net"], args.select_metric))
+        if anchor_model is not None and "anchor" in per_deal and "net" in per_deal:
+            d = [x - y for x, y in zip(per_deal["net"], per_deal["anchor"])]
+            n = len(d)
+            mean = sum(d) / n
+            sd = (sum((v - mean) ** 2 for v in d) / (n - 1)) ** 0.5 if n > 1 else 0.0
+            res["net"]["vs_anchor"] = mean
+            res["net"]["vs_anchor_se"] = sd / n ** 0.5 if n else 0.0
+            res["net"]["vs_anchor_deals"] = n
+            if args.select_metric == "vs_anchor":
+                scores["_select"] = float(mean)
+        return res
+
     history = []
     best_score = -1e9
-    eval_log: list[tuple[int, float, float]] = []   # (iter, 评测均分, 该次的标准误)
+    eval_log: list[dict] = []   # [{"iter":i,"score":s,"se":e,"eval":{...}}, ...]
     snapshots = []
     best_ckpt = None
     watchdog = [0, None]   # [连续异常次数, 上次恢复的存档 iter]
@@ -391,6 +551,7 @@ def main() -> int:
     if args.vectorized and args.workers > 1:
         import multiprocessing as _mp
         _pool[0] = _mp.get_context("spawn").Pool(processes=args.workers)
+
     t0 = time.time()
 
     for it in range(args.iters):
@@ -407,7 +568,7 @@ def main() -> int:
                 _pool[0].close()
                 _pool[0].join()
                 _pool[0] = _fresh_pool()
-            snap_sd = [m.state_dict() for m in snapshots]
+            snap_sd = [m.state_dict() for m in (pool_extra + snapshots)]
             traj = None
             for attempt in range(3):
                 try:
@@ -415,7 +576,7 @@ def main() -> int:
                         model.state_dict(), nc, args.games_per_iter,
                         args.seed + it * 99991, args.temperature, args.reward_scale,
                         args.teacher_prob, workers=args.workers or 1,
-                        past_prob=0.3, snapshots_sd=snap_sd, rules=args.rules,
+                        past_prob=args.past_prob, snapshots_sd=snap_sd, rules=args.rules,
                         want_traj=True, pool=_pool[0])
                     traj = traj_arr
                     break
@@ -433,7 +594,7 @@ def main() -> int:
             traj, rewards, dt = collect_games(
                 model, args.games_per_iter, args.seed + it * 99991,
                 args.temperature, args.reward_scale, args.teacher_prob, args.threads,
-                snapshots=snapshots)
+                snapshots=pool_extra + snapshots, past_prob=args.past_prob)
         upd = update(model, ref_model, opt, traj, rewards, args)
         if not args.no_adaptive:
             adapt_coefs(args, upd["entropy"], upd["kl"])
@@ -482,25 +643,43 @@ def main() -> int:
                 snapshots = snapshots[-8:]
 
         if (it + 1) % args.eval_every == 0 or it == args.iters - 1:
-            res = play_duplicate(make_eval, args.eval_rounds, seed0=4242,
-                                 game_factory=lambda s: GameCls(CfgCls(), seed=s))
+            res = run_eval()
             rec["eval"] = res["net"]
             printed = {k: (round(v, 3) if isinstance(v, float) else v)
                        for k, v in res["net"].items()}
             print(f"  [eval] {printed}", flush=True)
-            if rec["eval"]["avg_score"] > best_score:
-                best_score = rec["eval"]["avg_score"]
+            cur = metric_score(rec["eval"], args.select_metric)
+            if cur is None:
+                # 指标在当前评测里不可用（例如选了 vs_anchor 却没给 --eval-anchor）
+                # ——退化为 avg_score，并在日志里明说，绝不静默换成别的口径。
+                print(f"  [eval] 指标 {args.select_metric} 不可用 → 本次回退 avg_score",
+                      flush=True)
+                cur = metric_score(rec["eval"], "avg_score")
+            cur = float(cur if cur is not None else -1e9)
+            rec["select_metric"] = args.select_metric
+            rec["select_score"] = cur
+            if cur > best_score:
+                best_score = cur
                 best_ckpt = {
                     "state_dict": {k: v.clone() for k, v in model.state_dict().items()},
                     "config": vars(args),
                     "net": nc,
                     "iter": it + 1,
+                    "select_metric": args.select_metric,
+                    "select_score": cur,
                     "eval": rec["eval"],
                 }
                 Path(args.out).parent.mkdir(parents=True, exist_ok=True)
                 torch.save(best_ckpt, args.out)
-            eval_log.append((it + 1, float(rec["eval"]["avg_score"]),
-                             float(rec["eval"].get("avg_score_se") or 0.0)))
+            # 选点分自身的标准误：vs_anchor 用配对 SE；其余指标沿用其字段的 SE。
+            if args.select_metric == "vs_anchor":
+                se = float(rec["eval"].get("vs_anchor_se") or 0.0)
+            elif args.select_metric == "avg_score":
+                se = float(rec["eval"].get("avg_score_se") or 0.0)
+            else:
+                se = 0.0
+            eval_log.append({"iter": it + 1, "score": cur, "se": se,
+                             "eval": dict(rec["eval"])})
 
         # 周期性检查点：训练结束后用 scripts/score_checkpoints.py 在共用牌池上
         # 对它们做对位评分，才是可信的选点依据（训练内评测分噪声太大）。
@@ -526,16 +705,42 @@ def main() -> int:
     Path(args.history).write_text(json.dumps(history, indent=2), encoding="utf-8")
 
     # ---- 最终选点 -----------------------------------------------------------
-    which, select_note = choose_final(eval_log, args.select)
+    which, select_note = choose_final(eval_log, args.select, args.select_metric)
     if which == "last" and history:
         _dump_ckpt(args.out, model, nc, args, len(history),
                    history[-1].get("eval"))
+        if eval_log:
+            ck_out = torch.load(args.out, map_location="cpu", weights_only=False)
+            ck_out["select_metric"] = args.select_metric
+            ck_out["select_score"] = eval_log[-1]["score"]
+            torch.save(ck_out, args.out)
     print(f"[select] {select_note}")
+    # 选点档案：无论选了谁，都把「如果按别的指标选会选谁」一并写盘，
+    # 方便事后用天梯复核——这正是历史 s1–s11 缺的那份记录。
+    sel_report = {
+        "select": args.select,
+        "select_metric": args.select_metric,
+        "which": which,
+        "note": select_note,
+        "saved_iter": (len(history) if which == "last"
+                       else (best_ckpt or {}).get("iter")),
+        "eval_log": eval_log,
+        "alternatives": {m: max(eval_log, key=lambda r: metric_score(r["eval"], m)
+                                or -1e9)["iter"]
+                         for m in SELECT_METRICS
+                         if any(metric_score(r["eval"], m) is not None for r in eval_log)},
+    }
+    sel_path = Path(args.history).with_name(Path(args.history).stem + "_selection.json")
+    sel_path.write_text(json.dumps(sel_report, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+    print(f"[select] 按各指标分别会选中的轮次 -> {sel_report['alternatives']}")
+    print(f"[select] 选点档案 -> {sel_path}")
 
     if _pool[0] is not None:
         _pool[0].close()
         _pool[0].join()
-    print(f"完成。最佳评测平均分 {best_score:+.3f}，模型 -> {args.out}")
+    print(f"完成。选点指标 {args.select_metric} 的历史最佳 {best_score:+.3f}，"
+          f"模型 -> {args.out}")
     return 0
 
 
