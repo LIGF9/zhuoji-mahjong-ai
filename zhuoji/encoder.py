@@ -172,18 +172,22 @@ def encode_v1(game, player: int) -> Observation:
     return Observation(tiles=tiles, glob=g, head=head, mask=mask)
 
 
-def encode(game, player: int, version: int | None = None) -> Observation:
+def encode(game, player: int, version: int | None = None,
+           packs=None) -> Observation:
     """按版本编码（``version=None`` 时用模块默认版本，历史默认 v1）。
 
     v2 的实现在 :mod:`zhuoji.encoder_v2`。这里**延迟导入**，一是避免
     ``encoder ↔ encoder_v2`` 的循环导入，二是让只跑 v1 的路径完全不加载 v2 代码。
+
+    ``packs`` 只对 v2 有意义：指定启用哪几个 P1 特征包（``None`` = 全开）。
+    见 :func:`zhuoji.encoder_v2.parse_packs`。
     """
     v = _DEFAULT_VERSION if version is None else int(version)
     if v == 1:
         return encode_v1(game, player)
     if v == 2:
         from .encoder_v2 import encode_v2
-        return encode_v2(game, player, encode_v1)
+        return encode_v2(game, player, encode_v1, packs)
     raise ValueError(f"未知编码器版本 {v}，可选 {ENCODER_VERSIONS}")
 
 

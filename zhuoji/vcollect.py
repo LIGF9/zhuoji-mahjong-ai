@@ -61,10 +61,10 @@ class _GameSlot:
     """
 
     __slots__ = ("game", "gi", "seats", "bots", "net_keys", "models", "steps",
-                 "enc_version")
+                 "enc_version", "enc_packs")
 
     def __init__(self, game, gi, seats, bots, net_keys, models,
-                 enc_version: int = 1):
+                 enc_version: int = 1, enc_packs=None):
         self.game = game
         self.gi = gi
         self.seats = seats        # list["net"|"bot"]
@@ -73,6 +73,7 @@ class _GameSlot:
         self.models = models      # dict[key, model]
         self.steps = 0
         self.enc_version = int(enc_version)   # 状态编码器版本（P1 的 v1/v2）
+        self.enc_packs = enc_packs            # 启用的 P1 特征包（None = 全开）
 
 
 def _make_seats(rng, teacher_prob, snapshots, past_prob):
@@ -115,7 +116,12 @@ def _advance(slot: _GameSlot):
         p = game.actor()
         if slot.seats[p] == "net":
             key = slot.net_keys[p]
-            return p, encode(game, p, slot.enc_version), key, slot.models[key]
+            mdl = slot.models[key]
+            # 版本与包掩码优先取模型自带属性：跨代对手池里 v1/v2 可以混坐，
+            # 每个座位按自己的口径编码，不会因为主模型是 v2 就把 v1 快照喂错。
+            ver = getattr(mdl, "encoder_version", slot.enc_version)
+            packs = getattr(mdl, "encoder_packs", slot.enc_packs)
+            return (p, encode(game, p, ver, packs), key, mdl)
         game.step(slot.bots[p].choose(game))
         slot.steps += 1
         if slot.steps >= MAX_STEPS:
@@ -166,10 +172,13 @@ def collect_vectorized(model, n_games: int, seed0: int, temperature: float,
                        reward_scale: float, teacher_prob: float,
                        threads: int = 4, snapshots=None, past_prob: float = 0.3,
                        game_cls=None, config_cls=None, want_traj: bool = True,
-                       encoder_version: int = 1):
+                       encoder_version: int = 1, encoder_packs=None):
     """向量化采集 ``n_games`` 局。返回与 selfplay.collect_games 兼容的结果。
 
     ``want_traj=False`` 时只关心对局结果（评测用），不记录训练样本。
+    ``encoder_packs`` 只对 v2 有意义（见 :func:`zhuoji.encoder_v2.parse_packs`）；
+    主模型与各快照的版本/包掩码优先取**模型自带属性**，因此跨代对手池
+    可以混用 v1/v2 而不会串味。
     """
     if game_cls is None:
         from zhuoji import RulesConfig, ZhuojiGame
@@ -189,7 +198,7 @@ def collect_vectorized(model, n_games: int, seed0: int, temperature: float,
         models.setdefault("net", model)   # 主模型也必须登记，否则 _advance 取不到
         game = game_cls(config_cls(), seed=int(seed0 + gi * 6151))
         slots.append(_GameSlot(game, gi, seats, bots, net_keys, models,
-                               encoder_version))
+                               encoder_version, encoder_packs))
 
     active = list(range(n_games))
     while active:
@@ -235,7 +244,7 @@ def _make_bot(kind: str, seed: int):
 
 def run_duplicate(model_bank, seat_specs, deals: int, seed0: int,
                   game_cls, config_cls, threads: int = 2,
-                  encoder_version: int = 1):
+                  encoder_version: int = 1, encoder_packs=None):
     """复式对局：``deals`` 副牌 × 4 座位轮换，网络决策按模型合批。
 
     ``model_bank``: dict[key -> model]；
@@ -274,7 +283,7 @@ def run_duplicate(model_bank, seat_specs, deals: int, seed0: int,
                     else:
                         bots[s] = _make_bot(spec[1], seed * 4 + s)
                 slots.append(_GameSlot(game, len(slots), seats, bots, net_keys,
-                                       models, encoder_version))
+                                       models, encoder_version, encoder_packs))
                 metas.append((r, shift))
 
         base = c0 * 4
@@ -326,17 +335,35 @@ def _build_net(nc, sd):
     return m.eval()
 
 
+def _build_snap(entry, fallback_nc):
+    """按快照**自带**的元数据重建一个对手模型。
+
+    ``entry`` 可以是 :func:`zhuoji.net.ck_from_model` 产出的检查点风格字典
+    （推荐：版本/包掩码/网络配置都自带），也可以退化为裸 ``state_dict``
+    （历史写法，此时用主模型的 ``fallback_nc``，且不挂版本属性）。
+    """
+    from zhuoji.net import build_from_ckpt
+    if isinstance(entry, dict) and "state_dict" in entry \
+            and ("net" in entry or "encoder_version" in entry):
+        m, _v = build_from_ckpt(entry)
+        return m
+    return _build_net(fallback_nc, entry)
+
+
 def _worker(args):
     (state_dict, nc, n_games, seed0, temperature, reward_scale, teacher_prob,
-     past_prob, snapshots_sd, rules, want_traj, encoder_version) = args
+     past_prob, snapshots_sd, rules, want_traj, encoder_version,
+     encoder_packs) = args
     game_cls, config_cls = _resolve_game_classes(rules)
     torch.set_num_threads(2)
     model = _build_net(nc, state_dict)
-    snaps = [_build_net(nc, sd) for sd in (snapshots_sd or [])]
+    model.encoder_version = int(encoder_version)
+    model.encoder_packs = encoder_packs
+    snaps = [_build_snap(sd, nc) for sd in (snapshots_sd or [])]
     with torch.no_grad():
         traj, rewards, dt = collect_vectorized(
             model, n_games, seed0, temperature, reward_scale, teacher_prob,
-            encoder_version=encoder_version,
+            encoder_version=encoder_version, encoder_packs=encoder_packs,
             threads=2, snapshots=snaps, past_prob=past_prob,
             game_cls=game_cls, config_cls=config_cls, want_traj=want_traj)
     if want_traj and traj:
@@ -354,17 +381,21 @@ def _worker(args):
 def collect_parallel(state_dict, nc, n_games: int, seed0: int, temperature: float,
                      reward_scale: float, teacher_prob: float, workers: int = 4,
                      past_prob: float = 0.3, snapshots_sd=None, rules: str = "zhuoji",
-                     want_traj: bool = True, pool=None, encoder_version: int = 1):
+                     want_traj: bool = True, pool=None, encoder_version: int = 1,
+                     encoder_packs=None):
     """多进程向量化采集：``n_games`` 均分给 ``workers`` 个进程。
 
     ``pool`` 传入已建好的 ``multiprocessing.Pool`` 可复用进程，
     避免训练循环里每轮重新 spawn（Windows 下每次约 1-2 秒开销）。
+
+    ``snapshots_sd`` 里每项最好是 :func:`zhuoji.net.ck_from_model` 产出的
+    检查点风格字典（自带网络配置/版本/包掩码），裸 ``state_dict`` 仍可用。
     """
     if workers <= 1:
         tiles, glob, mask, head, act, ply, gi, rewards, dt = _worker(
             (state_dict, nc, n_games, seed0, temperature, reward_scale,
              teacher_prob, past_prob, snapshots_sd or [], rules, want_traj,
-             encoder_version))
+             encoder_version, encoder_packs))
         if tiles is not None:
             traj = [(t, g, m, int(h), int(a), int(p), int(x))
                     for t, g, m, h, a, p, x in zip(tiles, glob, mask, head, act, ply, gi)]
@@ -376,7 +407,8 @@ def collect_parallel(state_dict, nc, n_games: int, seed0: int, temperature: floa
         per[i] += 1
     tasks = [(state_dict, nc, k, seed0 + w * 102871, temperature,
               reward_scale, teacher_prob, past_prob,
-              snapshots_sd or [], rules, want_traj, encoder_version)
+              snapshots_sd or [], rules, want_traj, encoder_version,
+              encoder_packs)
              for w, k in enumerate(per) if k > 0]
     ctx = mp.get_context("spawn")
     if pool is not None:
@@ -419,7 +451,9 @@ def _table_worker(args):
     """循环赛 worker：跑若干张牌桌的复式赛，返回对局记录。"""
     (table_ids, seat_specs, sd_bank, nc, deals, seed0, rules) = args
     game_cls, config_cls = _resolve_game_classes(rules)
-    bank = {k: _build_net(nc, sd) for k, sd in sd_bank.items()}
+    # ``sd_bank`` 的每项允许是「检查点风格字典」（自带网络配置/版本/包掩码），
+    # 于是同一场循环赛里可以混放 v1 与 v2 检查点而不会串味。
+    bank = {k: _build_snap(sd, nc) for k, sd in sd_bank.items()}
     torch.set_num_threads(2)
     out = []
     with torch.no_grad():

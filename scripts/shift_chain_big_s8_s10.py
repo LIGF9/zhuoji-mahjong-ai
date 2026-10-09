@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PY = rr"C:\Users\hyzor\.workbuddy\binaries\python\envs\zhuoji\Scripts\python.exe"
+PY = r"C:\Users\hyzor\.workbuddy\binaries\python\envs\zhuoji\Scripts\python.exe"
 SHIFT_LOG = ROOT / "reports" / "shift_chain_big_s8_s10.log"
 SUMMARY = ROOT / "reports" / "shift_chain_big_s8_s10_summary.json"
 

@@ -24,7 +24,8 @@ class NetAgent(Bot):
 
     def __init__(self, model, seed: int = 0, temperature: float = 0.0,
                  name: str | None = None, threads: int | None = None,
-                 encoder_version: int | None = None):
+                 encoder_version: int | None = None,
+                 encoder_packs=None):
         self.model = model
         self.model.eval()
         self.rng = np.random.default_rng(seed)
@@ -34,6 +35,11 @@ class NetAgent(Bot):
         self.encoder_version = int(
             encoder_version if encoder_version is not None
             else getattr(model, "encoder_version", 1))
+        # 启用的 P1 特征包（只对 v2 有意义）：同上的"显式 > 模型属性 > 默认"优先级。
+        # 训练时用包掩码关掉了某个包，评测时必须关掉同样的包，否则输入口径不一致。
+        self.encoder_packs = (
+            encoder_packs if encoder_packs is not None
+            else getattr(model, "encoder_packs", None))
         if name:
             self.name = name
         if threads is not None:
@@ -43,10 +49,13 @@ class NetAgent(Bot):
         if seed is not None:
             self.rng = np.random.default_rng(seed)
 
+    def _obs(self, game):
+        p = game.actor()
+        return encode(game, p, self.encoder_version, self.encoder_packs)
+
     @torch.no_grad()
     def choose(self, game):
-        p = game.actor()
-        obs = encode(game, p, self.encoder_version)
+        obs = self._obs(game)
         out = self.model(
             torch.from_numpy(obs.tiles[None].astype(np.float32)),
             torch.from_numpy(obs.glob[None].astype(np.float32)),
@@ -63,8 +72,7 @@ class NetAgent(Bot):
 
     def distribution(self, game):
         """返回 (head, mask, probs, value)，供 RL 采样与训练使用。"""
-        p = game.actor()
-        obs = encode(game, p, self.encoder_version)
+        obs = self._obs(game)
         out = self.model(
             torch.from_numpy(obs.tiles[None].astype(np.float32)),
             torch.from_numpy(obs.glob[None].astype(np.float32)),

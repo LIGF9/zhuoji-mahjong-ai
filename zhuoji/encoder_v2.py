@@ -51,6 +51,58 @@ GLOBAL_DIM_V2 = 98
 _V1_CHANNELS = 15
 _V1_GLOBAL_DIM = 70
 
+# ---------------------------------------------------------------------------
+# P1 三包与「包掩码」
+# ---------------------------------------------------------------------------
+#: P1 的三个互不依赖的特征包（见 ``docs/P1-表征升级设计.md`` §2）。
+ALL_PACKS: tuple[str, ...] = ("a", "b", "c")
+
+#: 每个包占用的 **tiles 通道**区间（半开）与 **glob 维度**区间（半开）。
+#: 注意 P1b 同时占通道与全局标量，所以两处都要写。
+PACK_TILE_SLICES: dict[str, tuple[int, int]] = {"a": (15, 27), "b": (27, 31)}
+PACK_GLOB_SLICES: dict[str, tuple[int, int]] = {"b": (70, 82), "c": (82, 98)}
+
+PACK_DESC: dict[str, str] = {
+    "a": "牌河时序（ch 15–26）",
+    "b": "危险度与对手状态（ch 27–30 + glob 70–81）",
+    "c": "番型潜力与巡目情境（glob 82–97）",
+}
+
+
+def parse_packs(spec) -> tuple[str, ...]:
+    """把 ``--encoder-packs`` 的写法规范成元组。
+
+    * ``None``        → 全开 ``("a","b","c")``（历史默认，向后兼容）
+    * ``"abc"``/``"a"``/``"ac"``/``["a","b"]`` → 只留其中的包（按 a,b,c 固定顺序）
+    * ``""``/``"none"``/``"-"`` → 一个都不开（纯 v1 特征 + 零填充，作对照臂）
+    """
+    if spec is None:
+        return ALL_PACKS
+    if isinstance(spec, str):
+        chars = [c for c in spec.lower() if c in "abc"]
+    else:
+        chars = [str(c).lower() for c in spec]
+        chars = [c for c in chars if c in "abc"]
+    keep = set(chars)
+    return tuple(p for p in ALL_PACKS if p in keep)
+
+
+def apply_pack_mask(tiles: np.ndarray, g: np.ndarray,
+                    packs: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
+    """把**未启用**包的通道/维度整体清零。
+
+    这是单变量消融的关键：**架构与参数量完全不变**，只是把某个包的信息
+    置零。因此"开包 / 关包"两个臂之间唯一变化的就是信息本身，
+    而不是容量或初始化——否则根本分不清涨分是来自特征还是来自参数。
+    """
+    for name, (lo, hi) in PACK_TILE_SLICES.items():
+        if name not in packs:
+            tiles[lo:hi] = 0.0
+    for name, (lo, hi) in PACK_GLOB_SLICES.items():
+        if name not in packs:
+            g[lo:hi] = 0.0
+    return tiles, g
+
 #: 「开局每家手上已发的牌」：13×4 + 庄家多摸 1 = 53，取 52 作保守下界
 _OPENING_TILES = 52
 
@@ -264,12 +316,15 @@ def _max_reachable_fan(game, me: int) -> float:
     return best
 
 
-def encode_v2(game, player: int, base_encode):
+def encode_v2(game, player: int, base_encode, packs=None):
     """v2 编码。
 
     ``base_encode`` 为 v1 的 ``encode``（由 :mod:`zhuoji.encoder` 注入，
     避免模块间循环导入）；v1 的 0–14 通道与 0–69 标量**逐位原样保留**，
     只在后面追加新特征，于是「v1 是 v2 的子集」这个性质可以被测试断言。
+
+    ``packs`` 为要**启用**的包（见 :func:`parse_packs`）；``None`` = 全开。
+    未启用的包在最后统一清零（:func:`apply_pack_mask`），维度与参数量不变。
     """
     obs = base_encode(game, player)
     tiles = np.zeros((NUM_CHANNELS_V2, NUM_TILE_TYPES), dtype=np.float32)
@@ -278,4 +333,7 @@ def encode_v2(game, player: int, base_encode):
     g = np.zeros(GLOBAL_DIM_V2, dtype=np.float32)
     g[:_V1_GLOBAL_DIM] = obs.glob
     obs.glob = encode_glob_v2(game, player, g)
+    if packs is not None:
+        obs.tiles, obs.glob = apply_pack_mask(
+            obs.tiles, obs.glob, parse_packs(packs))
     return obs

@@ -178,13 +178,29 @@ def encoder_version_from_ckpt(ck: dict) -> int:
     return int(ck.get("encoder_version", 1))
 
 
+def encoder_packs_from_ckpt(ck: dict) -> tuple[str, ...]:
+    """检查点启用过的 P1 特征包。
+
+    老文件没有这个字段 → 全开（向后兼容：当时的 v2 检查点一定是全开的）。
+    v1 检查点这个字段无意义，调用方应先用
+    :func:`encoder_version_from_ckpt` 判断版本。
+    """
+    v = ck.get("encoder_packs")
+    if v is None:
+        from .encoder_v2 import ALL_PACKS
+        return ALL_PACKS
+    from .encoder_v2 import parse_packs
+    return parse_packs(v)
+
+
 def build_from_ckpt(ck: dict, map_location="cpu"):
     """按检查点自带的元数据构建模型并装入权重，返回 ``(model, encoder_version)``。
 
     这是加载旧模型的**唯一推荐入口**：v1/v2 的输入维度、有无空间头、
-    编码器版本全部由检查点自己声明，调用方不需要知道这些细节。
-    返回的模型上会挂一个 ``encoder_version`` 属性，于是
-    ``NetAgent(model, ...)`` 不用额外传参就能选对编码器。
+    编码器版本、启用过哪些 P1 特征包，全部由检查点自己声明，调用方不需要
+    知道这些细节。返回的模型上会挂 ``encoder_version`` / ``encoder_packs``
+    两个属性，于是 ``NetAgent(model, ...)`` 不用额外传参就能复现训练时的
+    输入口径——**消融实验最容易出的错就是训练关了某个包、评测时忘了关**。
     """
     cfg = net_config_from_ckpt(ck)
     model = build_model(cfg)
@@ -192,7 +208,34 @@ def build_from_ckpt(ck: dict, map_location="cpu"):
     model.eval()
     version = encoder_version_from_ckpt(ck)
     model.encoder_version = version
+    model.encoder_packs = encoder_packs_from_ckpt(ck)
     return model, version
+
+
+def ck_from_model(model, encoder_version: int | None = None,
+                  encoder_packs=None) -> dict:
+    """把内存中的模型打包成「检查点风格」的字典，供 worker 进程或事后复评重建。
+
+    为什么要这个：多进程采集只传 ``state_dict`` 时，worker 只能按**主模型**的
+    网络/编码器配置重建，于是「主模型 v2 + 跨代快照 v1」这种组合会直接形状报错。
+    打包成检查点风格后，每个快照自己声明版本与包掩码，就不再依赖主模型的配置。
+    """
+    d = {
+        "net": {
+            "channels": model.channels,
+            "blocks": model.blocks,
+            "hidden": model.fc_in.out_features,
+            "global_dim": model.global_dim,
+            "in_channels": model.in_channels,
+            "spatial_head": bool(model.spatial_head),
+        },
+        "state_dict": model.state_dict(),
+    }
+    if encoder_version is not None:
+        d["encoder_version"] = int(encoder_version)
+    if encoder_packs is not None:
+        d["encoder_packs"] = list(encoder_packs)
+    return d
 
 
 def load_model_file(path, map_location="cpu"):

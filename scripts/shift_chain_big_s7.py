@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PY = rr"C:\Users\hyzor\.workbuddy\binaries\python\envs\zhuoji\Scripts\python.exe"
+PY = r"C:\Users\hyzor\.workbuddy\binaries\python\envs\zhuoji\Scripts\python.exe"
 LOG6 = ROOT / "reports" / "dushan_big_s6.log"
 LOG7 = ROOT / "reports" / "dushan_big_s7.log"
 SHIFT_LOG = ROOT / "reports" / "run_shift.log"

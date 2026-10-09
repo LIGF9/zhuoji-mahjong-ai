@@ -383,6 +383,150 @@ def test_warm_start_v1_to_v2() -> None:
           f"部分复制 {len(info['partial'])} 个（新增通道/列随机初始化）")
 
 
+def test_pack_mask_are_exact_slices():
+    """包掩码：关掉的包**整段为 0**，开着的包**逐位不变**，v1 前缀永不受影响。
+
+    这是「单变量消融」的地基——如果关包时把别的包也动了，涨跌就说不清是谁的功劳。
+    """
+    from zhuoji.encoder_v2 import (PACK_GLOB_SLICES, PACK_TILE_SLICES)
+    g = DushanGame(DushanConfig(), seed=31)
+    _play(g, 60)
+    me = g.actor()
+
+    full = encode(g, me, 2)
+    assert full.tiles.shape == (NUM_CHANNELS_V2, NUM_TILE_TYPES)
+
+    # 逐个包的组合都试一遍（含"全关"和"全开"）
+    for packs in [("a",), ("b",), ("c",), ("a", "b"), ("a", "c"), ("b", "c"), ()]:
+        o = encode(g, me, 2, packs)
+        assert np.array_equal(o.tiles[:NUM_CHANNELS], full.tiles[:NUM_CHANNELS])
+        assert np.array_equal(o.glob[:_V1_GLOBAL_DIM], full.glob[:_V1_GLOBAL_DIM])
+        for name, (lo, hi) in PACK_TILE_SLICES.items():
+            if name in packs:
+                assert np.array_equal(o.tiles[lo:hi], full.tiles[lo:hi]), (packs, name)
+            else:
+                assert not o.tiles[lo:hi].any(), (packs, name, "应为全 0")
+        for name, (lo, hi) in PACK_GLOB_SLICES.items():
+            if name in packs:
+                assert np.array_equal(o.glob[lo:hi], full.glob[lo:hi]), (packs, name)
+            else:
+                assert not o.glob[lo:hi].any(), (packs, name, "应为全 0")
+    # 全关 = v1 特征 + 零填充
+    o0 = encode(g, me, 2, ())
+    assert not o0.tiles[NUM_CHANNELS:].any() and not o0.glob[_V1_GLOBAL_DIM:].any()
+    print("ok 包掩码：关包整段清零、开包逐位不变、v1 前缀不受影响")
+
+
+def test_parse_packs():
+    from zhuoji.encoder_v2 import ALL_PACKS, parse_packs
+    assert parse_packs(None) == ALL_PACKS == ("a", "b", "c")
+    assert parse_packs("abc") == ("a", "b", "c")
+    assert parse_packs("ba") == ("a", "b")          # 顺序固定，与输入顺序无关
+    assert parse_packs("a") == ("a",)
+    assert parse_packs(["b", "c"]) == ("b", "c")
+    assert parse_packs("none") == ()
+    assert parse_packs("-") == ()
+    assert parse_packs("") == ()
+    print("ok parse_packs：None=全开、乱序归一、none/空串=全关")
+
+
+def test_pack_mask_keeps_architecture():
+    """关包**不改变**维度与参数量：这才叫单变量消融。"""
+    import torch
+    from zhuoji.net import NetConfig, build_model
+    from zhuoji.encoder import dims_for_version
+    c, gd = dims_for_version(2)
+    m = build_model(NetConfig(48, 8, 256, global_dim=gd, in_channels=c,
+                              spatial_head=True))
+    n = m.n_params()
+    for packs in [("a", "b", "c"), ("a",), ()]:
+        tiles = np.zeros((1, c, NUM_TILE_TYPES), dtype=np.float32)
+        gv = np.zeros((1, gd), dtype=np.float32)
+        out = m(torch.from_numpy(tiles), torch.from_numpy(gv))
+        assert out["discard"].shape == (1, 28)
+    assert m.n_params() == n
+    print(f"ok 关包不改架构：参数量恒为 {n:,}")
+
+
+def test_net_agent_inherits_packs_from_model():
+    """``NetAgent`` 必须从模型自带属性取包掩码，否则评测会把训练关掉的包又打开。"""
+    import torch
+    from zhuoji.agent import NetAgent
+    from zhuoji.encoder import dims_for_version
+    from zhuoji.encoder_v2 import PACK_TILE_SLICES
+    from zhuoji.net import NetConfig, build_model
+    c, gd = dims_for_version(2)
+    m = build_model(NetConfig(48, 8, 256, global_dim=gd, in_channels=c))
+    m.eval()
+    m.encoder_version = 2
+    m.encoder_packs = ("a",)
+    agent = NetAgent(m, temperature=0.0)
+    assert agent.encoder_version == 2
+    assert tuple(agent.encoder_packs) == ("a",)
+    g = DushanGame(DushanConfig(), seed=5)
+    _play(g, 40)
+    obs = agent._obs(g)
+    lo, hi = PACK_TILE_SLICES["b"]
+    assert not obs.tiles[lo:hi].any(), "NetAgent 没继承包掩码"
+    print("ok NetAgent 从模型属性继承 encoder_version / encoder_packs")
+
+
+def test_ck_from_model_roundtrip():
+    """``ck_from_model`` → ``build_from_ckpt`` 往返：版本/包掩码/网络结构都还原。"""
+    import torch
+    from zhuoji.encoder import dims_for_version
+    from zhuoji.net import NetConfig, build_from_ckpt, build_model, ck_from_model
+    c, gd = dims_for_version(2)
+    m = build_model(NetConfig(32, 4, 128, global_dim=gd, in_channels=c,
+                              spatial_head=True))
+    m.eval()
+    # 造一个非平凡权重，保证往返后数值一致是"真复制"而不是"都是零"
+    with torch.no_grad():
+        for p in m.parameters():
+            p.add_(torch.randn_like(p) * 0.05)
+    ck = ck_from_model(m, encoder_version=2, encoder_packs=("b", "c"))
+    m2, ver = build_from_ckpt(ck)
+    assert ver == 2 and tuple(m2.encoder_packs) == ("b", "c")
+    assert m2.n_params() == m.n_params()
+    tiles = np.random.rand(2, c, NUM_TILE_TYPES).astype(np.float32)
+    gv = np.random.rand(2, gd).astype(np.float32)
+    with torch.no_grad():
+        a = m(torch.from_numpy(tiles), torch.from_numpy(gv))
+        b = m2(torch.from_numpy(tiles), torch.from_numpy(gv))
+    for k in a:
+        assert torch.equal(a[k], b[k]), k
+    print("ok ck_from_model↔build_from_ckpt 往返：版本/包掩码/输出全一致")
+
+
+def test_dump_ckpt_writes_packs():
+    """``_dump_ckpt`` 必须把包掩码写进检查点（评测靠它自动复现训练口径）。"""
+    import torch
+    from scripts.selfplay import _dump_ckpt
+    from zhuoji.encoder import dims_for_version
+    from zhuoji.net import NetConfig, build_from_ckpt, build_model
+    c, gd = dims_for_version(2)
+    m = build_model(NetConfig(24, 2, 64, global_dim=gd, in_channels=c))
+    m.eval()
+    nc = {"channels": 24, "blocks": 2, "hidden": 64, "global_dim": gd,
+          "in_channels": c, "spatial_head": False}
+    out = Path(ROOT) / "reports" / "_tmp_pack_meta.pt"
+
+    class A:      # 假装是 argparse.Namespace
+        pass
+    _dump_ckpt(out, m, nc, A(), 7, {}, 2, ("a", "c"))
+    ck = torch.load(out, map_location="cpu", weights_only=False)
+    assert ck["encoder_version"] == 2 and ck["encoder_packs"] == ["a", "c"]
+    _, ver = build_from_ckpt(ck)
+    m2, _ = build_from_ckpt(ck)
+    assert ver == 2 and tuple(m2.encoder_packs) == ("a", "c")
+    # v1 不写这个字段（写了反而误导：v1 没有包的概念）
+    _dump_ckpt(out, m, nc, A(), 7, {}, 1, None)
+    ck1 = torch.load(out, map_location="cpu", weights_only=False)
+    assert "encoder_packs" not in ck1
+    out.unlink()
+    print("ok _dump_ckpt：v2 写 encoder_packs、v1 不写")
+
+
 if __name__ == "__main__":
     test_dimensions()
     test_range()
@@ -396,4 +540,10 @@ if __name__ == "__main__":
     test_net_accepts_v2()
     test_spatial_head_is_zero_init_additive()
     test_warm_start_v1_to_v2()
+    test_pack_mask_are_exact_slices()
+    test_parse_packs()
+    test_pack_mask_keeps_architecture()
+    test_net_agent_inherits_packs_from_model()
+    test_ck_from_model_roundtrip()
+    test_dump_ckpt_writes_packs()
     print("编码器 v2（P1 阶段 0）验收测试全部通过 ✅")

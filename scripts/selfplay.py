@@ -37,9 +37,12 @@ from zhuoji.agent import NetAgent, play_duplicate  # noqa: E402
 from zhuoji.bots import TEACHER_STYLES, HeuristicBot  # noqa: E402
 from zhuoji.encoder import (  # noqa: E402
     HEAD_DIMS, dims_for_version, encode, index_to_action)
+from zhuoji.encoder_v2 import ALL_PACKS as ALL_PACKS_V2  # noqa: E402
+from zhuoji.encoder_v2 import PACK_DESC, parse_packs  # noqa: E402
 from zhuoji.net import (  # noqa: E402
-    build_model, encoder_version_from_ckpt, load_into, net_config_from_ckpt,
-    net_meta, warm_start_from_v1)
+    build_from_ckpt, build_model, ck_from_model, encoder_packs_from_ckpt,
+    encoder_version_from_ckpt, load_into, net_config_from_ckpt, net_meta,
+    warm_start_from_v1)
 
 HEAD_NAMES = ["discard", "self_kong", "respond"]
 
@@ -111,7 +114,7 @@ def metric_score(ev: dict | None, metric: str) -> float | None:
 def collect_games(model, n_games, seed0, temperature, reward_scale,
                   teacher_prob, threads=8, snapshots=None, past_prob=0.3,
                   game_cls=ZhuojiGame, config_cls=RulesConfig,
-                  encoder_version: int = 1):
+                  encoder_version: int = 1, encoder_packs=None):
     """跑 ``n_games`` 局，返回模型自己决策点的训练样本。
 
     座位配置有三种，随机混合：
@@ -150,7 +153,7 @@ def collect_games(model, n_games, seed0, temperature, reward_scale,
         while game.phase.value != "over" and steps < 4000:
             p = game.actor()
             if seat_nets[p] == "net":
-                obs = encode(game, p, encoder_version)
+                obs = encode(game, p, encoder_version, encoder_packs)
                 with torch.no_grad():
                     out = model(torch.from_numpy(obs.tiles[None].astype(np.float32)),
                                 torch.from_numpy(obs.glob[None].astype(np.float32)))
@@ -172,7 +175,12 @@ def collect_games(model, n_games, seed0, temperature, reward_scale,
                 a = teachers[p].choose(game)
             else:
                 with torch.no_grad():
-                    obs = encode(game, p, encoder_version)
+                    # 快照座位按**快照自己**的版本/包掩码编码（跨代池里可能混着
+                    # v1 快照与 v2 主模型，用主模型的口径会把对手喂错）。
+                    pm = past_models[p]
+                    obs = encode(game, p,
+                                 getattr(pm, "encoder_version", encoder_version),
+                                 getattr(pm, "encoder_packs", encoder_packs))
                     out = past_models[p](torch.from_numpy(obs.tiles[None].astype(np.float32)),
                                          torch.from_numpy(obs.glob[None].astype(np.float32)))
                     lg = out[obs.head][0][:obs.mask.shape[0]].clone()
@@ -316,21 +324,27 @@ def adapt_coefs(args, ent, kl):
 # 主流程
 # ---------------------------------------------------------------------------
 def _dump_ckpt(path, model, nc, args, it_no, evalr,
-               encoder_version: int = 1) -> None:
+               encoder_version: int = 1, encoder_packs=None) -> None:
     """把一个检查点写到 ``path``（``--out`` 与周期性检查点共用）。
 
     ``encoder_version`` 必须写进去：加载方靠它决定用哪一版编码器，
     老检查点没有这个字段 → 默认 v1（向后兼容）。
+
+    ``encoder_packs`` 只在 v2 时写：消融实验的训练臂关掉了某个包，
+    评测时必须关掉同样的包，靠这个字段自动复现，而不是靠人记得。
     """
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    torch.save({
+    ck_out = {
         "state_dict": {k: v.clone() for k, v in model.state_dict().items()},
         "config": vars(args),
         "net": nc,
         "encoder_version": int(encoder_version),
         "iter": it_no,
         "eval": evalr,
-    }, path)
+    }
+    if int(encoder_version) >= 2 and encoder_packs is not None:
+        ck_out["encoder_packs"] = list(encoder_packs)
+    torch.save(ck_out, path)
 
 
 def choose_final(eval_log: list[dict], select: str, metric: str = "avg_score"
@@ -447,6 +461,12 @@ def main() -> int:
                     help="逐牌空间头：零初始化的 1×1 卷积加到 discard/self_kong 的 "
                          "27 个位置 logit 上（只 +2×(C+1) 个参数）。auto=跟随检查点；"
                          "on=强制开启（同版本加载时输出与旧模型逐位相同，是严格热启动）。")
+    ap.add_argument("--encoder-packs", default="auto",
+                    help="P1 特征包掩码（只对 --encoder v2 有意义）：auto=跟随 --init "
+                         "检查点记录（老文件→全开）；abc=全开；a=只要牌河时序；"
+                         "b=只要危险度与对手状态；c=只要番型潜力；"
+                         "none=全关（纯 v1 特征 + 零填充，作对照臂）。"
+                         "未启用的包只是**清零**，架构与参数量完全不变 —— 这是单变量消融的前提。")
     ap.add_argument("--rules", choices=["zhuoji", "dushan"], default="zhuoji",
                     help="对局规则：zhuoji=贵阳捉鸡，dushan=独山麻将")
     args = ap.parse_args()
@@ -476,6 +496,14 @@ def main() -> int:
     cfg.in_channels, cfg.global_dim = dims_for_version(enc_version)
     cfg.spatial_head = spatial
 
+    # ---- P1 特征包掩码（方案 B 阶段 2b 的单变量消融） ----------------------
+    # 只对 v2 有意义。auto = 跟随检查点（继续训练不会莫名其妙把包打开）；
+    # 显式给出则以此为准，并写进新检查点，评测时能自动复现同一口径。
+    if args.encoder_packs == "auto":
+        enc_packs = encoder_packs_from_ckpt(ck)
+    else:
+        enc_packs = parse_packs(args.encoder_packs)
+
     model = build_model(cfg)
     src_version = encoder_version_from_ckpt(ck)
     if src_version != enc_version and args.encoder != "auto":
@@ -489,6 +517,10 @@ def main() -> int:
             print(f"[load] 缺失 {len(miss)} 键（新增结构，保持初始化）/ "
                   f"意外 {len(unexp)} 键")
     nc = net_meta(cfg)
+    # 把编码口径挂在模型上：这样 deepcopy 出来的快照、以及任何
+    # "拿模型造 NetAgent" 的地方都能自动取到正确的版本与包掩码。
+    model.encoder_version = enc_version
+    model.encoder_packs = enc_packs if enc_version >= 2 else None
 
     ref_model = copy.deepcopy(model)
     ref_model.eval()
@@ -500,13 +532,20 @@ def main() -> int:
 
     print(f"从 {args.init} 初始化 (epoch={ck.get('epoch')}, val_loss={ck.get('val_loss')})")
     print(f"参数量 {model.n_params():,}；{args.iters} 轮 × {args.games_per_iter} 局/轮")
+    print(f"[编码] v{enc_version} spatial_head={'on' if spatial else 'off'}"
+          + (f" packs={''.join(enc_packs) or 'none'}"
+             f"（{', '.join(PACK_DESC[p] for p in enc_packs) or '全关'}）"
+             if enc_version >= 2 else ""))
     print(f"[选点] select={args.select} metric={args.select_metric}"
           f"（{SELECT_METRICS.get(args.select_metric, (+1, '?'))[1]}）"
           f" save-every={args.save_every} eval-every={args.eval_every}"
           f" eval-rounds={args.eval_rounds}")
 
     # ---- 跨代快照池（常驻对手，不参与自有快照裁剪） --------------------------
-    pool_extra = []
+    # 用 build_from_ckpt：快照自带网络配置 / 编码器版本 / 包掩码，于是
+    # 「主模型 v2 + 快照 v1」这种跨版本对手池不会因为形状不同直接报错。
+    pool_extra: list = []          # 模型实例（单进程路径用）
+    pool_extra_ck: list = []       # 检查点风格字典（多进程路径用）
     for stem in [s.strip() for s in args.snapshot_pool.split(",") if s.strip()]:
         p = Path(stem)
         if not p.is_absolute():
@@ -514,20 +553,26 @@ def main() -> int:
         if not p.exists():
             print(f"[pool] 跳过（不存在）：{p}")
             continue
-        extra_ck = torch.load(p, map_location="cpu", weights_only=False)
-        em = build_model(net_config_from_ckpt(extra_ck))
-        em.load_state_dict(extra_ck["state_dict"])
-        em = em.eval()
+        em, e_ver = build_from_ckpt(
+            torch.load(p, map_location="cpu", weights_only=False))
         for q in em.parameters():
             q.requires_grad_(False)
+        # ck_from_model 里显式带上版本/包掩码，worker 才能按同一口径编码
+        pool_extra_ck.append(ck_from_model(
+            em, encoder_version=e_ver,
+            encoder_packs=getattr(em, "encoder_packs", None)))
         pool_extra.append(em)
-        print(f"[pool] 常驻对手 +{p.name}（参数量 {em.n_params():,}）")
+        print(f"[pool] 常驻对手 +{p.name}（参数量 {em.n_params():,}，"
+              f"编码器 v{e_ver}"
+              + (f"，packs={''.join(getattr(em, 'encoder_packs', ALL_PACKS_V2)) or 'none'}"
+                 if e_ver >= 2 else "") + "）")
     if args.snapshot_pool and not pool_extra:
         print("[pool] 警告：--snapshot-pool 未加载到任何模型")
 
     # ---- 评测锚点 ------------------------------------------------------------
     anchor_model = None
     anchor_version = enc_version
+    anchor_packs = None
     if args.eval_anchor:
         ap_path = Path(args.eval_anchor)
         if not ap_path.is_absolute():
@@ -536,14 +581,13 @@ def main() -> int:
                                          else f"{args.eval_anchor}.pt")
         if not ap_path.exists():
             raise SystemExit(f"--eval-anchor 找不到模型：{ap_path}")
-        a_ck = torch.load(ap_path, map_location="cpu", weights_only=False)
-        anchor_model = build_model(net_config_from_ckpt(a_ck))
-        anchor_model.load_state_dict(a_ck["state_dict"])
-        anchor_model = anchor_model.eval()
-        anchor_version = encoder_version_from_ckpt(a_ck)
+        anchor_model, anchor_version = build_from_ckpt(
+            torch.load(ap_path, map_location="cpu", weights_only=False))
+        anchor_packs = getattr(anchor_model, "encoder_packs", None)
         for q in anchor_model.parameters():
             q.requires_grad_(False)
-        print(f"[eval] 锚点 = {ap_path.name}（参数量 {anchor_model.n_params():,}）")
+        print(f"[eval] 锚点 = {ap_path.name}（参数量 {anchor_model.n_params():,}，"
+              f"编码器 v{anchor_version}）")
 
     def make_eval():
         t1 = HeuristicBot(seed=101, weights=TEACHER_STYLES["balanced"])
@@ -557,14 +601,15 @@ def main() -> int:
             # 所以 res["net"] 与 res["anchor"] 在第 r 副上是**配对**观测。
             return [
                 NetAgent(model, seed=11, temperature=0.0, name="net",
-                         encoder_version=enc_version),
+                         encoder_version=enc_version, encoder_packs=enc_packs),
                 NetAgent(anchor_model, seed=11, temperature=0.0, name="anchor",
-                         encoder_version=anchor_version),
+                         encoder_version=anchor_version,
+                         encoder_packs=anchor_packs),
                 t1, t2,
             ]
         return [
             NetAgent(model, seed=11, temperature=0.0, name="net",
-                     encoder_version=enc_version),
+                     encoder_version=enc_version, encoder_packs=enc_packs),
             t1, t2, t3,
         ]
 
@@ -616,7 +661,10 @@ def main() -> int:
                 _pool[0].close()
                 _pool[0].join()
                 _pool[0] = _fresh_pool()
-            snap_sd = [m.state_dict() for m in (pool_extra + snapshots)]
+            snap_sd = pool_extra_ck + [
+                ck_from_model(m, encoder_version=enc_version,
+                              encoder_packs=(enc_packs if enc_version >= 2 else None))
+                for m in snapshots]
             traj = None
             for attempt in range(3):
                 try:
@@ -625,7 +673,8 @@ def main() -> int:
                         args.seed + it * 99991, args.temperature, args.reward_scale,
                         args.teacher_prob, workers=args.workers or 1,
                         past_prob=args.past_prob, snapshots_sd=snap_sd, rules=args.rules,
-                        want_traj=True, pool=_pool[0], encoder_version=enc_version)
+                        want_traj=True, pool=_pool[0], encoder_version=enc_version,
+                        encoder_packs=enc_packs)
                     traj = traj_arr
                     break
                 except MemoryError:
@@ -643,7 +692,8 @@ def main() -> int:
                 model, args.games_per_iter, args.seed + it * 99991,
                 args.temperature, args.reward_scale, args.teacher_prob, args.threads,
                 snapshots=pool_extra + snapshots, past_prob=args.past_prob,
-                game_cls=GameCls, config_cls=CfgCls, encoder_version=enc_version)
+                game_cls=GameCls, config_cls=CfgCls, encoder_version=enc_version,
+                encoder_packs=enc_packs)
         upd = update(model, ref_model, opt, traj, rewards, args)
         if not args.no_adaptive:
             adapt_coefs(args, upd["entropy"], upd["kl"])
@@ -713,11 +763,14 @@ def main() -> int:
                     "state_dict": {k: v.clone() for k, v in model.state_dict().items()},
                     "config": vars(args),
                     "net": nc,
+                    "encoder_version": int(enc_version),
                     "iter": it + 1,
                     "select_metric": args.select_metric,
                     "select_score": cur,
                     "eval": rec["eval"],
                 }
+                if enc_version >= 2:
+                    best_ckpt["encoder_packs"] = list(enc_packs)
                 Path(args.out).parent.mkdir(parents=True, exist_ok=True)
                 torch.save(best_ckpt, args.out)
             # 选点分自身的标准误：vs_anchor 用配对 SE；其余指标沿用其字段的 SE。
@@ -736,7 +789,7 @@ def main() -> int:
             snap = Path(args.out).parent / "_ckpts" / \
                 f"{Path(args.out).stem}_it{it + 1:04d}.pt"
             _dump_ckpt(snap, model, nc, args, it + 1, rec.get("eval"),
-                       enc_version)
+                       enc_version, enc_packs)
             print(f"  [snap] {snap.name}", flush=True)
 
         history.append(rec)
@@ -758,7 +811,7 @@ def main() -> int:
     which, select_note = choose_final(eval_log, args.select, args.select_metric)
     if which == "last" and history:
         _dump_ckpt(args.out, model, nc, args, len(history),
-                   history[-1].get("eval"), enc_version)
+                   history[-1].get("eval"), enc_version, enc_packs)
         if eval_log:
             ck_out = torch.load(args.out, map_location="cpu", weights_only=False)
             ck_out["select_metric"] = args.select_metric
