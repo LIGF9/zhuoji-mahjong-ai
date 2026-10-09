@@ -22,16 +22,13 @@ from zhuoji.agent import NetAgent  # noqa: E402
 from zhuoji.bots import TEACHER_STYLES, HeuristicBot  # noqa: E402
 from zhuoji.encoder import encode, index_to_action  # noqa: E402
 from zhuoji.fan import FAN_CN, MELD_CN  # noqa: E402
-from zhuoji.net import NetConfig, build_model  # noqa: E402
+from zhuoji.net import build_model, build_from_ckpt, net_config_from_ckpt  # noqa: E402
 from zhuoji.tiles import tile_cn  # noqa: E402
 
 
 def load_model(path: str):
     ck = torch.load(path, map_location="cpu", weights_only=False)
-    nc = ck.get("net") or {"channels": 32, "blocks": 3, "hidden": 256}
-    m = build_model(NetConfig(nc["channels"], nc["blocks"], nc["hidden"]))
-    m.load_state_dict(ck["state_dict"])
-    m.eval()
+    m, _ = build_from_ckpt(ck)
     return m
 
 

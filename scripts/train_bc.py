@@ -24,8 +24,10 @@ import torch.nn.functional as F
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from zhuoji.encoder import HEAD_DIMS  # noqa: E402
-from zhuoji.net import NetConfig, build_model  # noqa: E402
+from zhuoji.encoder import HEAD_DIMS, dims_for_version  # noqa: E402
+from zhuoji.net import (  # noqa: E402
+    NetConfig, build_model, encoder_version_from_ckpt, load_into, net_meta,
+    warm_start_from_v1)
 
 HEAD_NAMES = ["discard", "self_kong", "respond"]
 
@@ -89,6 +91,12 @@ def main() -> int:
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--bench", type=int, default=0, help=">0 时只跑 N 个 batch 测速")
+    ap.add_argument("--encoder", choices=["auto", "v1", "v2"], default="auto",
+                    help="编码器版本。auto=跟随数据文件里记录的版本（P1 阶段 1）")
+    ap.add_argument("--spatial-head", choices=["on", "off"], default="off",
+                    help="逐牌空间头（零初始化加法修正，只多 2×(C+1) 个参数）")
+    ap.add_argument("--init", default="",
+                    help="可选：从某个检查点热启动（P1 用 s11 起，省掉重学共享部分）")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -116,8 +124,36 @@ def main() -> int:
     head_weights = (counts.sum() / (3 * counts)).tolist()
     print("头权重:", [round(w, 3) for w in head_weights])
 
-    model = build_model(NetConfig(args.channels, args.blocks, args.hidden))
-    print(f"模型参数量 {model.n_params():,}")
+    # 数据文件自带 encoder_version（旧文件没有 → v1）
+    data_enc = 1
+    try:
+        if "encoder_version" in d.files:
+            data_enc = int(np.asarray(d["encoder_version"]).ravel()[0])
+    except Exception:
+        data_enc = 1
+    if args.encoder == "auto":
+        args.encoder = f"v{data_enc}"
+    enc_version = int(args.encoder[1:])
+    n_ch, g_dim = dims_for_version(enc_version)
+    t_axis = int(d["tiles"].shape[1])
+    assert t_axis == n_ch, (f"数据 tiles 通道数 {t_axis} 与编码器 v{enc_version} "
+                            f"的 {n_ch} 不符——请检查 --encoder 或重新生成数据")
+    cfg = NetConfig(args.channels, args.blocks, args.hidden,
+                    global_dim=g_dim, in_channels=n_ch,
+                    spatial_head=(args.spatial_head == "on"))
+    model = build_model(cfg)
+    if args.init:
+        ck0 = torch.load(args.init, map_location="cpu", weights_only=False)
+        src_v = encoder_version_from_ckpt(ck0)
+        if src_v != enc_version:
+            info = warm_start_from_v1(model, ck0)
+            print(f"[warm] {args.init}（v{src_v}）→ v{enc_version}："
+                  f"原样复制 {info['copied']} 个张量，部分复制 {info['partial']}")
+        else:
+            miss, unexp = load_into(model, ck0["state_dict"])
+            print(f"[warm] 同版本热启动：缺失 {len(miss)} / 意外 {len(unexp)} 键")
+    print(f"模型参数量 {model.n_params():,}；编码器 v{enc_version}"
+          f"（{n_ch} 通道 / {g_dim} 全局维）")
 
     def get(idx, sl):
         s = idx[sl]
@@ -198,8 +234,8 @@ def main() -> int:
             torch.save({
                 "state_dict": model.state_dict(),
                 "config": vars(args),
-                "net": {"channels": args.channels, "blocks": args.blocks,
-                        "hidden": args.hidden},
+                "net": net_meta(cfg),
+                "encoder_version": enc_version,
                 "epoch": ep + 1,
                 "val_loss": best_val,
                 "head_weights": head_weights,

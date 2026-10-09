@@ -30,6 +30,40 @@ NUM_CHANNELS = 15
 CTX_DIM = 27 + 4          # 上一张被打出的牌 one-hot + 出牌者相对座位
 GLOBAL_DIM = 39 + CTX_DIM
 
+# ---------------------------------------------------------------------------
+# 编码器版本表（P1）
+# ---------------------------------------------------------------------------
+# v1 = 15 通道 / 70 全局维（s1–s11、master 全部用它，**必须永久保持逐位不变**）；
+# v2 = 31 通道 / 98 全局维（P1 表征升级，见 ``zhuoji/encoder_v2.py``）。
+# 维度放在这里而不是散落各处，是为了让网络可以按版本构建；
+# `encode(..., version=...)` 是唯一入口，缺省仍是 v1。
+ENCODER_VERSIONS = (1, 2)
+NUM_CHANNELS_BY_VERSION = {1: NUM_CHANNELS, 2: 31}
+GLOBAL_DIM_BY_VERSION = {1: GLOBAL_DIM, 2: 98}
+
+#: 模块级默认版本。仅用于「没有显式传 version」的旧调用点（脚本、网页服务等）；
+#: 训练/评测这类必须严格一致的路径一律显式传参，不依赖全局状态。
+_DEFAULT_VERSION = 1
+
+
+def set_default_version(version: int) -> None:
+    global _DEFAULT_VERSION
+    if version not in ENCODER_VERSIONS:
+        raise ValueError(f"未知编码器版本 {version}，可选 {ENCODER_VERSIONS}")
+    _DEFAULT_VERSION = version
+
+
+def get_default_version() -> int:
+    return _DEFAULT_VERSION
+
+
+def dims_for_version(version: int) -> tuple[int, int]:
+    """返回 ``(通道数, 全局维)``。"""
+    if version not in ENCODER_VERSIONS:
+        raise ValueError(f"未知编码器版本 {version}，可选 {ENCODER_VERSIONS}")
+    return NUM_CHANNELS_BY_VERSION[version], GLOBAL_DIM_BY_VERSION[version]
+
+
 HEAD_DISCARD = "discard"
 HEAD_SELF_KONG = "self_kong"
 HEAD_RESPOND = "respond"
@@ -48,8 +82,12 @@ def _rel(p: int, me: int) -> int:
     return (p - me) % 4
 
 
-def encode(game, player: int) -> Observation:
-    """把 ``game`` 编码成 ``player`` 视角的观测。"""
+def encode_v1(game, player: int) -> Observation:
+    """把 ``game`` 编码成 ``player`` 视角的观测（**v1 口径，不可改动**）。
+
+    v1 的全部数值都是 s1–s11 训练时的输入分布，任何改动都会让老检查点的
+    「输入分布 ↔ 权重」失配。要加特征请走 :func:`encode` 的 ``version=2``。
+    """
     me = player
     cfg = game.cfg
 
@@ -132,6 +170,21 @@ def encode(game, player: int) -> Observation:
 
     head, mask = action_head_and_mask(game, me)
     return Observation(tiles=tiles, glob=g, head=head, mask=mask)
+
+
+def encode(game, player: int, version: int | None = None) -> Observation:
+    """按版本编码（``version=None`` 时用模块默认版本，历史默认 v1）。
+
+    v2 的实现在 :mod:`zhuoji.encoder_v2`。这里**延迟导入**，一是避免
+    ``encoder ↔ encoder_v2`` 的循环导入，二是让只跑 v1 的路径完全不加载 v2 代码。
+    """
+    v = _DEFAULT_VERSION if version is None else int(version)
+    if v == 1:
+        return encode_v1(game, player)
+    if v == 2:
+        from .encoder_v2 import encode_v2
+        return encode_v2(game, player, encode_v1)
+    raise ValueError(f"未知编码器版本 {v}，可选 {ENCODER_VERSIONS}")
 
 
 def _waits(game, p: int) -> list[int]:

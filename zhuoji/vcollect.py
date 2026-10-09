@@ -60,9 +60,11 @@ class _GameSlot:
     * ``bot`` —— 启发式/随机决策，内联执行。
     """
 
-    __slots__ = ("game", "gi", "seats", "bots", "net_keys", "models", "steps")
+    __slots__ = ("game", "gi", "seats", "bots", "net_keys", "models", "steps",
+                 "enc_version")
 
-    def __init__(self, game, gi, seats, bots, net_keys, models):
+    def __init__(self, game, gi, seats, bots, net_keys, models,
+                 enc_version: int = 1):
         self.game = game
         self.gi = gi
         self.seats = seats        # list["net"|"bot"]
@@ -70,6 +72,7 @@ class _GameSlot:
         self.net_keys = net_keys  # list[p, key]
         self.models = models      # dict[key, model]
         self.steps = 0
+        self.enc_version = int(enc_version)   # 状态编码器版本（P1 的 v1/v2）
 
 
 def _make_seats(rng, teacher_prob, snapshots, past_prob):
@@ -112,7 +115,7 @@ def _advance(slot: _GameSlot):
         p = game.actor()
         if slot.seats[p] == "net":
             key = slot.net_keys[p]
-            return p, encode(game, p), key, slot.models[key]
+            return p, encode(game, p, slot.enc_version), key, slot.models[key]
         game.step(slot.bots[p].choose(game))
         slot.steps += 1
         if slot.steps >= MAX_STEPS:
@@ -162,7 +165,8 @@ def _batch_decide(items, temperature, rng):
 def collect_vectorized(model, n_games: int, seed0: int, temperature: float,
                        reward_scale: float, teacher_prob: float,
                        threads: int = 4, snapshots=None, past_prob: float = 0.3,
-                       game_cls=None, config_cls=None, want_traj: bool = True):
+                       game_cls=None, config_cls=None, want_traj: bool = True,
+                       encoder_version: int = 1):
     """向量化采集 ``n_games`` 局。返回与 selfplay.collect_games 兼容的结果。
 
     ``want_traj=False`` 时只关心对局结果（评测用），不记录训练样本。
@@ -184,7 +188,8 @@ def collect_vectorized(model, n_games: int, seed0: int, temperature: float,
                                                     snapshots, past_prob)
         models.setdefault("net", model)   # 主模型也必须登记，否则 _advance 取不到
         game = game_cls(config_cls(), seed=int(seed0 + gi * 6151))
-        slots.append(_GameSlot(game, gi, seats, bots, net_keys, models))
+        slots.append(_GameSlot(game, gi, seats, bots, net_keys, models,
+                               encoder_version))
 
     active = list(range(n_games))
     while active:
@@ -229,7 +234,8 @@ def _make_bot(kind: str, seed: int):
 
 
 def run_duplicate(model_bank, seat_specs, deals: int, seed0: int,
-                  game_cls, config_cls, threads: int = 2):
+                  game_cls, config_cls, threads: int = 2,
+                  encoder_version: int = 1):
     """复式对局：``deals`` 副牌 × 4 座位轮换，网络决策按模型合批。
 
     ``model_bank``: dict[key -> model]；
@@ -267,7 +273,8 @@ def run_duplicate(model_bank, seat_specs, deals: int, seed0: int,
                         models[spec[1]] = model_bank[spec[1]]
                     else:
                         bots[s] = _make_bot(spec[1], seed * 4 + s)
-                slots.append(_GameSlot(game, len(slots), seats, bots, net_keys, models))
+                slots.append(_GameSlot(game, len(slots), seats, bots, net_keys,
+                                       models, encoder_version))
                 metas.append((r, shift))
 
         base = c0 * 4
@@ -312,15 +319,16 @@ def run_duplicate(model_bank, seat_specs, deals: int, seed0: int,
 # 多进程包装（Windows 用 spawn，worker 必须是模块级函数、参数可 pickle）
 # ---------------------------------------------------------------------------
 def _build_net(nc, sd):
-    from zhuoji.net import NetConfig, build_model
-    m = build_model(NetConfig(nc["channels"], nc["blocks"], nc["hidden"]))
+    """按检查点自带的 ``net`` 元数据建模型（v1/v2、有无空间头都能还原）。"""
+    from zhuoji.net import build_model, net_config_from_ckpt
+    m = build_model(net_config_from_ckpt({"net": nc}))
     m.load_state_dict(sd)
     return m.eval()
 
 
 def _worker(args):
     (state_dict, nc, n_games, seed0, temperature, reward_scale, teacher_prob,
-     past_prob, snapshots_sd, rules, want_traj) = args
+     past_prob, snapshots_sd, rules, want_traj, encoder_version) = args
     game_cls, config_cls = _resolve_game_classes(rules)
     torch.set_num_threads(2)
     model = _build_net(nc, state_dict)
@@ -328,6 +336,7 @@ def _worker(args):
     with torch.no_grad():
         traj, rewards, dt = collect_vectorized(
             model, n_games, seed0, temperature, reward_scale, teacher_prob,
+            encoder_version=encoder_version,
             threads=2, snapshots=snaps, past_prob=past_prob,
             game_cls=game_cls, config_cls=config_cls, want_traj=want_traj)
     if want_traj and traj:
@@ -345,7 +354,7 @@ def _worker(args):
 def collect_parallel(state_dict, nc, n_games: int, seed0: int, temperature: float,
                      reward_scale: float, teacher_prob: float, workers: int = 4,
                      past_prob: float = 0.3, snapshots_sd=None, rules: str = "zhuoji",
-                     want_traj: bool = True, pool=None):
+                     want_traj: bool = True, pool=None, encoder_version: int = 1):
     """多进程向量化采集：``n_games`` 均分给 ``workers`` 个进程。
 
     ``pool`` 传入已建好的 ``multiprocessing.Pool`` 可复用进程，
@@ -354,7 +363,8 @@ def collect_parallel(state_dict, nc, n_games: int, seed0: int, temperature: floa
     if workers <= 1:
         tiles, glob, mask, head, act, ply, gi, rewards, dt = _worker(
             (state_dict, nc, n_games, seed0, temperature, reward_scale,
-             teacher_prob, past_prob, snapshots_sd or [], rules, want_traj))
+             teacher_prob, past_prob, snapshots_sd or [], rules, want_traj,
+             encoder_version))
         if tiles is not None:
             traj = [(t, g, m, int(h), int(a), int(p), int(x))
                     for t, g, m, h, a, p, x in zip(tiles, glob, mask, head, act, ply, gi)]
@@ -366,7 +376,7 @@ def collect_parallel(state_dict, nc, n_games: int, seed0: int, temperature: floa
         per[i] += 1
     tasks = [(state_dict, nc, k, seed0 + w * 102871, temperature,
               reward_scale, teacher_prob, past_prob,
-              snapshots_sd or [], rules, want_traj)
+              snapshots_sd or [], rules, want_traj, encoder_version)
              for w, k in enumerate(per) if k > 0]
     ctx = mp.get_context("spawn")
     if pool is not None:

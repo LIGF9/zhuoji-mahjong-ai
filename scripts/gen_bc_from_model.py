@@ -25,16 +25,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from zhuoji.dushan import DushanConfig, DushanGame  # noqa: E402
-from zhuoji.net import NetConfig, build_model  # noqa: E402
+from zhuoji.net import build_model, build_from_ckpt, net_config_from_ckpt  # noqa: E402
 from zhuoji.vcollect import collect_vectorized  # noqa: E402
 
 
 def load_model(path: str):
     ck = torch.load(path, map_location="cpu", weights_only=False)
-    nc = ck.get("net") or {"channels": 48, "blocks": 8, "hidden": 256}
-    m = build_model(NetConfig(nc["channels"], nc["blocks"], nc["hidden"]))
-    m.load_state_dict(ck["state_dict"])
-    return m.eval(), nc
+    m, enc_v = build_from_ckpt(ck)
+    return m.eval(), net_config_from_ckpt(ck), enc_v
 
 
 def main() -> int:
@@ -48,11 +46,16 @@ def main() -> int:
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--seed", type=int, default=20261005)
     ap.add_argument("--out", default=str(ROOT / "data" / "bc_dushan_s7.npz"))
+    ap.add_argument("--encoder", choices=["auto", "v1", "v2"], default="auto",
+                    help="生成数据时用哪版编码器。auto=跟随教师模型自带版本")
     args = ap.parse_args()
 
     torch.set_num_threads(args.threads)
-    model, nc = load_model(args.model)
-    print(f"教师模型 {args.model}  网络 {nc}  参数量 {model.n_params():,}")
+    model, cfg, enc_v = load_model(args.model)
+    if args.encoder != "auto":
+        enc_v = int(args.encoder[1:])
+    print(f"教师模型 {args.model}  网络 {cfg}  编码器 v{enc_v}  "
+          f"参数量 {model.n_params():,}")
     print(f"目标 {args.games} 局，温度 {args.temperature}，教师概率 {args.teacher_prob}")
 
     T, G, M, H, A, V = [], [], [], [], [], []
@@ -65,7 +68,8 @@ def main() -> int:
             model, k, args.seed + chunk_i * 7919, args.temperature,
             reward_scale=1.0, teacher_prob=args.teacher_prob,
             threads=max(2, args.threads // 2), snapshots=[], past_prob=0.0,
-            game_cls=DushanGame, config_cls=DushanConfig, want_traj=True)
+            game_cls=DushanGame, config_cls=DushanConfig, want_traj=True,
+            encoder_version=enc_v)
         for (tiles, glob, mask, head, act, seat, gi) in traj:
             T.append(tiles.astype(np.float16))
             G.append(glob.astype(np.float16))
@@ -80,6 +84,7 @@ def main() -> int:
               f"(预计 {el / n_done * args.games:.0f}s)", flush=True)
 
     data = {
+        "encoder_version": np.array([enc_v], dtype=np.int16),
         "tiles": np.stack(T), "glob": np.stack(G), "mask": np.stack(M),
         "head": np.array(H, dtype=np.int64), "act": np.array(A, dtype=np.int64),
         "value": np.array(V, dtype=np.float32),

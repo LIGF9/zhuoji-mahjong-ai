@@ -46,7 +46,7 @@ import torch  # noqa: E402
 
 from zhuoji.agent import NetAgent  # noqa: E402
 from zhuoji.bots import TEACHER_STYLES, HeuristicBot, RandomBot  # noqa: E402
-from zhuoji.net import NetConfig, build_model  # noqa: E402
+from zhuoji.net import build_model, build_from_ckpt, net_config_from_ckpt  # noqa: E402
 from zhuoji.rules import RulesConfig, ZhuojiGame  # noqa: E402
 
 # 参赛名单：随机基线 + 两代神经网络 + 六种性格的启发式教师
@@ -70,10 +70,7 @@ def _load_net(stem: str):
         return _MODELS[stem]
     path = ROOT / "models" / f"{stem}.pt"
     ck = torch.load(path, map_location="cpu", weights_only=False)
-    nc = ck.get("net") or {"channels": 48, "blocks": 8, "hidden": 256}
-    m = build_model(NetConfig(nc["channels"], nc["blocks"], nc["hidden"]))
-    m.load_state_dict(ck["state_dict"])
-    m.eval()
+    m, _ = build_from_ckpt(ck)
     _MODELS[stem] = (m, ck)
     return m, ck
 

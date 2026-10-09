@@ -46,7 +46,8 @@ from zhuoji.fan import (  # noqa: E402
     MELD_KONG_EXPOSED,
     MELD_PONG,
 )
-from zhuoji.net import NetConfig, build_model  # noqa: E402
+from zhuoji.net import (  # noqa: E402
+    build_from_ckpt, net_config_from_ckpt, net_meta)
 from zhuoji.rules import (  # noqa: E402
     ANGANG,
     BUGANG,
@@ -122,12 +123,9 @@ def get_model(stem: str) -> dict:
         if not path.exists():
             raise FileNotFoundError(f"找不到模型 {path}")
         ck = torch.load(path, map_location="cpu", weights_only=False)
-        nc = ck.get("net") or {}
-        cfg = NetConfig(int(nc.get("channels", 48)), int(nc.get("blocks", 2)),
-                        int(nc.get("hidden", 256)))
-        net = build_model(cfg)
-        net.load_state_dict(ck["state_dict"])
-        net.eval()
+        # 用检查点自带的元数据还原结构（v1/v2、有无空间头、编码器版本都由它声明）
+        net, enc_v = build_from_ckpt(ck)
+        cfg = net_config_from_ckpt(ck)
         entry = {
             "net": net,
             "meta": {"epoch": ck.get("epoch"), "val_loss": ck.get("val_loss"),

@@ -23,11 +23,17 @@ class NetAgent(Bot):
     name = "net"
 
     def __init__(self, model, seed: int = 0, temperature: float = 0.0,
-                 name: str | None = None, threads: int | None = None):
+                 name: str | None = None, threads: int | None = None,
+                 encoder_version: int | None = None):
         self.model = model
         self.model.eval()
         self.rng = np.random.default_rng(seed)
         self.temperature = temperature
+        # 编码器版本：显式传参优先，否则读模型自带属性（``build_from_ckpt`` 会设），
+        # 再否则按 v1。这样所有"加载检查点 → 造 NetAgent"的旧代码不用改就能支持 v2。
+        self.encoder_version = int(
+            encoder_version if encoder_version is not None
+            else getattr(model, "encoder_version", 1))
         if name:
             self.name = name
         if threads is not None:
@@ -40,7 +46,7 @@ class NetAgent(Bot):
     @torch.no_grad()
     def choose(self, game):
         p = game.actor()
-        obs = encode(game, p)
+        obs = encode(game, p, self.encoder_version)
         out = self.model(
             torch.from_numpy(obs.tiles[None].astype(np.float32)),
             torch.from_numpy(obs.glob[None].astype(np.float32)),
@@ -58,7 +64,7 @@ class NetAgent(Bot):
     def distribution(self, game):
         """返回 (head, mask, probs, value)，供 RL 采样与训练使用。"""
         p = game.actor()
-        obs = encode(game, p)
+        obs = encode(game, p, self.encoder_version)
         out = self.model(
             torch.from_numpy(obs.tiles[None].astype(np.float32)),
             torch.from_numpy(obs.glob[None].astype(np.float32)),

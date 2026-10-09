@@ -22,8 +22,7 @@ sys.path.insert(0, str(ROOT))
 from zhuoji import RulesConfig, ZhuojiGame  # noqa: E402
 from zhuoji.bots import TEACHER_STYLES, HeuristicBot, HeuristicWeights  # noqa: E402
 from zhuoji.encoder import (  # noqa: E402
-    GLOBAL_DIM, HEAD_DISCARD, HEAD_RESPOND, HEAD_SELF_KONG, NUM_CHANNELS,
-    encode, head_index,
+    HEAD_DISCARD, HEAD_RESPOND, HEAD_SELF_KONG, dims_for_version, encode, head_index,
 )
 
 HEAD_ID = {HEAD_DISCARD: 0, HEAD_SELF_KONG: 1, HEAD_RESPOND: 2}
@@ -36,7 +35,7 @@ def make_teacher(style: str, seed: int) -> HeuristicBot:
 
 
 def gen_shard(worker: int, n_games: int, seed0: int, styles: list[str],
-              out_path: str) -> tuple[str, int]:
+              out_path: str, encoder_version: int = 1) -> tuple[str, int]:
     cfg = RulesConfig()
     tiles_buf: list[np.ndarray] = []
     glob_buf: list[np.ndarray] = []
@@ -57,7 +56,7 @@ def gen_shard(worker: int, n_games: int, seed0: int, styles: list[str],
         steps = 0
         while game.phase.value != "over" and steps < 4000:
             p = game.actor()
-            obs = encode(game, p)
+            obs = encode(game, p, encoder_version)
             a = bots[p].choose(game)
             idx = head_index(obs.head, a)
             m = np.zeros(28, dtype=np.uint8)
@@ -76,10 +75,12 @@ def gen_shard(worker: int, n_games: int, seed0: int, styles: list[str],
             seat_buf.append(p)
             turn_buf.append(st)
 
+    n_ch, g_dim = dims_for_version(encoder_version)
     np.savez_compressed(
         out_path,
-        tiles=np.stack(tiles_buf) if tiles_buf else np.zeros((0, NUM_CHANNELS, 27), np.float16),
-        glob=np.stack(glob_buf) if glob_buf else np.zeros((0, GLOBAL_DIM), np.float16),
+        tiles=np.stack(tiles_buf) if tiles_buf else np.zeros((0, n_ch, 27), np.float16),
+        glob=np.stack(glob_buf) if glob_buf else np.zeros((0, g_dim), np.float16),
+        encoder_version=np.array([encoder_version], dtype=np.int16),
         mask=np.stack(mask_buf) if mask_buf else np.zeros((0, 28), np.uint8),
         head=np.array(head_buf, dtype=np.uint8),
         act=np.array(act_buf, dtype=np.uint8),
@@ -97,14 +98,17 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=20260930)
     ap.add_argument("--out", type=str, default=str(ROOT / "data" / "bc_data.npz"))
     ap.add_argument("--shards-dir", type=str, default=str(ROOT / "data" / "shards"))
+    ap.add_argument("--encoder", choices=["v1", "v2"], default="v1",
+                    help="用哪版状态编码器生成数据（P1 阶段 1 要 v2）")
     args = ap.parse_args()
+    enc_v = int(args.encoder[1:])
 
     styles = list(TEACHER_STYLES.keys())
     shards_dir = Path(args.shards_dir)
     shards_dir.mkdir(parents=True, exist_ok=True)
 
     per = max(1, args.games // args.workers)
-    jobs = [(w, per, args.seed, styles, str(shards_dir / f"shard_{w:02d}.npz"))
+    jobs = [(w, per, args.seed, styles, str(shards_dir / f"shard_{w:02d}.npz"), enc_v)
             for w in range(args.workers)]
 
     t0 = time.time()
@@ -131,6 +135,7 @@ def main() -> int:
         k: np.concatenate([p[k] for p in parts], axis=0)
         for k in ("tiles", "glob", "mask", "head", "act", "value", "seat", "turn")
     }
+    merged["encoder_version"] = np.array([enc_v], dtype=np.int16)
     np.savez_compressed(out, **merged)
     print("合并完成 ->", out, {k: v.shape for k, v in merged.items()})
     return 0

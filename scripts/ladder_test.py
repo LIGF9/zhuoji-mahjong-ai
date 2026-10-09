@@ -72,7 +72,7 @@ import torch  # noqa: E402
 from zhuoji.agent import NetAgent  # noqa: E402
 from zhuoji.bots import TEACHER_STYLES, HeuristicBot  # noqa: E402
 from zhuoji.dushan import DushanConfig, DushanGame  # noqa: E402
-from zhuoji.net import NetConfig, build_model  # noqa: E402
+from zhuoji.net import build_model, build_from_ckpt, net_config_from_ckpt  # noqa: E402
 
 DEFAULT_OPPS = ["teacher:balanced", "teacher:aggressive", "teacher:tenpai_rush"]
 
@@ -87,9 +87,7 @@ def load(stem: str):
     if not path.exists():
         raise SystemExit(f"找不到模型 {path}")
     ck = torch.load(path, map_location="cpu", weights_only=False)
-    nc = ck.get("net") or {"channels": 48, "blocks": 8, "hidden": 256}
-    m = build_model(NetConfig(nc["channels"], nc["blocks"], nc["hidden"]))
-    m.load_state_dict(ck["state_dict"])
+    m, ck_enc_v = build_from_ckpt(ck)
     m = m.eval()
     for p in m.parameters():
         p.requires_grad_(False)

@@ -23,7 +23,7 @@ from zhuoji.agent import NetAgent, play_duplicate, print_table  # noqa: E402
 from zhuoji.bots import (  # noqa: E402
     TEACHER_STYLES, HeuristicBot, RandomBot,
 )
-from zhuoji.net import NetConfig, build_model  # noqa: E402
+from zhuoji.net import build_model, build_from_ckpt, net_config_from_ckpt  # noqa: E402
 
 
 def load_model(path: str, threads: int | None = None):
@@ -31,10 +31,7 @@ def load_model(path: str, threads: int | None = None):
         # 之前这里收了 threads 却没用，导致 --threads 静默失效
         torch.set_num_threads(threads)
     ck = torch.load(path, map_location="cpu", weights_only=False)
-    nc = ck.get("net") or {"channels": 48, "blocks": 8, "hidden": 256}
-    model = build_model(NetConfig(nc["channels"], nc["blocks"], nc["hidden"]))
-    model.load_state_dict(ck["state_dict"])
-    model.eval()
+    model, _ = build_from_ckpt(ck)
     return model, ck
 
 
