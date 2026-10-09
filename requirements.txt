@@ -1,0 +1,7 @@
+# 运行环境（Python 3.13）
+# torch 请从 CPU 源安装，Windows 上 2.9+ 需要新版 MSVC OpenMP，可能加载失败：
+#   pip install --index-url https://download.pytorch.org/whl/cpu/ --extra-index-url https://pypi.org/simple "torch==2.6.0+cpu"
+torch==2.6.0+cpu
+numpy>=2.0
+# 以下仅用于生成 HTML 报告中的可选图表（报告本体用内联 SVG，无外部依赖）
+matplotlib>=3.8

@@ -1,0 +1,71 @@
+# =====================================================================
+#  仓库策略：只保留「跑得起来 + 训得出来」的复现必要文件（约 20 MB）
+#  被排除的大件全部是可再生成物 / 历史实验记录 / 纯装饰资源，
+#  下面的注释里都写了恢复办法。
+# =====================================================================
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# === 临时文件 ===
+.tmp_*
+*.tmp
+*~
+*.bak
+
+# === 数据集（约 99 MB，可由 scripts/gen_bc_data.py 重新生成）===
+# 恢复方式：python scripts/gen_bc_data.py --games 4000
+data/
+
+# === 实验记录（保留 reports/*.md 结论文档；日志 / 历史 json / 快照不入库）===
+# 恢复方式：从旧机器拷回，或删除以下两行
+reports/*
+!reports/*.md
+
+# === 迁移包（178 MB，可由 scripts/make_migration_bundle.py 重新生成）===
+migration/
+
+# === 训练中途检查点（由 scripts/selfplay.py --save-every 产生）===
+models/_ckpts/
+
+# === 历史权重（仅保留复现必需的 4 个）===
+# 保留：dushan_master.pt（成品大师）dushan_big_s11.pt（当前代）
+#       dushan_big_s7.pt（主要对照基线）bc.pt（BC 初始策略）
+# 其余历代权重在旧机器上仍有，需要时把对应 !models/xxx.pt 加回即可。
+models/*
+!models/dushan_master.pt
+!models/dushan_big_s11.pt
+!models/dushan_big_s7.pt
+!models/bc.pt
+
+# === 网页装饰资源（游戏视觉 tiles/sprites/table/avatar 保留，其余不带）===
+# 未被任何页面引用的冗余展示图（约 11 MB）
+web/static/assets/image*.png
+# 背景音乐（约 2.5 MB）；页面无音频不影响对局
+web/static/assets/sound/
+# 装饰字体（约 9.5 MB）；dushan.html 已内置 "Microsoft YaHei" 兜底
+web/static/assets/font/
+
+# === UI 视觉快照（体积大且可由 tests/ui_visual_snap.py 重新生成）===
+reports/ui_snaps/
+
+# === 凭据（绝不能进仓库）===
+.gh_token
+*.token
+.secrets/
+.env
+.env.*
+.commit_msg
+
+# === 编辑器 / 系统 ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
