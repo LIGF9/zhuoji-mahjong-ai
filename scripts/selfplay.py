@@ -55,6 +55,11 @@ def collect_games(model, n_games, seed0, temperature, reward_scale,
     * 模型 + 历史快照（league 式对手池，避免自我对弈陷入同类循环）。
     """
     torch.set_num_threads(threads)
+    # update() 结束时会留下 model.train()，若采集前不切回 eval，第 2 轮起的自对弈
+    # 会用 **batch-of-1 的 BatchNorm 统计**去决策，同时把 running_mean/var 用
+    # 单样本统计污染掉（影响所有 eval 与导出模型）。并行采集路径
+    # （zhuoji/vcollect.py::_build_net）本来就 .eval()，这里补齐单进程路径。
+    model.eval()
     rng = np.random.default_rng(seed0)
     styles = list(TEACHER_STYLES.keys())
     snapshots = snapshots or []
@@ -171,6 +176,21 @@ def update(model, ref_model, opt, traj, rewards, args):
             logp_all = torch.zeros(sel.numel())
             ent_all = torch.zeros(sel.numel())
             kl_all = torch.zeros(sel.numel())
+
+            # 参考前向**整批只跑一次**。
+            # 原实现写在下面的头循环里，每遇到一个头就调一次 ref_model(...) 并只喂
+            # 该头的子集 —— 整条 backbone 被调用 3 次、每次都只有约 1/3 的样本，
+            # 小模型上固定开销占比极高（实测 0.77M 网每轮慢 24%）。
+            # 等价性：ref_model 恒为 .eval() 的冻结副本（BN 走 running stats，
+            # 不做 running stat 更新），所以单样本输出与 batch 组成无关，
+            # 整批一次前向与按头分次前向在数学上完全一致。
+            ref_out = None
+            if ref_model is not None:
+                if ref_model.training:
+                    ref_model.eval()   # 只读锚点，绝不该处于 train 模式
+                with torch.no_grad():
+                    ref_out = ref_model(tiles[sel], glob[sel])
+
             for hid, name in enumerate(HEAD_NAMES):
                 sub = (head[sel] == hid).nonzero(as_tuple=True)[0]
                 if sub.numel() == 0:
@@ -183,11 +203,10 @@ def update(model, ref_model, opt, traj, rewards, args):
                 p = lp.exp()
                 ent_all[sub] = -(p * lp).nan_to_num(0).sum(-1)
                 logp_all[sub] = lp.gather(1, act[sel][sub].unsqueeze(1)).squeeze(1)
-                if ref_model is not None:
-                    with torch.no_grad():
-                        rlg = ref_model(tiles[sel][sub], glob[sel][sub])[name][:, :dim]
-                        rlg = rlg.masked_fill(~m, -1e9)
-                        rlp = F.log_softmax(rlg, dim=-1)
+                if ref_out is not None:
+                    rlg = ref_out[name][sub][:, :dim]
+                    rlg = rlg.masked_fill(~m, -1e9)
+                    rlp = F.log_softmax(rlg, dim=-1)
                     kl_all[sub] = (p * (lp - rlp)).nan_to_num(0).sum(-1)
 
             a = adv[sel]
