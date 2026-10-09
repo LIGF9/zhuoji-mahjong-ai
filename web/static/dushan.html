@@ -977,6 +977,20 @@ const YAOJI = 9;    // 1条
 let META = null, SID = null, MY_SEAT = 0, SPEED = 0.45;
 let SELECTED = -1, SELECTED_IDX = -1, SOUND_ON = false, LAST_STATE = null, COACH_HINTS = [];
 let POLL_TIMER = null;
+let PAGE_VER = null, UPDATE_NAG = null;
+
+/* 页面更新提示：本页是长驻 SPA，服务端改了 dushan.html 后旧标签页仍跑旧 JS。
+   /api/state 带 page_ver 指纹，发现不一致就挂一条常驻横幅，点击刷新。 */
+function nagUpdate() {
+  if (UPDATE_NAG) return;
+  UPDATE_NAG = document.createElement("div");
+  UPDATE_NAG.textContent = "🔄 页面有更新，点击刷新生效";
+  UPDATE_NAG.style.cssText = "position:fixed;top:10px;left:50%;transform:translateX(-50%);" +
+    "z-index:9999;background:#2a2410;color:#e8b84b;border:1px solid #e8b84b;border-radius:16px;" +
+    "padding:6px 18px;font-size:13px;cursor:pointer;box-shadow:0 2px 12px rgba(0,0,0,.55)";
+  UPDATE_NAG.onclick = () => location.reload();
+  document.body.appendChild(UPDATE_NAG);
+}
 
 /* ================= 头像候选（web/static/assets/avatar/<dir>/<name>.jpg） ================= */
 const AVATAR_POOL = [
@@ -1218,6 +1232,7 @@ function fillOppSelects() {
 async function boot() {
   META = await api("/api/meta");
   META.tiles.forEach(t => TILES[t.id] = t);
+  PAGE_VER = META.page_ver || null;
   fillOppSelects();
   fillPlayerRows("pl");   // 开局页：名字/头像（沿用上次设置）
   const note = el("boot-note");
@@ -1281,6 +1296,7 @@ async function poll() {
   try { st = await api("/api/state?sid=" + SID); }
   catch (e) { return; }
   if (!st || !st.ready) return;
+  if (PAGE_VER && st.page_ver && st.page_ver !== PAGE_VER) nagUpdate();
   if (st.error) { toast("服务端异常，请刷新页面"); clearInterval(POLL_TIMER); return; }
   render(st);
 }

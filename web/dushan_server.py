@@ -74,6 +74,16 @@ from zhuoji.tiles import (  # noqa: E402
 
 STATIC = Path(__file__).resolve().parent / "static"
 ASSETS = STATIC / "assets"
+
+
+def _page_ver() -> str:
+    """dushan.html 的轻量指纹（mtime+size）。旧标签页用它发现页面已更新并提示刷新——
+    本页是长驻 SPA，改动前端后不刷新就永远跑旧 JS（曾因此出现"修了但没生效"的误会）。"""
+    try:
+        st = (STATIC / "dushan.html").stat()
+        return f"{st.st_mtime_ns:x}-{st.st_size:x}"
+    except OSError:
+        return ""
 MODEL_DIR = ROOT / "models"
 HISTORY_DIR = Path(__file__).resolve().parent / "history"
 
@@ -1221,6 +1231,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, b"not found", "text/plain")
         if path == "/api/meta":
             return self._json({
+                "page_ver": _page_ver(),
                 "models": available_models(),
                 "teachers": list(TEACHER_STYLES),
                 "tiles": [{"id": t, "name": tile_name(t), "cn": tile_cn(t),
@@ -1244,7 +1255,9 @@ class Handler(BaseHTTPRequestHandler):
             if not s:
                 return self._json({"ok": False, "error": "会话不存在"}, 404)
             with s.lock:
-                return self._json(dict(s.state))
+                st = dict(s.state)
+                st["page_ver"] = _page_ver()
+                return self._json(st)
         if path == "/api/hint":
             sid = self._query().get("sid", "")
             s = get_session(sid)
