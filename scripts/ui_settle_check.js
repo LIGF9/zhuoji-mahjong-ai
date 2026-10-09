@@ -188,6 +188,93 @@ setTimeout(() => {
   check('CSS: 尊重 prefers-reduced-motion', html.includes('prefers-reduced-motion'));
   check('JS: 仅在真正切换视角时做过渡', html.includes('const changed = RES_VIEW_PREV !== RES_VIEW;'));
 
+  // ------------------------------------- 单人视角：共享项置顶 + 块区分 + 总计行满宽分割线
+  // 构造：赢家(绝对座位 2) 自摸，三家各付 横鸡2+自摸3+翻鸡1；另给对手0 一笔独有「点炮」。
+  function pairState(pairDetail, pair, deltas) {
+    const base = clone(winFixture.state);
+    base.my_seat = 0;
+    base.players.forEach((p, i) => { p.seat = i; p.name = p.name || `P${i}`; });
+    base.result = Object.assign({}, base.result, {
+      type: 'win', is_tsumo: true, rob_kong: false, how: '自摸',
+      winners: [2], winner: 2, loser: null, void_name: null,
+      fanji_tiles: [9], deltas, pair, pair_detail: pairDetail,
+    });
+    return base;
+  }
+  function renderView(st, seat) {
+    w.__st = st;
+    w.eval(`LAST_STATE = window.__st; RES_VIEW = ${seat}; RES_DISMISSED = false; render(window.__st);`);
+    return Array.from(w.document.querySelectorAll('#res-pairs .pairs-big tr'));
+  }
+  const cellNum = tr => { const m = (tr.lastElementChild.textContent.match(/[+-]?\d+(?:\.\d+)?/) || ['0'])[0]; return parseFloat(m); };
+  const cnt = (s, sub) => s.split(sub).length - 1;
+
+  console.log('\n[单人视角·共享项置顶]');
+  try {
+    const rows = renderView(pairState(
+      [0, 1, 2, 3].filter(o => o !== 2).map(o => ({
+        a: 2, b: o,
+        items: [{ label: '横鸡', info: '打出', value: 2, who: 2 },
+                { label: '自摸', info: '', value: 3, who: 2 },
+                { label: '翻鸡', info: '共持有 1 张', value: 1, who: 2 }],
+      })),
+      [[0, 0, -6, 0], [0, 0, -6, 0], [0, 0, 0, 0], [0, 0, -6, 0]],
+      [-6, -6, 18, -6]), 2);
+    const html2 = w.document.getElementById('res-pairs').innerHTML;
+    const shsum = rows.find(r => r.className.includes('shsum'));
+    const total = rows.find(r => r.className === 'total');
+    const heads = rows.filter(r => r.className === 'opphead');
+    check('出现「对三家均生效」区', html2.includes('对三家均生效'));
+    check('共享项只列一次（自摸 ×1）', cnt(html2, '自摸') === 1, `n=${cnt(html2, '自摸')}`);
+    check('逐家明细不再重复（横鸡 ×1）', cnt(html2, '横鸡') === 1, `n=${cnt(html2, '横鸡')}`);
+    check('人均标注出现', html2.includes('人均 +2') && html2.includes('×3'));
+    check('共享小计 = +18', shsum && cellNum(shsum) === 18, shsum ? shsum.lastElementChild.textContent : '无');
+    check('三家块头各 +6', heads.length === 3 && heads.every(h => cellNum(h) === 6),
+      heads.map(h => cellNum(h)).join(','));
+    check('本局总计 = +18', total && cellNum(total) === 18, total ? total.lastElementChild.textContent : '无');
+    const lhs = (shsum ? cellNum(shsum) : 0) +
+      rows.filter(r => r.className.includes('os')).reduce((a, r) => a + cellNum(r), 0);
+    check('恒等式：共享 + Σ独有 == 总计', Math.abs(lhs - cellNum(total)) < 1e-6, `${lhs} vs ${cellNum(total)}`);
+  } catch (e) { bad++; console.log('[共享项置顶] THREW: ' + String(e.stack).split('\n').slice(0, 4).join('\n    ')); }
+
+  console.log('\n[单人视角·独有项留在各家]');
+  try {
+    const rows = renderView(pairState(
+      [{ a: 2, b: 0, items: [{ label: '点炮', info: '', value: 3, who: 2 },
+                             { label: '杠分', info: '补杠 九条', value: 3, who: 2 }] },
+       { a: 2, b: 1, items: [{ label: '杠分', info: '补杠 九条', value: 3, who: 2 }] },
+       { a: 2, b: 3, items: [{ label: '杠分', info: '补杠 九条', value: 3, who: 2 }] }],
+      [[0, 0, -6, 0], [0, 0, -3, 0], [0, 0, 0, 0], [0, 0, -3, 0]],
+      [-6, -3, 12, -3]), 2);
+    const html2 = w.document.getElementById('res-pairs').innerHTML;
+    const det = rows.filter(r => r.className.includes('det') && !r.className.includes('sh'));
+    check('共享区只含杠分（×1）', cnt(html2, '杠分') === 1, `n=${cnt(html2, '杠分')}`);
+    check('捉炮留在点炮者那块（×1）', cnt(html2, '捉炮') === 1, `n=${cnt(html2, '捉炮')}`);
+    check('块头净额含共享人均（+6/+3/+3）',
+      rows.filter(r => r.className === 'opphead').map(cellNum).join(',') === '6,3,3');
+    check('独有明细行只有 1 行', det.length === 1, `n=${det.length}`);
+    check('本局总计 = +12', cellNum(rows.find(r => r.className === 'total')) === 12);
+  } catch (e) { bad++; console.log('[独有项] THREW: ' + String(e.stack).split('\n').slice(0, 4).join('\n    ')); }
+
+  console.log('\n[单人视角·块样式与满宽分割线]');
+  try {
+    check('CSS: 总计行 border-top 覆盖全部列（写在 tr.total td 上）',
+      /\.paircard \.pairs-big tr\.total td \{[^}]*border-top: 2px solid/.test(html));
+    check('CSS: 不再把总计分割线限定在前 3 列',
+      !/tr\.total td:nth-child\(-n\+3\) \{[^}]*border-top/.test(html));
+    check('CSS: 小计行 border-top 同样覆盖全部列',
+      /\.paircard \.pairs-big tr\.sum td \{[^}]*border-top: 1px solid/.test(html) &&
+      !/tr\.sum td:nth-child\(-n\+3\) \{[^}]*border-top/.test(html));
+    check('CSS: 对手块头有上边框 + 左竖条',
+      /\.paircard \.pairs-big tr\.opphead td \{[^}]*border-top: 2px solid/.test(html) &&
+      /\.paircard \.pairs-big tr\.opphead td:first-child \{ padding-left: 10px; border-left: 3px solid/.test(html));
+    check('CSS: 对手块尾有下边框（块间封闭）',
+      /\.paircard \.pairs-big tr\.sum\.os td \{[^}]*border-bottom: 2px solid/.test(html));
+    check('CSS: 共享区用冷色块与对手块区分',
+      /\.paircard \.pairs-big tr\.det\.sh td \{ background: rgba\(138,196,255/.test(html));
+    check('CSS: 块间有间隔行', /\.paircard \.pairs-big tr\.gap td \{ height: 14px/.test(html));
+  } catch (e) { bad++; console.log('[块样式] THREW: ' + String(e.stack).split('\n').slice(0, 4).join('\n    ')); }
+
   console.log(`\nok=${ok} bad=${bad}`);
   if (errs.length) console.log('window errors:\n' + errs.slice(0, 5).join('\n'));
   process.exit(bad ? 1 : 0);

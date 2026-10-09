@@ -548,33 +548,73 @@ table.res td img.tin { height: 24px; vertical-align: middle; border-radius: 2px;
 .paircard table.res th, .paircard table.res td { padding: 4px 6px; font-size: 12px; }
 .pairnone { color: #8fa284; font-size: 12px; }
 /* 单人视角合并大表：5 列 —— [玩家名｜项目｜说明｜积分｜汇总分] + 末行「本局总计」。
+   结构分三段：
+     ① 顶部「对各家均生效」区（冷色块）——同一笔对每家的往来只列一次，人均金额 × 家数合计；
+     ② 每位对手一个独立块（暖色块 + 上/下粗边 + 左侧竖条 + 块间间隔行）——
+        块头给该家「往来净额」，块内只列该家独有项，块尾是「独有小计」；
+     ③ 末行「本局总计」= 共享合计 ＋ 各独有小计（恒等式，逐项都能对上）。
    首列（玩家名）与末列（汇总分）无表头、宽度自适应；中间三列沿用 项目/说明/积分 表头。
-   明细行的名字与数字向内缩进；汇总/总计行的名字与汇总分贴边 → 两端向外突出。
    注意：内边距规则必须盖过 `.paircard table.res td { padding: 4px 6px }` 的简写，
    所以这里统一加 `.paircard` 前缀（否则简写会以更高的优先级把内边距改回去）。 */
 .paircard .pairs-big { padding: 4px 6px 8px; table-layout: auto; }
 .paircard .pairs-big td, .paircard .pairs-big th { vertical-align: top; }
 .paircard .pairs-big td:first-child, .paircard .pairs-big th:first-child {
   text-align: left; padding-left: 26px; width: 1%; white-space: nowrap; }
-.paircard .pairs-big tr.sum td:first-child,
-.paircard .pairs-big tr.total td:first-child { padding-left: 6px; }
 .paircard .pairs-big td:last-child, .paircard .pairs-big th:last-child {
   text-align: right; padding-right: 30px; width: 1%; white-space: nowrap; }
 .paircard .pairs-big tr.sum td:last-child,
 .paircard .pairs-big tr.total td:last-child { padding-right: 4px; }
-/* 汇总/总计行：左侧金色竖条，强化「两端向外突出」的层次 */
-.paircard .pairs-big tr.sum td:first-child,
-.paircard .pairs-big tr.total td:first-child {
+
+/* ---- 分区块标题（跨满全部 5 列，分割线必须覆盖所有列） ---- */
+.paircard .pairs-big tr.grp td {
+  text-align: left; padding: 11px 6px 5px; white-space: nowrap;
+  color: var(--gold); font-size: 12px; letter-spacing: 2px;
+  border-bottom: 1px solid rgba(232,184,75,.30); }
+.paircard .pairs-big tr.grp.oppgrp td {
+  color: #cfd8c5; border-bottom-color: rgba(255,255,255,.12); }
+.paircard .pairs-big tr.grp .gsub { color: #8fa284; font-size: 11px; letter-spacing: 0; margin-left: 10px; }
+.paircard .pairs-big .per { color: #8fa284; font-size: 11px; margin-left: 8px; }
+.paircard .pairs-big .mult { color: #8fa284; font-size: 11px; margin-left: 3px; }
+
+/* ---- ① 共享区：对各家均生效（冷色块）---- */
+.paircard .pairs-big tr.det.sh td { background: rgba(138,196,255,.06); }
+.paircard .pairs-big tr.det.sh td:first-child { padding-left: 10px; border-left: 3px solid rgba(138,196,255,.40); }
+.paircard .pairs-big tr.sum.shsum td { background: rgba(138,196,255,.11); }
+.paircard .pairs-big tr.sum.shsum td:first-child { border-left-color: rgba(138,196,255,.60); }
+
+/* ---- ② 每位对手一块（暖色块 + 外框）---- */
+.paircard .pairs-big tr.opphead td {
+  background: rgba(232,184,75,.10); color: var(--gold); font-size: 12.5px; letter-spacing: 1px;
+  border-top: 2px solid rgba(232,184,75,.36); padding-top: 7px; padding-bottom: 5px; }
+.paircard .pairs-big tr.opphead td:first-child { padding-left: 10px; border-left: 3px solid var(--gold); }
+.paircard .pairs-big tr.opphead td:last-child { font-weight: 700; }
+.paircard .pairs-big tr.opphead .onote { color: #b9c9ae; font-size: 11px; letter-spacing: 0; margin-left: 10px; }
+.paircard .pairs-big tr.det td { background: rgba(232,184,75,.05); }
+.paircard .pairs-big tr.det td:first-child { padding-left: 10px; border-left: 3px solid rgba(232,184,75,.36); }
+.paircard .pairs-big tr.sum.os td { background: rgba(232,184,75,.10); border-bottom: 2px solid rgba(232,184,75,.30); }
+.paircard .pairs-big tr.sum.os td:first-child { border-left-color: var(--gold); }
+.paircard .pairs-big tr.none td {
+  background: rgba(232,184,75,.05); color: #8fa284; font-size: 12px;
+  text-align: left; padding-left: 10px; border-left: 3px solid rgba(232,184,75,.36); }
+
+/* ---- 小计 / 总计行：左侧金色竖条 + 两端向外突出；
+       分割线（border-top）覆盖全部 5 列（旧版只画到第 3 列，末两列断线） ---- */
+.paircard .pairs-big tr.sum td {
+  background: rgba(232,184,75,.08); font-weight: 600; border-top: 1px solid rgba(232,184,75,.35); }
+.paircard .pairs-big tr.sum td:nth-child(-n+3) { color: #e8e2cf; }
+.paircard .pairs-big tr.sum td:first-child {
   border-left: 3px solid rgba(232,184,75,.55); padding-left: 6px; }
-.paircard .pairs-big tr.total td:first-child { border-left-width: 4px; border-left-color: var(--gold); }
-.paircard .pairs-big tr.sum td { background: rgba(232,184,75,.06); font-weight: 600; }
-.paircard .pairs-big tr.sum td:nth-child(-n+3) { color: #e8e2cf; border-top: 1px solid rgba(232,184,75,.35); }
-.paircard .pairs-big tr.total td { background: rgba(232,184,75,.10); font-weight: 700; }
-.paircard .pairs-big tr.total td:nth-child(-n+3) { color: var(--gold); border-top: 2px solid rgba(232,184,75,.55); }
+.paircard .pairs-big tr.total td {
+  background: rgba(232,184,75,.13); font-weight: 700; border-top: 2px solid rgba(232,184,75,.60); }
+.paircard .pairs-big tr.total td:nth-child(-n+3) { color: var(--gold); }
+.paircard .pairs-big tr.total td:first-child {
+  border-left: 4px solid var(--gold); padding-left: 6px; }
+.paircard .pairs-big tr.total .break { color: #b9c9ae; font-size: 11px; font-weight: 400; margin-left: 10px; }
+
 /* 明细行：项目/说明列略缩进；名字列与汇总分列不缩进 → 汇总行两端突出 */
 .paircard .pairs-big tr.det td:nth-child(2) { padding-left: 8px; }
-/* 空行：每名对手的汇总行之后留一行间隔（高度为原来的两倍：10px → 20px） */
-.paircard .pairs-big tr.gap td { height: 20px; padding: 0; border-bottom: 0; background: transparent; }
+/* 空行：每个对手块之后留一行间隔——块与块之间才有「距离」 */
+.paircard .pairs-big tr.gap td { height: 14px; padding: 0; border-bottom: 0; background: transparent; }
 .sumrow { display: flex; justify-content: space-between; font-size: 13px; margin-top: 6px;
   padding-top: 6px; border-top: 1px solid rgba(255,255,255,.08); color: #b9c9ae; }
 
@@ -2285,10 +2325,16 @@ function renderTabs(st) {
 }
 /* 单人视角：合并成一张大表，5 列 = [玩家名｜项目｜说明｜积分｜汇总分]。
    首列（玩家名 = 该行的责任方）与末列（该玩家汇总分）不设表头、宽度自适应。
-   每名对手的明细列完后加一行「小计」（应收/应付 + 该对手净给付分），
-   之后空一行（高度为普通行的两倍）；最后一行是主视角的「本局总计」。
-   项目命名用责任方口径：包鸡/包杠等赔付项归付款方（如「教师·包鸡」）；
-   点炮按视角玩家角色叫 捉炮/放炮。 */
+
+   分三段，避免同一笔往来在每家下面重复出现：
+     ① 「对各家均生效」区：凡是**在每一家清单里都恰好出现一次**的分项（自摸/牌型/暗杠补杠
+        杠分/自己打出的鸡与手中鸡翻鸡/自己包鸡包杠…）都由数据判出来，提到最上面只列一次，
+        积分列按「人均 × 家数」合计，逐家明细里不再重复；
+     ② 每位对手一块：「往来净额」（含共享人均）+ 该家独有项（点炮/捉炮/明杠/责任鸡等）+
+        「独有小计」；
+     ③ 「本局总计」= 共享合计 ＋ 各独有小计，恒等于本局净收付。
+
+   项目命名用责任方口径：包鸡/包杠等赔付项归付款方；点炮按视角玩家角色叫 捉炮/放炮。 */
 function renderPairs(st) {
   const res = st.result;
   const relOf = s => ((s - st.my_seat) % 4 + 4) % 4;
@@ -2298,6 +2344,7 @@ function renderPairs(st) {
   const fnum = x => `${x >= 0 ? "+" : ""}${x}`;
   const snum = x => `${x > 0 ? "+" : ""}${x}`;   // 总计行：0 显示「0」而非「+0」
   const dcls = x => x >= 0 ? "delta-pos" : "delta-neg";
+  const r2 = x => Math.round(x * 100) / 100;
   // pair_detail[(a,b)]：b 付给 a 的分项
   const pdMap = {};
   (res.pair_detail || []).forEach(pd => { pdMap[pd.a + "->" + pd.b] = pd.items || []; });
@@ -2306,48 +2353,110 @@ function renderPairs(st) {
   // 翻鸡项：牌种直接渲染成牌图（res.fanji_tiles 为本局翻鸡牌种）
   const fanjiImgs = (res.fanji_tiles || []).map(t =>
     `<img class="tin" src="${tileImg(t)}" alt="">`).join("");
-  const row = (whoName, label, info, val) =>
-    `<tr class="det"><td>${whoName}</td><td>${label}</td><td>${info || "—"}</td>` +
-    `<td class="${dcls(val)}">${val ? fnum(val) : "0"}</td><td></td></tr>`;
-  // 表头只覆盖中间三列；首列（玩家名）与末列（汇总分）留空且宽度自适应
-  let html = `<div class="paircard"><table class="res pairs-big">` +
-    `<tr><th></th><th>项目</th><th>说明</th><th>积分</th><th></th></tr>`;
-  let grand = 0;
+  // 归一化一条分项：责任方口径（点炮 → 视角方「捉炮」/ 付款方「放炮」），分值取到分
+  const norm = (it, whoDef, sign) => {
+    let label = it.label, who = (it.who == null ? whoDef : +it.who);
+    const val = r2(sign * num(it.value));
+    if (label === "点炮" || label.startsWith("点炮（")) {
+      const nJia = label.includes("（") ? label.slice(label.indexOf("（")) : "";
+      label = (val >= 0 ? "捉炮" : "放炮") + nJia;
+      who = v;
+    }
+    return { label, info: it.info || "", val, who, name: nameOf(who) };
+  };
+  // 每位对手：往来净额（>0 应收）+ 与该家相关的全部分项
+  // （「鸡数互减」仅为说明性行，值恒为 0，不再展示）
+  const opps = [];
   for (let rel = 0; rel < 4; rel++) {
     const o = (st.my_seat + rel) % 4;
     if (o === v) continue;
-    const recv = num(pair[v] && pair[v][o]);   // 对方付给我（视角玩家）
-    const pay  = num(pair[o] && pair[o][v]);   // 我付给对方
-    const net = Math.round((recv - pay) * 100) / 100;   // >0 应收；<0 应付
-    grand += net;
-    // 分项合并（以 v 的视角显示：正=收入，负=支出）；who=该分项的责任方（付款方）
-    // 「鸡数互减」仅为说明性行（值 0），不再展示
-    const items = (pdMap[v + "->" + o] || []).map(it => ({ label: it.label, info: it.info, val: num(it.value), who: (it.who == null ? v : +it.who) }))
-      .concat((pdMap[o + "->" + v] || []).map(it => ({ label: it.label, info: it.info, val: -num(it.value), who: (it.who == null ? o : +it.who) })))
+    const net = r2(num(pair[v] && pair[v][o]) - num(pair[o] && pair[o][v]));
+    const rows = (pdMap[v + "->" + o] || []).map(it => norm(it, v, 1))
+      .concat((pdMap[o + "->" + v] || []).map(it => norm(it, o, -1)))
       .filter(it => it.label !== "鸡数互减");
-    html += items.map(it => {
-      let label = it.label, who = it.who;
-      if (label === "点炮" || label.startsWith("点炮（")) {   // 责任方口径：赢=捉炮，输=放炮
-        const nJia = label.includes("（") ? label.slice(label.indexOf("（")) : "";
-        label = (it.val >= 0 ? "捉炮" : "放炮") + nJia;
-        who = v;
-      }
-      if (label === "翻鸡") {
-        return row(nameOf(who), "翻鸡",
-          `${fanjiImgs ? fanjiImgs + " " : ""}${it.info || "—"}`, it.val);
-      }
-      return row(nameOf(who), label, it.info, it.val);
-    }).join("");
-    const give = items.length ? (net > 0 ? "应收" : net < 0 ? "应付" : "两讫")
-                              : "无直接结算";
-    html += `<tr class="sum"><td>${nameOf(o)}</td><td>小计</td><td>${give}</td>` +
-      `<td></td><td class="${dcls(net)}">${snum(net)}</td></tr>`;
-    html += `<tr class="gap"><td colspan="5"></td></tr>`;   // 每名对手的汇总行之后空一行
+    opps.push({ o, net, rows });
   }
-  grand = Math.round(grand * 100) / 100;
+  // 共享判定：某个分项在**每一个**对手清单里都恰好出现一次 → 它对每家的作用完全相同，
+  // 属于「对所有人都生效」的项。（只出现在部分对手那里、或同一家出现两次的，一律留在逐家里。）
+  const N = opps.length;
+  const keyOf = r => `${r.who}|${r.label}|${r.info}|${r.val}`;
+  const inLists = new Map(), dupInList = new Set();
+  for (const g of opps) {
+    const cnt = new Map();
+    for (const r of g.rows) { const k = keyOf(r); cnt.set(k, (cnt.get(k) || 0) + 1); }
+    for (const [k, c] of cnt) {
+      inLists.set(k, (inLists.get(k) || 0) + 1);
+      if (c > 1) dupInList.add(k);
+    }
+  }
+  const isShared = k => inLists.get(k) === N && !dupInList.has(k);
+  const shared = [], seen = new Set();
+  for (const g of opps) {
+    for (const r of g.rows) {
+      const k = keyOf(r);
+      if (isShared(k) && !seen.has(k)) { seen.add(k); shared.push(r); }
+    }
+    g.uni = g.rows.filter(r => !isShared(keyOf(r)));
+  }
+  // 共享合计 = 人均合计 × 家数；逐家独有小计 = 该家独有项之和。
+  // 恒等式：共享合计 ＋ Σ(独有小计) ≡ 本局总计（每个分项只计入一次）。
+  const shPer = r2(shared.reduce((s, r) => s + r.val, 0));
+  const shTotal = r2(shPer * N);
+  let uniTotal = 0;
+  for (const g of opps) {
+    g.uniNet = r2(g.uni.reduce((s, r) => s + r.val, 0));
+    uniTotal += g.uniNet;
+  }
+  uniTotal = r2(uniTotal);
+  const grand = r2(opps.reduce((s, g) => s + g.net, 0));
+  const infoHTML = r => `${(r.label === "翻鸡" && fanjiImgs) ? fanjiImgs + " " : ""}${r.info || "—"}`;
+  const detRow = (r, cls) =>
+    `<tr class="det${cls ? " " + cls : ""}"><td>${r.name}</td><td>${r.label}</td>` +
+    `<td>${infoHTML(r)}</td><td class="${dcls(r.val)}">${r.val ? fnum(r.val) : "0"}</td><td></td></tr>`;
+
+  // 表头只覆盖中间三列；首列（玩家名）与末列（汇总分）留空且宽度自适应
+  let html = `<div class="paircard"><table class="res pairs-big">` +
+    `<tr><th></th><th>项目</th><th>说明</th><th>积分</th><th></th></tr>`;
+
+  // ---- ① 对各家均生效：只列一次（人均金额，积分列按家数合计）----
+  if (shared.length) {
+    html += `<tr class="grp"><td colspan="5">对${N === 3 ? "三家" : `其余 ${N} 家`}均生效` +
+      `<span class="gsub">人均金额；逐家明细不再重复</span></td></tr>`;
+    html += shared.map(r => {
+      const agg = r2(r.val * N);
+      return `<tr class="det sh"><td>${r.name}</td><td>${r.label}</td>` +
+        `<td>${infoHTML(r)}<span class="per">人均 ${fnum(r.val)}</span></td>` +
+        `<td class="${dcls(agg)}">${agg ? fnum(agg) : "0"}<span class="mult">×${N}</span></td>` +
+        `<td></td></tr>`;
+    }).join("");
+    html += `<tr class="sum shsum"><td>共享</td><td>小计</td>` +
+      `<td>人均 ${fnum(shPer)} × ${N} 家</td><td></td>` +
+      `<td class="${dcls(shTotal)}">${snum(shTotal)}</td></tr>`;
+  }
+
+  // ---- ② 每位对手一块：往来净额 + 该家独有项 + 独有小计 ----
+  html += `<tr class="grp oppgrp"><td colspan="5">各家独有项` +
+    `<span class="gsub">与每一家的往来明细（上面已列的共享项不重复）</span></td></tr>`;
+  for (const g of opps) {
+    const shShare = r2(g.net - g.uniNet);   // 该家往来里由共享项贡献的部分
+    html += `<tr class="opphead"><td colspan="4">对 ${nameOf(g.o)}` +
+      `<span class="onote">往来净额${shShare ? `（含共享人均 ${snum(shShare)}）` : ""}</span></td>` +
+      `<td class="${dcls(g.net)}">${snum(g.net)}</td></tr>`;
+    html += g.uni.length
+      ? g.uni.map(r => detRow(r, "")).join("")
+      : `<tr class="none"><td colspan="5">无独有项</td></tr>`;
+    const give = g.uni.length
+      ? (g.uniNet > 0 ? "应收" : g.uniNet < 0 ? "应付" : "两讫") : "无独有项";
+    html += `<tr class="sum os"><td>${nameOf(g.o)}</td><td>独有小计</td><td>${give}</td>` +
+      `<td></td><td class="${dcls(g.uniNet)}">${snum(g.uniNet)}</td></tr>`;
+    html += `<tr class="gap"><td colspan="5"></td></tr>`;   // 块与块之间留一行间隔
+  }
+
+  // ---- ③ 本局总计 ----
   html += `<tr class="total"><td>本局总计</td><td></td>` +
-    `<td>${grand > 0 ? "应收" : grand < 0 ? "应付" : "两讫"}</td>` +
-    `<td></td><td class="${dcls(grand)}">${snum(grand)}</td></tr></table></div>`;
+    `<td>${grand > 0 ? "应收" : grand < 0 ? "应付" : "两讫"}` +
+    (shared.length ? `<span class="break">共享 ${snum(shTotal)} ＋ 独有 ${snum(uniTotal)}</span>` : "") +
+    `</td><td></td><td class="${dcls(grand)}">${snum(grand)}</td></tr></table></div>`;
   setHTML(el("res-pairs"), html);
 }
 
