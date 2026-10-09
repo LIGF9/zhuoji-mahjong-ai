@@ -1276,6 +1276,50 @@ def test_claimed_ji_pair_totals():
     print("ok 碰走鸡的 AB 合计（听牌 4 / 包鸡仍 4，其他家 3）")
 
 
+def test_rob_kong_burns_claimed_ji():
+    """被抢杠者全烧：连「被碰鸡的副露鸡」与「溢价」也一律不得收取（2026-10-09 修复）。
+
+    场景：B(0) 打出横鸡被 A(1) 碰走；A 另碰 T5 并留第 4 张可补杠，被 p2 抢杠。
+    A 全烧 → 副露里那 3 张横鸡、以及 B 该张的溢价 1 都作废，**没有任何人付钱给 A**。
+    修复前：A 未听牌时会走「包鸡」分支，仍向三家收副露鸡 3 张、并额外收 B 的溢价 1。
+    """
+    T5 = tile_from(T, 5)
+    for a_tenpai in (True, False):
+        g = new_game()
+        _clear(g)
+        g.ji_tiles = {YAOJI}
+        # A(1)：碰走 B 的横鸡（3 张牌面）+ 碰 T5 且手里留 1 张可补杠
+        g.melds[1] = [(MELD_PONG, YAOJI, 0), (MELD_PONG, T5, 2)]
+        g.hands[1] = counts(T5, tile_from(W, 1), tile_from(W, 2), tile_from(W, 4),
+                            tile_from(B, 4), tile_from(B, 5), tile_from(B, 6))
+        g.claimed_ji = [(0, 1, "横鸡", False)]        # (打出者 B, 碰者 A, 类型, 明杠?)
+        g.ji_events = [(0, g.ji_value("横鸡"), "横鸡")]
+        g.first_discard_done = [True] * 4
+        # B(0)：横鸡的打出者；另两家杂牌
+        g.hands[0] = counts(*[tile_from(W, r) for r in (5, 6, 7, 8, 9)],
+                            *[tile_from(B, r) for r in (1, 2, 3, 7, 7, 8, 8)])
+        for p in (2, 3):
+            g.hands[p] = counts(*[tile_from(B, r) for r in (1, 2, 3, 4, 5, 6, 7, 8, 9)],
+                                *[tile_from(W, r) for r in (1, 2, 3, 5)])
+        _fixed_tenpai(g, {0: True, 1: a_tenpai, 2: True, 3: True})
+        g._can_rob_kong = lambda p, t: p == 2         # 抢杠者 = 2 号
+        g.phase = Phase.SELF_KONG
+        g.current = 1
+        g.step(Action("bugang", T5))
+        assert g._rob_kong is not None, "未进入抢杠判定"
+        g.step(Action(HU))
+        res = g.result
+        assert res["rob_kong"] is True and res["void_player"] == 1, res
+        assert res["chickens"][1] == 0.0, res["chickens"]
+        # 全烧：A 一分不收（既无副露鸡 3 张，也无横鸡溢价 1）
+        for a in range(4):
+            assert abs(res["pair"][1][a]) < 1e-9, (a_tenpai, a, res["pair"])
+        # 明细里不得残留任何打给 A 的「溢价」行
+        assert not [it for pd in res["pair_detail"] if pd["a"] == 1
+                    and any("溢价" in it["info"] for it in pd["items"])], res["pair_detail"]
+    print("ok 被抢杠者全烧：被碰鸡的副露鸡与溢价也一并作废（含未听牌路径）")
+
+
 def test_long_qi_dui_needs_winning_tile():
     """龙七对必须由胡牌张补上第四张；胡别的对子只能算小七对。"""
     g = new_game()
@@ -1347,6 +1391,7 @@ if __name__ == "__main__":
     test_qiang_gang()
     test_plain_ji_counts()
     test_claimed_ji_pair_totals()
+    test_rob_kong_burns_claimed_ji()
     test_long_qi_dui_needs_winning_tile()
     test_ji_values_configurable()
     test_repao_burn()

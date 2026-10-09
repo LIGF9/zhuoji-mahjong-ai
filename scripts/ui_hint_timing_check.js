@@ -51,7 +51,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const r = w.document.getElementById('brief-tip');
 
   // --- 测试 1：hintDelay=0 立即推荐 ---
-  w.eval('SET.hintDelay = 0; SET.briefReason = false');
+  w.eval('SET.hintDelay = 0; SET.reasonMode = "full"');
   hintCalls = 0;
   w.render(st);
   await sleep(400);
@@ -76,7 +76,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log(`T3 延迟推荐: 0.3s时 calls=${early} rec=${earlyRec}；2.5s时 calls=${hintCalls} rec=${hasRec()} ${t3 ? 'OK' : 'FAIL'}`);
 
   // --- 测试 4：简短理由开启 → 只显示原因（无"大师建议："前缀、无牌名） ---
-  w.eval('SET.briefReason = true; SET.hintDelay = 0');
+  w.eval('SET.reasonMode = "brief"; SET.hintDelay = 0');
   const st3 = JSON.parse(JSON.stringify(st2));
   st3.hand_index = (st3.hand_index || 0) + 1;
   hintCalls = 0;

@@ -37,9 +37,9 @@ setTimeout(() => {
 
   // ---- S2：设置面板控件齐备 ----
   const ids = ['set-end-baoji', 'set-end-baogang', 'set-huang-baoji', 'set-huang-baogang',
-    'set-huang-baodapai', 'set-strategy', 'set-timeout', 'set-hintdelay', 'set-briefreason',
-    'set-hinton', 'set-timeouton', 'set-floaton',
-    'grp-hint', 'grp-timeout', 'grp-float',
+    'set-huang-baodapai', 'set-strategy', 'set-timeout', 'set-hintdelay', 'set-reasonmode',
+    'set-oppspeed', 'set-hinton', 'set-timeouton', 'set-floaton',
+    'grp-hint', 'grp-timeout', 'grp-float', 'grp-speed',
     'set-jiesuan-fanji', 'set-kaiju-fanji', 'set-mantiangji', 'set-nav', 'set-panes',
     'sp-name-0', 'sp-name-1', 'sp-name-2', 'sp-name-3', 'sp-ava-0', 'sp-ava-3',
     'pl-name-0', 'pl-ava-3', 'sc-zimo'];
@@ -96,11 +96,13 @@ setTimeout(() => {
   check('S6b 结束印记不压计时盘', stampBottom < TIMER_TOP,
     `印记下缘 ${stampBottom.toFixed(0)} < 计时盘上缘 ${TIMER_TOP}`);
 
-  // ---- S7：导航顺序（统计/记录 在 大师建议 之前）+ 流水为图标按钮 ----
+  // ---- S7：导航顺序（统计/记录 在流水之前）+ 大师建议开关已移除 ----
   const navIds = [...el('nav').querySelectorAll('button')].map(b => b.id);
-  check('S7 统计/记录排在 大师建议 之前',
-    navIds.indexOf('btn-stats') < navIds.indexOf('btn-coach')
-    && navIds.indexOf('btn-history') < navIds.indexOf('btn-coach'), navIds.join(','));
+  check('S7 统计/记录排在流水之前',
+    navIds.indexOf('btn-stats') < navIds.indexOf('btn-log')
+    && navIds.indexOf('btn-history') < navIds.indexOf('btn-log'), navIds.join(','));
+  check('S7a 已移除牌桌大师建议切换按钮',
+    !el('btn-coach') && !navIds.includes('btn-coach'), navIds.join(','));
   check('S7b 流水按钮为图标', el('btn-log').classList.contains('icon')
     && el('btn-log').textContent.trim().length > 0 && !el('btn-log').textContent.includes('流水'),
     el('btn-log').textContent.trim());
@@ -201,22 +203,29 @@ setTimeout(() => {
     String(w.localStorage.getItem('dushan_setpane')));
   navBtns[0].click();
 
-  // ---- S14：大师建议 = 可随时开关的 icon 双态按钮 ----
-  const coachBtn = el('btn-coach');
-  const coachIcon = () => coachBtn.textContent.trim();
-  w.eval('SET.coach = false; applyCoachBtn(); el("coach").classList.remove("on");');
-  const icoOff = coachIcon();
-  check('S14 大师建议按钮为图标', coachBtn.classList.contains('icon') && icoOff.length > 0
-    && !icoOff.includes('大师建议'), icoOff);
-  coachBtn.click();                       // 非决策点也能打开（LAST_STATE 为空）
-  const icoOn = coachIcon();
-  check('S14b 非决策点也能开启', coachBtn.classList.contains('toggle-on')
-    && el('coach').classList.contains('on') && icoOn !== icoOff, `${icoOff} → ${icoOn}`);
-  check('S14c 开关状态已持久化', w.localStorage.getItem('dushan_coach_on') === '1',
-    String(w.localStorage.getItem('dushan_coach_on')));
-  coachBtn.click();
-  check('S14d 再点即关闭', !coachBtn.classList.contains('toggle-on')
-    && !el('coach').classList.contains('on') && coachIcon() === icoOff, coachIcon());
+  // ---- S14：大师推荐 / 大师建议 合并（推荐理由 = 完整推荐 / 一句话推荐） ----
+  const coachOn = () => el('coach').classList.contains('on');
+  w.eval('SET.hintOn = true; SET.reasonMode = "full"; syncCoachPanel();');
+  check('S14 完整推荐 → 大师建议面板显示', coachOn() && w.eval('SET.coach') === true,
+    `coach=${w.eval('SET.coach')}`);
+  w.eval('SET.reasonMode = "brief"; syncCoachPanel();');
+  check('S14b 一句话推荐 → 面板隐藏、SET.coach 派生为 false',
+    !coachOn() && w.eval('SET.coach') === false, `coach=${w.eval('SET.coach')}`);
+  w.eval('SET.hintOn = false; SET.reasonMode = "full"; syncCoachPanel();');
+  check('S14c 推荐总开关关闭 → 面板也不显示',
+    !coachOn() && w.eval('SET.coach') === false, `coach=${w.eval('SET.coach')}`);
+  w.eval('SET.hintOn = true; SET.reasonMode = "full"; syncCoachPanel();');
+  el('btn-settings').click();
+  el('set-reasonmode').value = 'brief';
+  el('btn-set-close').click();
+  check('S14d 设置面板可选「一句话推荐」并持久化',
+    w.eval('SET.reasonMode') === 'brief'
+    && w.localStorage.getItem('dushan_reasonmode') === 'brief', String(w.eval('SET.reasonMode')));
+  el('btn-settings').click();
+  el('set-reasonmode').value = 'full';
+  el('btn-set-close').click();
+  check('S14e 改回「完整推荐」面板重新显示', coachOn() && w.eval('SET.coach') === true,
+    String(w.eval('SET.coach')));
 
   // ---- S15：流水 icon 双态 ----
   const logBtn = el('btn-log');
@@ -331,9 +340,9 @@ setTimeout(() => {
   const grayed = id => el(id).disabled === true;
   el('set-hinton').checked = false; fire('set-hinton');
   check('S19 关「显示大师推荐」→ 策略/延迟/理由置灰',
-    grayed('set-strategy') && grayed('set-hintdelay') && grayed('set-briefreason')
+    grayed('set-strategy') && grayed('set-hintdelay') && grayed('set-reasonmode')
     && el('grp-hint').classList.contains('disabled'),
-    `strategy=${el('set-strategy').disabled} delay=${el('set-hintdelay').disabled} reason=${el('set-briefreason').disabled}`);
+    `strategy=${el('set-strategy').disabled} delay=${el('set-hintdelay').disabled} reason=${el('set-reasonmode').disabled}`);
   check('S19b 推荐总开关关闭时「自动上浮」整块禁用',
     grayed('set-floaton') && el('grp-float').classList.contains('disabled'), '');
   el('set-hinton').checked = true; fire('set-hinton');
@@ -370,6 +379,56 @@ setTimeout(() => {
   // 旧配置迁移：timeout=0 且无独立开关键 → 关开关并把时间回落 15 秒
   check('S19j 旧配置(timeout=0)迁移为「关闭 + 15 秒」',
     /_timeoutLegacyOff/.test(html) && /dushan_timeouton/.test(html), '');
+
+  // ---- S20：横鸡轮不再常驻状态芯片，改为「XX 打出 横鸡」toast ----
+  const stHj = JSON.parse(JSON.stringify(mid0));
+  stHj.turn = -1;
+  stHj.hengji_active = true;
+  stHj.hengji_species = [9];
+  w.render(stHj);
+  check('S20 状态栏不再显示「横鸡轮」',
+    !el('timer-warn').textContent.includes('横鸡轮'), el('timer-warn').textContent);
+  w.eval('toast("", 1); el("toast").classList.remove("on"); el("log").dataset.count = 0;');
+  const evHj = [{ t: 1, kind: 'discard', rel: 1, text: '小李 打出 1条（鸡）', tile: 9, ctag: '横鸡' }];
+  w.eval(`renderLog(${JSON.stringify(evHj)})`);
+  check('S20b 打出横鸡 → toast 播报「X 打出 横鸡」',
+    el('toast').classList.contains('on') && /打出\s*横鸡/.test(el('toast').textContent),
+    el('toast').textContent);
+  w.eval('el("toast").classList.remove("on")');
+  const evPlain = [{ t: 1, kind: 'discard', rel: 1, text: '小李 打出 1条（鸡）', tile: 9, ctag: '幺鸡' }];
+  w.eval(`renderLog(${JSON.stringify(evPlain)})`);
+  check('S20c 普通鸡/非鸡不弹 toast', !el('toast').classList.contains('on'),
+    el('toast').textContent);
+
+  // ---- S21：对手出牌节奏并入设置面板（紧跟「超时自动操作」之后） ----
+  const playPane = el('set-panes').querySelector('section[data-pane="play"]');
+  const groups = [...playPane.querySelectorAll('.setgroup')].map(g => g.id);
+  check('S21 节奏设置排在超时之后、推荐之前',
+    groups.indexOf('grp-speed') === groups.indexOf('grp-timeout') + 1
+    && groups.indexOf('grp-speed') < groups.indexOf('grp-hint'), groups.join(','));
+  el('btn-settings').click();
+  el('set-oppspeed').value = '0.2';
+  el('btn-set-close').click();
+  check('S21b 节奏改动写入 SET 与本地存储',
+    Math.abs(w.eval('SET.speed') - 0.2) < 1e-9
+    && w.localStorage.getItem('dushan_speed') === '0.2', String(w.localStorage.getItem('dushan_speed')));
+  // 开局页与设置面板同源
+  check('S21c 开局页节奏与设置同源',
+    w.eval('document.getElementById("speed").value') === String(w.eval('SET.speed'))
+    || w.eval('SET.speed') === 0.2, String(w.eval('SET.speed')));
+  el('btn-settings').click();
+  el('set-oppspeed').value = '0.45';
+  el('btn-set-close').click();
+
+  // ---- S22：出牌后中间倒计时清零重开（不残留上一轮余数） ----
+  w.eval('FLOW_DEADLINE = Date.now() + 7000; TURN_DEADLINE = Date.now() + 7000;');
+  w.eval('stopTurnTimer()');
+  check('S22 出牌后倒计时清零（不在旧余数上继续）', w.eval('FLOW_DEADLINE') === 0,
+    `FLOW_DEADLINE=${w.eval('FLOW_DEADLINE')}`);
+  w.eval('updateClock()');
+  const cdTxt = el('timer-count').textContent;
+  check('S22b 清零后按完整超时重新开始倒数',
+    /^\d+$/.test(cdTxt) && parseInt(cdTxt, 10) >= Math.min(3, w.eval('SET.timeout')), cdTxt);
 
   const bad = results.filter(x => !x).length;
   console.log(`\nwindow errors: ${errs.length}${errs.length ? '\n' + errs.slice(0, 3).join('\n') : ''}`);

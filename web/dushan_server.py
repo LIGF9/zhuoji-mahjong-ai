@@ -1083,11 +1083,12 @@ class Session:
             self.state = snap
 
     # -- 事件流 -------------------------------------------------------------
-    def _push(self, kind: str, rel: int, text: str, tile: int | None = None) -> None:
+    def _push(self, kind: str, rel: int, text: str, tile: int | None = None,
+              ctag: str = "") -> None:
         with self.lock:
             self.events.append({
                 "t": round(time.time() - self._t0, 1),
-                "kind": kind, "rel": rel, "text": text, "tile": tile,
+                "kind": kind, "rel": rel, "text": text, "tile": tile, "ctag": ctag,
             })
 
     _t0 = time.time()
@@ -1099,7 +1100,11 @@ class Session:
         if k == DISCARD:
             tag = "（热炮）" if game.repao_discard else ""
             ji = "（鸡）" if action.tile in game.ji_tiles else ""
-            self._push("discard", rel, f"{who} 打出 {tile_cn(action.tile)}{ji}{tag}", action.tile)
+            # ctag：这张鸡牌按引擎口径的类型名（冲锋鸡/横鸡/幺鸡），
+            # 前端据此弹「XX 打出 横鸡」toast（状态芯片不再常驻提示横鸡轮）
+            ctag = str(game._ji_tag_of_last[seat]) if action.tile in game.ji_tiles else ""
+            self._push("discard", rel, f"{who} 打出 {tile_cn(action.tile)}{ji}{tag}",
+                       action.tile, ctag)
         elif k == HU:
             self._push("hu", rel, f"{who} 胡牌！")
         elif k == PENG:
@@ -1349,6 +1354,18 @@ class Handler(BaseHTTPRequestHandler):
             names = data.get("names") if isinstance(data.get("names"), list) else None
             s = new_session(specs, my_seat, seed, speed, rules=rules, names=names)
             return self._json({"ok": True, "sid": s.sid, "my_seat": s.my_seat})
+
+        if path == "/api/speed":
+            # 对手出牌节奏可在对局中修改（设置面板「出牌与推荐」里那一项）
+            s = get_session(str(data.get("sid", "")))
+            if not s:
+                return self._json({"ok": False, "error": "会话不存在"}, 404)
+            try:
+                v = float(data.get("speed", s.speed))
+            except (TypeError, ValueError):
+                v = s.speed
+            s.speed = min(max(v, 0.0), 3.0)
+            return self._json({"ok": True, "speed": s.speed})
 
         if path == "/api/act":
             s = get_session(str(data.get("sid", "")))

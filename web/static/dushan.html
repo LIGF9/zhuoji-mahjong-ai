@@ -681,7 +681,6 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   <nav id="nav">
     <button id="btn-stats">数据统计</button>
     <button id="btn-history">对局记录</button>
-    <button id="btn-coach" class="icon" title="大师建议：已关闭（点击开启）">🧠</button>
     <button id="btn-log" class="icon" title="牌局流水：已关闭（点击展开）">📄</button>
     <button id="btn-settings" class="icon" title="设置：推荐策略 / 超时 / 指示器颜色">⚙</button>
     <button id="btn-peek" class="icon" title="透视：查看所有玩家的手牌">👁</button>
@@ -831,6 +830,23 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
       </div>
     </div>
 
+    <div class="setgroup" id="grp-speed">
+      <label class="ghead">
+        <span class="lbl">对手出牌节奏<span class="tip">其他玩家思考与出牌之间的间隔；对局中改动立即生效</span></span>
+      </label>
+      <div class="gbody">
+        <div class="setrow">
+          <div class="lbl">节奏<span class="tip">悠闲 0.8 秒 / 普通 0.45 秒 / 快速 0.2 秒 / 瞬发 0 秒</span></div>
+          <select id="set-oppspeed">
+            <option value="0.8">悠闲</option>
+            <option value="0.45">普通</option>
+            <option value="0.2">快速</option>
+            <option value="0">瞬发</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
     <div class="setgroup" id="grp-hint">
       <label class="ghead">
         <span class="lbl">显示大师推荐<span class="tip">轮到你时计算推荐出牌与操作建议</span></span>
@@ -860,10 +876,10 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
           </div>
         </div>
         <div class="setrow">
-          <div class="lbl">简短推荐理由<span class="tip">操作区上方显示一行推荐原因（不重复已上浮的牌名），便于观察对局思路</span></div>
-          <select id="set-briefreason">
-            <option value="0">关闭</option>
-            <option value="1">显示一行推荐原因</option>
+          <div class="lbl">推荐理由<span class="tip">「完整推荐」= 桌面上显示大师建议面板（含讲解、各选项概率与理由）；「一句话推荐」= 只在操作区上方显示一行理由</span></div>
+          <select id="set-reasonmode">
+            <option value="full">完整推荐</option>
+            <option value="brief">一句话推荐</option>
           </select>
         </div>
         <!-- 自动上浮是推荐的衍生功能，嵌在推荐块内（推荐关闭时随整块一起灰掉） -->
@@ -1083,7 +1099,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 const AVATARS = ["云天明", "妲己", "大乔", "王昭君"];
 const TILES = [];   // {id, name, cn, suit, rank}
 const YAOJI = 9;    // 1条
-let META = null, SID = null, MY_SEAT = 0, SPEED = 0.45;
+let META = null, SID = null, MY_SEAT = 0;
 let SELECTED = -1, SELECTED_IDX = -1, SOUND_ON = false, LAST_STATE = null, COACH_HINTS = [];
 let POLL_TIMER = null;
 let PAGE_VER = null, UPDATE_NAG = null;
@@ -1179,9 +1195,17 @@ const SET = {
   timeout: _timeoutLegacyOff ? 15 : _timeoutVal,
   // 推荐上浮时机：-1=立即；0=自动（取超时时间的一半）；>0=指定秒数
   floatAt: clampSetting(localStorage.getItem("dushan_floatat"), -1, 600, 0),
-  // 推荐延迟：轮到我后等 N 秒才显示推荐（0=立即）；简短理由：在操作区上方直接显示一行大师建议
+  // 推荐延迟：轮到我后等 N 秒才显示推荐（0=立即）
   hintDelay: clampSetting(localStorage.getItem("dushan_hintdelay"), 0, 600, 0),
-  briefReason: localStorage.getItem("dushan_briefreason") === "1",
+  // 推荐理由形态（2026-10-09 合并「大师推荐」与「大师建议」两个机制，去掉牌桌💡/🧠开关）：
+  //   "full"  = 完整推荐（默认）：桌面上显示大师建议面板（讲解 / 概率 / 理由）
+  //   "brief" = 一句话推荐：只在操作区上方显示一行理由
+  // 旧配置迁移：老「简短推荐理由=开」且大师建议面板原本关着 → 迁移为「一句话推荐」
+  reasonMode: (localStorage.getItem("dushan_reasonmode")
+    || (localStorage.getItem("dushan_briefreason") === "1"
+        && localStorage.getItem("dushan_coach_on") !== "1" ? "brief" : "full")),
+  // 对手出牌节奏（秒）：开局页与设置面板共用；对局中修改立即生效
+  speed: clampSetting(localStorage.getItem("dushan_speed"), 0, 3, 0.45),
   indColor: localStorage.getItem("dushan_ind_color") || "red",
   recColor: localStorage.getItem("dushan_rec_color") || "green",
   // 规则开关（下一局生效）：结算翻鸡默认上下鸡；开局翻鸡默认关闭；满堂鸡默认关
@@ -1190,13 +1214,18 @@ const SET = {
   mantiangji: localStorage.getItem("dushan_mantiangji") === "1",
   // 未听牌包赔开关（下一局生效）
   rule: loadRules(),
-  // 面板开关（大师建议 / 全局流水）
-  coach: localStorage.getItem("dushan_coach_on") === "1",
+  // 面板开关（全局流水）
+  // 「大师建议面板」不再单独开关：由 SET.coach 派生（= 推荐总开关开 且 推荐理由=完整推荐）
   // 四家名字/头像（设置里改立即生效；名字在开局时同步给引擎记录）
   players: loadPlayers(),
   // 分值表（下一局生效）
   score: loadScores(),
 };
+/* 兼容旧调用点：SET.coach 读写都映射到「推荐总开关 + 推荐理由形态」 */
+Object.defineProperty(SET, "coach", {
+  get() { return SET.hintOn && SET.reasonMode === "full"; },
+  set(v) { SET.reasonMode = v ? "full" : "brief"; },
+});
 function saveSet() {
   localStorage.setItem("dushan_strategy", SET.strategy);
   localStorage.setItem("dushan_hinton", SET.hintOn ? "1" : "0");
@@ -1205,13 +1234,13 @@ function saveSet() {
   localStorage.setItem("dushan_timeout", String(SET.timeout));
   localStorage.setItem("dushan_floatat", String(SET.floatAt));
   localStorage.setItem("dushan_hintdelay", String(SET.hintDelay));
-  localStorage.setItem("dushan_briefreason", SET.briefReason ? "1" : "0");
+  localStorage.setItem("dushan_reasonmode", SET.reasonMode);
+  localStorage.setItem("dushan_speed", String(SET.speed));
   localStorage.setItem("dushan_ind_color", SET.indColor);
   localStorage.setItem("dushan_rec_color", SET.recColor);
   localStorage.setItem("dushan_jiesuan_fanji", SET.jiesuan);
   localStorage.setItem("dushan_kaiju_fanji", SET.kaijuFanji);
   localStorage.setItem("dushan_mantiangji", SET.mantiangji ? "1" : "0");
-  localStorage.setItem("dushan_coach_on", SET.coach ? "1" : "0");
   localStorage.setItem("dushan_rules", JSON.stringify(SET.rule));
   localStorage.setItem("dushan_players", JSON.stringify(SET.players));
   localStorage.setItem("dushan_scores", JSON.stringify(SET.score));
@@ -1364,6 +1393,7 @@ async function boot() {
   PAGE_VER = META.page_ver || null;
   fillOppSelects();
   fillPlayerRows("pl");   // 开局页：名字/头像（沿用上次设置）
+  el("speed").value = String(SET.speed);   // 开局页节奏沿用上次设置（与设置面板同源）
   const note = el("boot-note");
   if (META.master) {
     const mi = META.master_info || {};
@@ -1393,14 +1423,14 @@ el("startBtn").onclick = async () => {
     return { type: "model", model: v.split(":")[1], temperature: 0 };
   });
   const ms = parseInt(el("my-seat").value, 10);
-  SPEED = parseFloat(el("speed").value);
+  SET.speed = clampSetting(el("speed").value, 0, 3, 0.45);   // 开局页与设置面板共用同一份节奏值
   readPlayerInputs();          // 开局页填的名字/头像 → SET.players
   saveSet();
   AVA_SESSION = null;          // 新开局重掷「随机」头像
   fillPlayerRows("pl"); fillPlayerRows("sp");   // 默认名占位符按新头像刷新（已填的值不动）
   // 名字留空 → 默认「头像名(策略缩写)」，如 大乔(抢听) / 妲己(B3) / 王昭君(S7)
   const names = SET.players.map((p, rel) => p.name || defaultPName(rel));
-  const r = await api("/api/new", { opponents: specs, my_seat: isNaN(ms) ? null : ms, speed: SPEED,
+  const r = await api("/api/new", { opponents: specs, my_seat: isNaN(ms) ? null : ms, speed: SET.speed,
     names,
     rules: Object.assign({ jiesuan: SET.jiesuan, kaiju: SET.kaijuFanji,
       mantiangji: SET.mantiangji, scores: SET.score }, SET.rule) });
@@ -1437,11 +1467,7 @@ function updateCenter(st) {
   // 牌局结束印记：本局结束常显，下一局开始隐藏
   el("end-stamp").classList.toggle("hidden", !st.over);
   const warns = [];
-  // 横鸡轮：轮内跟打同种鸡也算横鸡，标出是哪几种鸡正处于轮内
-  if (st.hengji_active) {
-    const sp = (st.hengji_species || []).map(t => (TILES[t] || {}).cn || "").filter(Boolean);
-    warns.push("🐔横鸡轮" + (sp.length ? `（跟打 ${sp.join("、")} 算横鸡）` : ""));
-  }
+  // 横鸡轮不再常驻提示（改由「XX 打出 横鸡」的 toast 逐次播报，见 renderLog）
   if (st.repao && !st.over) warns.push("🔥热炮");
   // 开局翻鸡：显示翻出的指示牌与本局新增鸡牌
   const kj = el("kaiju-info");
@@ -1490,6 +1516,9 @@ function startTurnTimer() {
 function stopTurnTimer() {
   if (TICK_TIMER) { clearInterval(TICK_TIMER); TICK_TIMER = null; }
   TURN_DEADLINE = 0;
+  // 我的决策点结束（已出牌/已响应）→ 中间倒计时清零重开，
+  // 不再接着上一轮的余数继续倒数（否则会显示一个「剩余 N 秒」的误导读数）
+  FLOW_DEADLINE = 0;
 }
 /* 推荐延迟：轮到我后等 SET.hintDelay 秒再请求推荐（0=立即） */
 function cancelHintTimer() {
@@ -1594,12 +1623,12 @@ function requestHint() {
   return HINT_INFLIGHT;
 }
 
-/* 简短大师建议：只显示"为什么推荐这张牌"；不显示"大师建议："前缀，
-   也不重复牌名（推荐的牌已在牌桌上浮高亮），直接给原因 */
+/* 一句话推荐（推荐理由=「一句话推荐」时）：只显示"为什么推荐这张牌"；
+   不显示"大师建议："前缀，也不重复牌名（推荐的牌已在牌桌上浮高亮），直接给原因 */
 function showBriefTip(r) {
   const t = el("brief-tip");
   if (!t) return;
-  if (!SET.hintOn || !SET.briefReason || !r || !r.ok || !r.items || !r.items.length) { t.style.display = "none"; return; }
+  if (!SET.hintOn || SET.reasonMode !== "brief" || !r || !r.ok || !r.items || !r.items.length) { t.style.display = "none"; return; }
   const top = r.items[0];
   let txt = (r.tip || top.reason || "").trim();
   // 兜底：若原因以推荐动作/牌名开头（如"打 二万："），剥掉前缀避免与上浮牌重复
@@ -1914,13 +1943,17 @@ function renderLog(events) {
   if (lg.dataset.sid !== String(SID)) {
     lg.dataset.sid = SID; lastShown = events.length; lg.dataset.count = events.length;
   }
-  // 新事件音效：碰/杠 + 逐牌报牌（打出的牌读牌名）
+  // 新事件音效：碰/杠 + 逐牌报牌（打出的牌读牌名）；冲锋鸡/横鸡另弹 toast 播报
   if (events.length > lastShown) {
     for (let i = Math.max(lastShown, events.length - 4); i < events.length; i++) {
       const e = events[i];
       if (e.kind === "discard" && e.tile != null) voiceTile(e.tile);
       else if (e.kind === "peng") snd("碰");
       else if (e.kind === "kong") snd("杠");
+      if (e.kind === "discard" && (e.ctag === "冲锋鸡" || e.ctag === "横鸡")) {
+        const nm = e.rel === 0 ? "你" : playerName(e.rel, ["", "下家", "对家", "上家"][e.rel]);
+        toast(`${nm} 打出 ${e.ctag}`, 2200);
+      }
     }
     lastShown = events.length;
     lg.dataset.count = events.length;
@@ -1951,9 +1984,9 @@ async function doAct(kind, tile) {
   AUTO_FAIL_KEY = ""; SENT_FAIL_KEY = "";
   // 音效统一由轮询事件驱动（避免与报牌音重复）
   el("actions").innerHTML = ""; el("actions")._sig = "";
-  // 面板显隐只跟随开关（不再出牌后强制隐藏，否则开着也要再点一次才显示）
-  el("coach").classList.toggle("on", SET.coach);
-  if (SET.coach) coachIdle("等待下一次决策…");
+  // 面板显隐跟随「推荐总开关 + 推荐理由形态」（不再出牌后强制隐藏）
+  syncCoachPanel("等待下一次决策…");
+  tryPlaceCoach();
   COACH_HINTS = [];
   RECOMMEND = null; SELECTED_IDX = -1; SELECTED = -1; TURN_KEY = "";
   poll();
@@ -1967,12 +2000,14 @@ el("actions").onclick = (ev) => {
   doAct(b.dataset.kind, parseInt(b.dataset.tile, 10));
 };
 
-/* ================= 教练（开关式：随时可开可关，非决策点也能打开） ================= */
-function applyCoachBtn() {
-  const b = el("btn-coach");
-  b.classList.toggle("toggle-on", SET.coach);
-  b.textContent = SET.coach ? "💡" : "🧠";
-  b.title = SET.coach ? "大师建议：已开启（点击关闭）" : "大师建议：已关闭（点击开启）";
+/* ================= 大师建议面板 =================
+   已与「大师推荐」合并：不再有独立开关按钮，面板显隐由
+   SET.coach 派生（显示大师推荐 开 且 推荐理由=完整推荐）。 */
+function syncCoachPanel(idleMsg) {
+  const on = !!SET.coach;
+  const box = el("coach");
+  if (box) box.classList.toggle("on", on);
+  if (on) coachIdle(idleMsg || "轮到你会自动给出建议");
 }
 /* 无建议时的占位内容 */
 function coachIdle(msg) {
@@ -2027,17 +2062,7 @@ async function refreshCoach() {
   if (!r.ok) { coachIdle(r.error || "大师暂不可用"); return; }
   paintCoach(r);
 }
-el("btn-coach").onclick = () => {
-  SET.coach = !SET.coach;
-  applyCoachBtn();
-  saveSet();
-  el("coach").classList.toggle("on", SET.coach);
-  tryPlaceCoach();
-  if (SET.coach) refreshCoach();
-};
-applyCoachBtn();
-el("coach").classList.toggle("on", SET.coach);
-if (SET.coach) coachIdle("轮到你会自动给出建议");
+syncCoachPanel();
 
 /* ================= 统计 ================= */
 el("btn-stats").onclick = openStats;
@@ -2711,7 +2736,8 @@ function fillSetSelects() {
   el("set-timeout").value = String(SET.timeout);
   el("set-floatat").value = String(SET.floatAt);
   el("set-hintdelay").value = String(SET.hintDelay);
-  el("set-briefreason").value = SET.briefReason ? "1" : "0";
+  el("set-reasonmode").value = SET.reasonMode;
+  el("set-oppspeed").value = String(SET.speed);
   syncPlayGroups();          // 按开关状态同步置灰（关闭的功能其参数不可用）
   el("set-ind-color").value = SET.indColor;
   el("set-rec-color").value = SET.recColor;
@@ -2753,7 +2779,7 @@ function syncPlayGroups() {
   const hintOn = hSw.checked;
   fSw.disabled = !hintOn;                       // 推荐关了 → 上浮开关也无意义
   const floatOn = fSw.checked && hintOn;
-  setGroupDisabled("grp-hint", !hintOn, ["set-strategy", "set-hintdelay", "set-briefreason"]);
+  setGroupDisabled("grp-hint", !hintOn, ["set-strategy", "set-hintdelay", "set-reasonmode"]);
   setGroupDisabled("grp-timeout", !tSw.checked, ["set-timeout"]);
   setGroupDisabled("grp-float", !floatOn, ["set-floatat"]);
   // 常用档 chip 随所属功能块一起置灰
@@ -2802,11 +2828,19 @@ el("btn-set-close").onclick = () => {
   SET.timeout = clampSetting(el("set-timeout").value, 0, 600, 15);
   SET.floatAt = clampSetting(el("set-floatat").value, -1, 600, 0);
   SET.hintDelay = clampSetting(el("set-hintdelay").value, 0, 600, 0);
-  const briefWas = SET.briefReason;
-  SET.briefReason = el("set-briefreason").value === "1";
-  // 关闭简短理由 / 关闭推荐总开关：立刻清掉当前的推荐展示
+  // 推荐理由：完整推荐 / 一句话推荐（合并了原「大师建议」面板开关）
+  const reasonWas = SET.reasonMode;
+  SET.reasonMode = el("set-reasonmode").value === "brief" ? "brief" : "full";
+  // 对手出牌节奏：对局中改动立即下发到当前会话
+  const speedWas = SET.speed;
+  SET.speed = clampSetting(el("set-oppspeed").value, 0, 3, 0.45);
+  if (SID && speedWas !== SET.speed) api("/api/speed", { sid: SID, speed: SET.speed }).catch(() => {});
+  // 关闭推荐 / 切换理由形态：立刻更新展示
   if (!SET.hintOn) { cancelHintTimer(); hideBriefTip(); }
-  if (!SET.briefReason || (briefWas !== SET.briefReason)) hideBriefTip();
+  if (SET.reasonMode !== reasonWas) hideBriefTip();
+  syncCoachPanel(SET.coach ? "轮到你会自动给出建议" : "");
+  tryPlaceCoach();
+  if (SET.coach) refreshCoach();
   cancelHintTimer();
   SET.indColor = el("set-ind-color").value;
   SET.recColor = el("set-rec-color").value;

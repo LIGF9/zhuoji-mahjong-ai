@@ -955,13 +955,21 @@ class DushanGame(ZhuojiGame):
         # ---- 包鸡/包杠：终局未听牌者对自己**已亮明**的鸡、自己的杠负责（开关控制） ----
         # 「已亮明」= ① 自己打出的鸡（打出去就公开了）＋ ② 副露（碰/杠）里的鸡牌。
         # 手里没亮出来的暗牌鸡**不算**（2026-10-08 用户口径）。
-        # 对被自己碰/杠过鸡牌的那家（原打出者），另加该张的溢价：
-        # 例：B 碰走 A 的横鸡共 3 张，B 未听牌 → 其他家各得 3，A 得 3+1=4。
-        prem_by_discarder: dict[int, list[tuple[str, float]]] = {}
+        # 对被自己碰/杠过鸡牌的那家（原打出者），另加该张的溢价（独立成行）：
+        # 例：B 碰走 A 的横鸡共 3 张，B 未听牌 → 其他家各得 3，A 另付溢价 1。
+        # 注意：溢价只归**碰/杠者本人**（keyed by (claimer, discarder)），且只收一次
+        # （2026-10-09 修复：原先按打出者索引，会把溢价错付给任意未听牌者；
+        #   且随「已亮明」明细行数重复收取）。
+        prem_pairs: dict[tuple[int, int], list[tuple[str, float]]] = {}
         for cl, dsc, prem, tg in self._claimed_ji_rows():
-            prem_by_discarder.setdefault(int(dsc), []).append((tg, float(prem)))
+            prem_pairs.setdefault((int(cl), int(dsc)), []).append((tg, float(prem)))
         for p in range(4):
             if tenpai[p]:
+                continue
+            if void_player is not None and p == void_player:
+                # 鸡分全烧者（热炮放炮者 / 被抢杠者）：自身已亮明的鸡与杠一律作废，
+                # 不再向其他家收包鸡/包杠——被抢杠者「所有鸡全部失效」
+                # （但仍照付他人：上面其他人的 q 角色里 p 照样要赔）
                 continue
             if cfg.end_baoji:
                 ming: list[tuple[str, float]] = list(zip(own_tags[p], own_vals[p]))
@@ -977,14 +985,19 @@ class DushanGame(ZhuojiGame):
                     for q in range(4):
                         if q == p:
                             continue
-                        extra, etag = 0.0, ""
-                        for ptg, pv in prem_by_discarder.get(q, []):
-                            extra += pv
-                            etag = ptg
-                        tot = val + extra
-                        pflow(q, p, tot, "包鸡",
-                              tg + (f"+{etag}溢价" if extra else ""), who=p)
+                        pflow(q, p, val, "包鸡", tg, who=p)
                     detail.append((p, "包鸡", tg, val))
+                # 被碰/杠走那张的溢价：只由原打出者付给碰/杠者，一次性、独立成行
+                for q in range(4):
+                    if q == p:
+                        continue
+                    prem = prem_pairs.get((p, q))
+                    if not prem:
+                        continue
+                    psum = sum(v for _t, v in prem)
+                    etag = prem[0][0] if len(prem) == 1 else "、".join(t for t, _v in prem)
+                    pflow(q, p, psum, "包鸡", f"{etag}溢价", who=p)
+                    detail.append((p, "包鸡", f"{etag}溢价", psum))
             if cfg.end_baogang:
                 kongs = sum(1 for mt, _, _ in self.melds[p] if meld_is_kong(mt))
                 for _ in range(kongs):
