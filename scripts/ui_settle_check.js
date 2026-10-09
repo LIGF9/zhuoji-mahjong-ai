@@ -235,11 +235,14 @@ setTimeout(() => {
     check('共享行数值=人均（+2，且全表无 ×3 标记）',
       shDets.some(r => detNum(r) === 2) && !html2.includes('×3'),
       `shDets=${shDets.map(detNum).join(',')}`);
-    check('共享块尾 = 视角玩家名 + 空 + 「对所有玩家生效」',
+    check('共享块头 = 视角玩家名 + 空 + 「对所有玩家生效」',
       shsum && shsum.children[0].textContent.trim() === vName &&
       shsum.children[1].textContent.trim() === '' &&
       shsum.children[2].textContent.trim() === '对所有玩家生效',
       shsum ? [0, 1, 2].map(i => shsum.children[i].textContent).join('|') + ` (want ${vName})` : '无');
+    check('共享块头在最上面（shsum 紧跟表头、先于共享明细）',
+      shsum && shDets.length > 0 && rows.indexOf(shsum) < rows.indexOf(shDets[0]) &&
+      rows[rows.indexOf(shsum) - 1].querySelector('th') !== null);
     check('共享明细行不带名字（第一列空）',
       shDets.length > 0 && shDets.every(r => r.children[0].textContent.trim() === ''),
       `n=${shDets.length}`);
