@@ -2446,9 +2446,9 @@ function renderPairs(st) {
     }
   }
 
-  // ---- ③ 本局总计 ----
+  // ---- ③ 本局总计（=0 时说明列留空：无收付，不再显示「两讫」字样）----
   html += `<tr class="total"><td>本局总计</td><td></td>` +
-    `<td>${grand > 0 ? "应收" : grand < 0 ? "应付" : "两讫"}</td>` +
+    `<td>${grand > 0 ? "应收" : grand < 0 ? "应付" : ""}</td>` +
     `<td></td><td class="${dcls(grand)}">${snum(grand)}</td></tr></table></div>`;
   setHTML(el("res-pairs"), html);
 }

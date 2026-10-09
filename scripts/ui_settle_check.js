@@ -285,6 +285,18 @@ setTimeout(() => {
     check('CSS: 块间有间隔行', /\.paircard \.pairs-big tr\.gap td \{ height: 14px/.test(html));
   } catch (e) { bad++; console.log('[块样式] THREW: ' + String(e.stack).split('\n').slice(0, 4).join('\n    ')); }
 
+  console.log('\n[单人视角·零总计不显示「两讫」]');
+  try {
+    const rows = renderView(pairState([], [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+      [0, 0, 0, 0]), 2);
+    const total = rows.find(r => r.className === 'total');
+    const html2 = w.document.getElementById('res-pairs').innerHTML;
+    check('总计=0 时说明列留空（无「两讫」字样）',
+      total && total.children[2].textContent.trim() === '' && !html2.includes('两讫'),
+      total ? `说明="${total.children[2].textContent}"` : '无');
+    check('总计值显示 0', total && cellNum(total) === 0);
+  } catch (e) { bad++; console.log('[零总计] THREW: ' + String(e.stack).split('\n').slice(0, 4).join('\n    ')); }
+
   console.log('\n[鸡牌元素：红点 + 冲/横角标]');
   try {
     check('CSS: 手牌鸡牌右上角为红点（圆形 .jimark）',
