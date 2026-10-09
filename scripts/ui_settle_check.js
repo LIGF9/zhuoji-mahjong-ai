@@ -234,9 +234,9 @@ setTimeout(() => {
       shDets.some(r => detNum(r) === 2) && !html2.includes('×3'),
       `shDets=${shDets.map(detNum).join(',')}`);
     check('共享小计 = 人均 +6', shsum && cellNum(shsum) === 6, shsum ? shsum.lastElementChild.textContent : '无');
-    check('三家块头只留名字（单格、无数值）',
-      heads.length === 3 && heads.every(h => h.children.length === 1),
-      heads.map(h => h.children.length).join(','));
+    check('三家都无独有项 → 不出任何对手块（连组头也不出）',
+      heads.length === 0 && !html2.includes('各家独有项'),
+      `heads=${heads.length}`);
     check('本局总计 = +18', total && cellNum(total) === 18, total ? total.lastElementChild.textContent : '无');
     const lhs = (shsum ? cellNum(shsum) : 0) * 3 + uniDets.reduce((a, r) => a + detNum(r), 0);
     check('恒等式：共享人均×3 + Σ独有 == 总计', Math.abs(lhs - cellNum(total)) < 1e-6, `${lhs} vs ${cellNum(total)}`);
@@ -253,10 +253,14 @@ setTimeout(() => {
       [-6, -3, 12, -3]), 2);
     const html2 = w.document.getElementById('res-pairs').innerHTML;
     const det = rows.filter(r => r.className.includes('det') && !r.className.includes('sh'));
+    const heads = rows.filter(r => r.className === 'opphead');
     check('共享区只含杠分（×1）', cnt(html2, '杠分') === 1, `n=${cnt(html2, '杠分')}`);
     check('捉炮留在点炮者那块（×1）', cnt(html2, '捉炮') === 1, `n=${cnt(html2, '捉炮')}`);
-    check('三家块头只留名字（单格、无数值）',
-      rows.filter(r => r.className === 'opphead').every(h => h.children.length === 1));
+    check('无独有项的两家不出块（只 1 块）', heads.length === 1, `n=${heads.length}`);
+    check('块头：名字在第一列、独有合计在末列（+3）',
+      heads[0] && heads[0].children.length === 5 &&
+      heads[0].children[0].textContent.trim().length > 0 && cellNum(heads[0]) === 3,
+      heads[0] ? `name=${heads[0].children[0].textContent} last=${heads[0].lastElementChild.textContent}` : '无');
     check('不再有「独有小计」行', !html2.includes('独有小计'));
     check('独有明细行只有 1 行', det.length === 1, `n=${det.length}`);
     check('本局总计 = +12', cellNum(rows.find(r => r.className === 'total')) === 12);
@@ -274,6 +278,8 @@ setTimeout(() => {
     check('CSS: 对手块头有上边框 + 左竖条',
       /\.paircard \.pairs-big tr\.opphead td \{[^}]*border-top: 2px solid/.test(html) &&
       /\.paircard \.pairs-big tr\.opphead td:first-child \{ padding-left: 10px; border-left: 3px solid/.test(html));
+    check('CSS: 块头末列（独有合计）加粗',
+      /\.paircard \.pairs-big tr\.opphead td:last-child \{ font-weight: 700; \}/.test(html));
     check('CSS: 共享区用冷色块与对手块区分',
       /\.paircard \.pairs-big tr\.det\.sh td \{ background: rgba\(138,196,255/.test(html));
     check('CSS: 块间有间隔行', /\.paircard \.pairs-big tr\.gap td \{ height: 14px/.test(html));
