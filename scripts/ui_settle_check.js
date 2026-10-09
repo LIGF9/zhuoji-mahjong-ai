@@ -212,7 +212,7 @@ setTimeout(() => {
 
   console.log('\n[单人视角·共享项置顶]');
   try {
-    const rows = renderView(pairState(
+    const st1 = pairState(
       [0, 1, 2, 3].filter(o => o !== 2).map(o => ({
         a: 2, b: o,
         items: [{ label: '横鸡', info: '打出', value: 2, who: 2 },
@@ -220,7 +220,9 @@ setTimeout(() => {
                 { label: '翻鸡', info: '共持有 1 张', value: 1, who: 2 }],
       })),
       [[0, 0, -6, 0], [0, 0, -6, 0], [0, 0, 0, 0], [0, 0, -6, 0]],
-      [-6, -6, 18, -6]), 2);
+      [-6, -6, 18, -6]);
+    const rows = renderView(st1, 2);
+    const vName = st1.players[relOf(st1, 2)].name;   // 视角玩家的显示名
     const html2 = w.document.getElementById('res-pairs').innerHTML;
     const shsum = rows.find(r => r.className.includes('shsum'));
     const total = rows.find(r => r.className === 'total');
@@ -233,6 +235,14 @@ setTimeout(() => {
     check('共享行数值=人均（+2，且全表无 ×3 标记）',
       shDets.some(r => detNum(r) === 2) && !html2.includes('×3'),
       `shDets=${shDets.map(detNum).join(',')}`);
+    check('共享块尾 = 视角玩家名 + 空 + 「对所有玩家生效」',
+      shsum && shsum.children[0].textContent.trim() === vName &&
+      shsum.children[1].textContent.trim() === '' &&
+      shsum.children[2].textContent.trim() === '对所有玩家生效',
+      shsum ? [0, 1, 2].map(i => shsum.children[i].textContent).join('|') + ` (want ${vName})` : '无');
+    check('共享明细行不带名字（第一列空）',
+      shDets.length > 0 && shDets.every(r => r.children[0].textContent.trim() === ''),
+      `n=${shDets.length}`);
     check('共享小计 = 人均 +6', shsum && cellNum(shsum) === 6, shsum ? shsum.lastElementChild.textContent : '无');
     check('三家都无独有项 → 不出任何对手块（连组头也不出）',
       heads.length === 0 && !html2.includes('各家独有项'),
@@ -262,6 +272,9 @@ setTimeout(() => {
       heads[0].children[0].textContent.trim().length > 0 && cellNum(heads[0]) === 3,
       heads[0] ? `name=${heads[0].children[0].textContent} last=${heads[0].lastElementChild.textContent}` : '无');
     check('不再有「独有小计」行', !html2.includes('独有小计'));
+    check('独有明细行不带名字（第一列空）',
+      det.length > 0 && det.every(r => r.children[0].textContent.trim() === ''),
+      `n=${det.length}`);
     check('独有明细行只有 1 行', det.length === 1, `n=${det.length}`);
     check('本局总计 = +12', cellNum(rows.find(r => r.className === 'total')) === 12);
   } catch (e) { bad++; console.log('[独有项] THREW: ' + String(e.stack).split('\n').slice(0, 4).join('\n    ')); }
