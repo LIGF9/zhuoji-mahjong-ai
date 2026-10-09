@@ -9,6 +9,10 @@ git clone https://github.com/LIGF9/zhuoji-mahjong-ai.git && cd zhuoji-mahjong-ai
 python web/dushan_server.py --port 8770     # 浏览器打开 127.0.0.1:8770 人机对局
 ```
 
+> **clone 卡住不动的看这里**：部分网络单独屏蔽 `github.com:443`（`ping` 通、
+> `api.github.com` 也通，只有 HTTPS 卡死）。改走 SSH 即可，密钥注册与排查步骤见
+> [`docs/迁移到新机器.md`](docs/迁移到新机器.md) §2.0.1。
+
 > 换机器迁移见 [`docs/迁移到新机器.md`](docs/迁移到新机器.md)；硬件选型（14700K vs
 > MacBook Air M5）见 [`docs/训练硬件对比-14700K-vs-M5.md`](docs/训练硬件对比-14700K-vs-M5.md)。
 
