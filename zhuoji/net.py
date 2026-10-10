@@ -266,24 +266,40 @@ def load_into(model: ZhuojiNet, state_dict: dict) -> tuple[list[str], list[str]]
     return list(missing), list(unexpected)
 
 
-def warm_start_from_v1(model: ZhuojiNet, ck: dict) -> dict:
-    """把 v1 检查点的权重**部分**搬进 v2 结构（其余部分保持随机初始化）。
+def warm_start_from_v1(model: ZhuojiNet, ck: dict, new_init: str = "random") -> dict:
+    """把 v1 检查点的权重**部分**搬进 v2 结构。
 
     只做两件形状不匹配的搬运，别的一律原样加载：
 
     * ``stem.weight``：``(C,15,3,3) → (C,31,3,3)``，前 15 个输入通道**逐位复制**
-      （v1 的 15 个特征通道在 v2 里就是前 15 个，顺序完全一致），
-      新增的 16 个通道保留初始化值；
+      （v1 的 15 个特征通道在 v2 里就是前 15 个，顺序完全一致）；
     * ``fc_in.weight``：``(H, C+70) → (H, C+98)``，前 70 列逐位复制。
 
-    效果：新架构不再必须「从零训练 BC」——共享部分直接继承 s11 的知识，
-    新特征对应的权重从零开始学。返回一份说明装载情况的字典，便于写进日志。
+    ``new_init`` 决定**新增的 16 个输入通道与 28 列新权重**怎么初始化：
+
+    * ``"random"``（默认，历史行为）—— 保留 ``build_model`` 给出的随机初始化。
+      注意这意味着热启动后 v2 模型的输出**不再等于** v1：非零的新特征流过随机权重，
+      等于往一个已训练好的策略里注入随机扰动。
+    * ``"zero"`` —— 整段置零。因为「零权重 × 任何输入 = 0」，热启动后输出与 v1
+      **逐位相同**（前提是输入的前 15 通道/前 70 维也逐位相同，v2 编码器保证这一点）。
+      零处仍可正常学习：输入非零时 ``∂L/∂w = 输入 × 上游梯度 ≠ 0``，
+      所以这些权重会从"不贡献"开始，按梯度自己长出来。
+
+    这个开关存在的意义：把「迁移带来的扰动」与「新特征本身有没有用」**分成两个变量**。
+    P1 阶段 2 的第一次消融只测了 ``random``，于是 ``p_abc`` 掉 0.67 分无法归因 ——
+    ``zero`` 是对照组。
+
+    效果：新架构不再必须「从零训练 BC」——共享部分直接继承旧模型的知识。
+    返回一份说明装载情况的字典，便于写进日志。
     """
+    if new_init not in ("random", "zero"):
+        raise ValueError(f"new_init 只能是 'random' / 'zero'，收到 {new_init!r}")
     src = ck["state_dict"]
     dst = model.state_dict()
     copied: list[str] = []
     skipped: list[str] = []
     new_only: list[str] = []
+    how = "置零" if new_init == "zero" else "随机初始化"
 
     for k, tgt in dst.items():
         s = src.get(k)
@@ -296,15 +312,19 @@ def warm_start_from_v1(model: ZhuojiNet, ck: dict) -> dict:
         elif k == "stem.0.weight" and s.shape[0] == tgt.shape[0] and tgt.dim() == 4:
             n = min(s.shape[1], tgt.shape[1])
             tgt[:, :n] = s[:, :n]
+            if new_init == "zero":
+                tgt[:, n:] = 0.0
             copied.append(f"{k}(前{n}通道)")
-            skipped.append(f"{k}(新增 {tgt.shape[1] - n} 通道随机初始化)")
+            skipped.append(f"{k}(新增 {tgt.shape[1] - n} 通道{how})")
         elif k == "fc_in.weight" and s.shape[0] == tgt.shape[0] and tgt.dim() == 2:
             n = min(s.shape[1], tgt.shape[1])
             tgt[:, :n] = s[:, :n]
+            if new_init == "zero":
+                tgt[:, n:] = 0.0
             copied.append(f"{k}(前{n}列)")
-            skipped.append(f"{k}(新增 {tgt.shape[1] - n} 列随机初始化)")
+            skipped.append(f"{k}(新增 {tgt.shape[1] - n} 列{how})")
         else:
             skipped.append(f"{k}（形状 {tuple(s.shape)} → {tuple(tgt.shape)}，丢弃）")
 
     return {"copied": len(copied), "partial": skipped, "new_only": new_only,
-            "detail": copied}
+            "detail": copied, "new_init": new_init}

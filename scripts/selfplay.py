@@ -461,6 +461,14 @@ def main() -> int:
                     help="逐牌空间头：零初始化的 1×1 卷积加到 discard/self_kong 的 "
                          "27 个位置 logit 上（只 +2×(C+1) 个参数）。auto=跟随检查点；"
                          "on=强制开启（同版本加载时输出与旧模型逐位相同，是严格热启动）。")
+    ap.add_argument("--new-param-init", choices=["random", "zero"], default="random",
+                    help="v1→v2 热启动时，新增的 16 个输入通道权重与 28 列 fc_in 权重的"
+                         "初始化方式（见 zhuoji/net.py::warm_start_from_v1）。"
+                         "random=保留随机初始化（历史行为；实测会让热启动瞬间的 discard "
+                         "logits 最大偏离 16.7，等于往训练好的策略里注入随机扰动）；"
+                         "zero=整段置零 → 热启动后输出与旧模型**逐位相同**（无损迁移），"
+                         "新权重再靠梯度长出来。这是把「迁移扰动」与「新特征本身的作用」"
+                         "分成两个变量的唯一开关（P1 阶段 2 的 C1/C3 对照）。")
     ap.add_argument("--encoder-packs", default="auto",
                     help="P1 特征包掩码（只对 --encoder v2 有意义）：auto=跟随 --init "
                          "检查点记录（老文件→全开）；abc=全开；a=只要牌河时序；"
@@ -507,10 +515,11 @@ def main() -> int:
     model = build_model(cfg)
     src_version = encoder_version_from_ckpt(ck)
     if src_version != enc_version and args.encoder != "auto":
-        info = warm_start_from_v1(model, ck)
+        info = warm_start_from_v1(model, ck, new_init=args.new_param_init)
         print(f"[warm] {args.init} 编码器 v{src_version} → v{enc_version}："
               f"原样复制 {info['copied']} 个张量；部分复制 {info['partial']}；"
-              f"全新参数 {len(info['new_only'])} 个（保持随机初始化）")
+              f"全新参数 {len(info['new_only'])} 个"
+              f"（新增特征权重初始化 = {info['new_init']}）")
     else:
         miss, unexp = load_into(model, ck["state_dict"])
         if miss or unexp:
