@@ -2,18 +2,23 @@
 
 背景
 ----
-本项目在旧机器上运行时留下了两处硬编码的绝对路径：
-  1. ``scripts/shift_chain_*.py`` 里的 ``PY = r"...\\python.exe"``；
-  2. ``scripts/ui_*_check.js`` 里的 ``const ROOT = 'C:/.../zhuoji-mahjong';``。
-换机器后（用户名不同 / 盘符不同 / 目录不同）这两处必须改，否则值班链和
-UI 检查脚本会直接失败。本项目不是 git 仓库，也没有安装脚本，所以用这个
-脚本一次性修好。
+换机器后（用户名不同 / 盘符不同 / 目录不同）必须修两类硬编码绝对路径，
+否则值班链、夜跑队列、接续监控和 UI 检查脚本都会直接失败：
 
-用法（在项目根目录执行）::
+  1. ``scripts/*.py`` 里的 ``PY = r"...\\python.exe"``
+     （不只 ``shift_chain_*``——``shift_plan_a_s12.py``、``night_plan_b_stage2.py``、
+     ``after_night_a4.py``、``after_a4_plan_c.py`` 同样含此变量）；
+  2. ``scripts/ui_*_check.js`` 里的 ``const ROOT = 'C:/.../zhuoji-mahjong';``。
+
+项目本身已是 git 仓库（``git@github.com:LIGF9/zhuoji-mahjong-ai.git``），但路径
+是**本机绝对路径**，换机不会自动对上，所以仍需要这个脚本。
+
+用法（在项目根目录执行；**用新机的 venv 解释器跑**，避免写入系统 Python 路径）::
 
     python scripts/migration_bootstrap.py --fix-paths
     python scripts/migration_bootstrap.py --check
     python scripts/migration_bootstrap.py --fix-paths --check
+    python scripts/migration_bootstrap.py --fix-paths --py C:/path/to/venv/python.exe
 """
 from __future__ import annotations
 
@@ -29,6 +34,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # 旧机器上残留的解释器绝对路径（任意 ``...python.exe`` 都视为待替换目标）
 PY_RE = re.compile(r'^(PY\s*=\s*r?)"[^"]*python\.exe"', re.MULTILINE)
 JS_ROOT_RE = re.compile(r"const ROOT\s*=\s*'[^']*';")
+
+#: 修路径时扫描的脚本范围（曾经只扫 shift_chain_*，漏掉 4 个新脚本）
+PY_GLOBS = ("*.py",)
+JS_GLOBS = ("*.js",)
 
 REQUIRED_FILES = [
     "README.md",
@@ -70,13 +79,27 @@ def _write(p: Path, text: str) -> None:
         fh.write(text)
 
 
-def fix_paths(apply: bool) -> int:
+def _py_targets() -> list[Path]:
+    files: list[Path] = []
+    for g in PY_GLOBS:
+        files += list((ROOT / "scripts").glob(g))
+    return sorted(set(files))
+
+
+def _js_targets() -> list[Path]:
+    files: list[Path] = []
+    for g in JS_GLOBS:
+        files += list((ROOT / "scripts").glob(g))
+    return sorted(set(files))
+
+
+def fix_paths(apply: bool, py_exe: str | None = None) -> int:
     """把硬编码路径改写成当前机器的实际路径。"""
     changed = 0
-    py_exe = sys.executable
+    py_exe = py_exe or sys.executable
     root_posix = ROOT.as_posix()
 
-    for f in sorted((ROOT / "scripts").glob("shift_chain_*.py")):
+    for f in _py_targets():
         text = _read(f)
         new, n = PY_RE.subn(lambda m: f'{m.group(1)}r"{py_exe}"', text)
         if n:
@@ -85,7 +108,7 @@ def fix_paths(apply: bool) -> int:
                 _write(f, new)
             changed += n
 
-    for f in sorted((ROOT / "scripts").glob("ui_*_check.js")):
+    for f in _js_targets():
         text = _read(f)
         new, n = JS_ROOT_RE.subn(f"const ROOT = '{root_posix}';", text)
         if n:
@@ -145,12 +168,12 @@ def check(verbose: bool = True) -> int:
 
     # ---- 残留硬编码 ----
     stale = []
-    for f in sorted((ROOT / "scripts").glob("shift_chain_*.py")):
+    for f in _py_targets():
         t = _read(f)
         m = PY_RE.search(t)
         if m and sys.executable not in m.group(0):
             stale.append(_rel(f))
-    for f in sorted((ROOT / "scripts").glob("ui_*_check.js")):
+    for f in _js_targets():
         t = _read(f)
         m = JS_ROOT_RE.search(t)
         if m and ROOT.as_posix() not in m.group(0):
@@ -206,9 +229,12 @@ def check(verbose: bool = True) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fix-paths", action="store_true",
-                    help="改写 shift_chain_*.py / ui_*_check.js 中的绝对路径")
+                    help="改写 scripts/*.py 与 scripts/*.js 中的绝对路径")
     ap.add_argument("--dry-run", action="store_true",
                     help="只显示将要修改的内容，不写入")
+    ap.add_argument("--py", default=None,
+                    help="写入脚本的解释器路径（默认 sys.executable；"
+                         "建议用新机的 venv python 运行本脚本）")
     ap.add_argument("--check", action="store_true", help="运行环境自检")
     ap.add_argument("--json", default=None, help="把自检结果写成 JSON")
     args = ap.parse_args()
@@ -218,7 +244,7 @@ def main() -> int:
         return 0
 
     if args.fix_paths:
-        fix_paths(apply=not args.dry_run)
+        fix_paths(apply=not args.dry_run, py_exe=args.py)
         print()
 
     rc = check() if (args.check or args.fix_paths) else 0

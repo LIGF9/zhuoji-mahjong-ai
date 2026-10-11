@@ -920,7 +920,8 @@ BC 重生成仍保留为**可选的对照臂**（`gen_bc_data.py --encoder v2` +
 | [`docs/独山麻将规则教程.md`](docs/独山麻将规则教程.md) | 规则全解 |
 | [`docs/S12-训练策略评估-选点数据架构与预算.md`](docs/S12-训练策略评估-选点数据架构与预算.md) | 选点损失量化 / 数据来源边界 / 架构瓶颈 / 本机算力预算与方案 A–D |
 | [`docs/P1-表征升级设计.md`](docs/P1-表征升级设计.md) | P1 分阶段验收标准与反 winner's-curse 纪律 |
-| [`docs/迁移到新机器.md`](docs/迁移到新机器.md) | 换机器时怎么搬项目、怎么修路径、算力实测表 |
+| [`docs/P1-阶段2-消融结论.md`](docs/P1-阶段2-消融结论.md) | 七臂消融结果（全负、元凶 P1b）+ 热启动扰动混淆因素与 C1/C2/C3 判读设计 |
+| [`docs/迁移到新机器.md`](docs/迁移到新机器.md) | 换机器时怎么搬项目、怎么修路径、算力实测表（含本次迁移的包内容与 C3 处理） |
 | [`docs/训练硬件对比-14700K-vs-M5.md`](docs/训练硬件对比-14700K-vs-M5.md) | 14700K 台式机 vs MacBook Air M5 的取舍 |
 | `scripts/bench_scale.py` | 训练吞吐基准（`--device cpu/mps/cuda`），换机器前后对比 |
 | `scripts/analyze_metric_noise.py` | 训练内指标的实测信噪比 F 表（决定用哪个指标选点） |
@@ -928,4 +929,8 @@ BC 重生成仍保留为**可选的对照臂**（`gen_bc_data.py --encoder v2` +
 | `scripts/score_checkpoints.py` | 多检查点共池对位评分（P0 标尺，训练外选点） |
 | `scripts/analyze_selection.py` | 检验训练内指标与真实强度的秩相关 |
 | `scripts/shift_plan_a_s12.py` | 方案 A 第二阶段：s9 → s12 重跑一代 + 代内重选（一键接力） |
-| `scripts/migration_bootstrap.py` | 迁移后一键修路径 + 环境自检 |
+| `scripts/night_plan_b_stage2.py` | 方案 B 阶段 2：7 臂串行消融 + 预算闸门 |
+| `scripts/after_night_a4.py` / `scripts/after_a4_plan_c.py` | 串行接续监控（前一实验退出后自动拉起下一个） |
+| `scripts/keep_awake.py` | 防空闲睡眠守护（无人值守长跑必开） |
+| `scripts/make_migration_bundle.py` | 生成迁移 zip（自动跳过在途写入文件 + `MANIFEST.txt` + CRC 校验） |
+| `scripts/migration_bootstrap.py` | 迁移后一键修路径（12 处）+ 环境自检 |
