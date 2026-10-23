@@ -87,3 +87,6 @@ desktop.ini
 
 # === 本地代码备份归档（C 阶段整理产物，不入库）===
 _archive_baks/
+
+# === 单 HTML 加强语料（可由 test/export_*.py 再生成，不入库）===
+web/standalone/test/*.json
