@@ -2882,7 +2882,11 @@ function toast(txt, ms, html) {
   clearTimeout(t._tm); t._tm = setTimeout(() => t.classList.remove("on"), ms || 1600);
 }
 async function api(path, body) {
-  /* 离线单机版：直接调用内嵌本地引擎（无 HTTP） */
+  /* 离线单机版：直接调用内嵌本地引擎（无 HTTP）。
+     UI 脚本解析期即调 api()，早于引擎脚本赋值 __LocalAPI，
+     故先等桥就绪（引擎脚本尾部会触发 __LocalAPIResolve）。 */
+  if (!window.__LocalAPI) await (window.__LocalAPIReady ||
+    (window.__LocalAPIReady = new Promise(r => { window.__LocalAPIResolve = r; })));
   return window.__LocalAPI(path, body);
 }
 /* ---- 全屏特效互斥队列（2026-10-13 用户口径：「开局鸡牌显示的特效（要等前面的）
@@ -10556,6 +10560,8 @@ window.__DushanReady = (async () => {
 window.__LocalAPI = function (path, body) {
   return window.__DushanReady.then(api => api.handle(path, body));
 };
+/* 桥就绪：放行 UI 脚本解析期就已排队的 api() 调用（meta/自动重连） */
+if (window.__LocalAPIResolve) window.__LocalAPIResolve();
 })();
 </script>
 </body>
