@@ -7,8 +7,8 @@
 * 规则分歧点全部收进 :class:`RulesConfig`，默认取"通用贵阳捉鸡"口径，
   文档里标注了各地差异，方便按自己牌桌的规矩改。
 * 动作是显式的 :class:`Action`，对局分成三个决策点：
-  ``SELF_KONG``（摸牌后是否闷豆/爬坡豆）→ ``DISCARD``（出牌 或 自摸胡）
-  → ``RESPOND``（对他家出牌的 碰/点豆/胡/过）。
+  ``SELF_KONG``（摸牌后是否暗杠/补杠）→ ``DISCARD``（出牌 或 自摸胡）
+  → ``RESPOND``（对他家出牌的 碰/点杠/胡/过）。
 
 核心规则
 --------
@@ -59,10 +59,10 @@ class RulesConfig:
     base_score: float = 1.0
 
     # ---- 豆（杠）----
-    men_dou: float = 2.0            # 闷豆（暗杠）：其他三家各付
-    pa_po_dou: float = 3.0          # 爬坡豆（补杠）：其他三家各付
-    dian_dou: float = 1.0           # 点豆（明杠）数额
-    #: 点豆番由谁承担。"konger"=杠的人付给被点者（百科口径，默认）；"discarder"=反过来
+    men_dou: float = 2.0            # 暗杠（暗杠）：其他三家各付
+    pa_po_dou: float = 3.0          # 补杠（补杠）：其他三家各付
+    dian_dou: float = 1.0           # 点杠（明杠）数额
+    #: 点杠番由谁承担。"konger"=杠的人付给被点者（百科口径，默认）；"discarder"=反过来
     dian_dou_payer: str = "konger"
     #: 豆必须听牌才生效（"得豆必须听牌"）
     dou_requires_tenpai: bool = True
@@ -123,8 +123,8 @@ class Action:
 
     def label(self) -> str:
         cn = {
-            DISCARD: "打", HU: "胡", ANGANG: "闷豆", BUGANG: "爬坡豆",
-            PENG: "碰", MINGGANG: "点豆", PASS: "过",
+            DISCARD: "打", HU: "胡", ANGANG: "暗杠", BUGANG: "补杠",
+            PENG: "碰", MINGGANG: "点杠", PASS: "过",
         }[self.kind]
         return cn if self.tile < 0 else f"{cn}{tile_cn(self.tile)}"
 
@@ -338,7 +338,7 @@ class ZhuojiGame:
             self._step_respond(action)
         return self.phase == Phase.OVER
 
-    # 阶段一：摸牌后的闷豆 / 爬坡豆
+    # 阶段一：摸牌后的暗杠 / 补杠
     def _step_self_kong(self, action: Action) -> None:
         if self._rob_kong is not None:
             p, t = self._rob_kong
@@ -517,13 +517,13 @@ class ZhuojiGame:
                         if q != p:
                             delta[q] -= cfg.men_dou
                             delta[p] += cfg.men_dou
-                    detail.append((p, "闷豆", tile_name(t), cfg.men_dou))
+                    detail.append((p, "暗杠", tile_name(t), cfg.men_dou))
                 elif mt == MELD_KONG_ADDED:
                     for q in range(4):
                         if q != p:
                             delta[q] -= cfg.pa_po_dou
                             delta[p] += cfg.pa_po_dou
-                    detail.append((p, "爬坡豆", tile_name(t), cfg.pa_po_dou))
+                    detail.append((p, "补杠", tile_name(t), cfg.pa_po_dou))
                 elif mt == MELD_KONG_EXPOSED:
                     if cfg.dian_dou_payer == "konger":
                         delta[p] -= cfg.dian_dou
@@ -531,7 +531,7 @@ class ZhuojiGame:
                     else:
                         delta[src] -= cfg.dian_dou
                         delta[p] += cfg.dian_dou
-                    detail.append((p, "点豆", tile_name(t), cfg.dian_dou))
+                    detail.append((p, "点杠", tile_name(t), cfg.dian_dou))
         return detail, delta
 
     def _settle_chicken(self, void_player: int | None):

@@ -11,8 +11,8 @@
 4. **动作头统一为三个**（和规则引擎的三个决策点一一对应）::
 
        head_discard    : 28  (0..26 打某张牌, 27 = 自摸胡)
-       head_self_kong  : 28  (0..26 闷豆/爬坡豆某张牌, 27 = 过)
-       head_respond    : 4   (过 / 碰 / 点豆 / 胡)
+       head_self_kong  : 28  (0..26 暗杠/补杠某张牌, 27 = 过)
+       head_respond    : 4   (过 / 碰 / 点杠 / 胡)
 
    每个头都配一个 mask，非法动作在 softmax 前被置为 -inf。
 """
@@ -31,15 +31,17 @@ CTX_DIM = 27 + 4          # 上一张被打出的牌 one-hot + 出牌者相对�
 GLOBAL_DIM = 39 + CTX_DIM
 
 # ---------------------------------------------------------------------------
-# 编码器版本表（P1）
+# 编码器版本表（P1 / P3）
 # ---------------------------------------------------------------------------
 # v1 = 15 通道 / 70 全局维（s1–s11、master 全部用它，**必须永久保持逐位不变**）；
-# v2 = 31 通道 / 98 全局维（P1 表征升级，见 ``zhuoji/encoder_v2.py``）。
+# v2 = 31 通道 / 98 全局维（P1 表征升级，见 ``zhuoji/encoder_v2.py``）；
+# v3 = 63 通道 / 130 全局维（P3 二次升级，见 ``zhuoji/encoder_v3.py``）。
+# v2 ⊂ v3、v1 ⊂ v2 都是**严格超集**（逐位相同），有测试断言守着。
 # 维度放在这里而不是散落各处，是为了让网络可以按版本构建；
 # `encode(..., version=...)` 是唯一入口，缺省仍是 v1。
-ENCODER_VERSIONS = (1, 2)
-NUM_CHANNELS_BY_VERSION = {1: NUM_CHANNELS, 2: 31}
-GLOBAL_DIM_BY_VERSION = {1: GLOBAL_DIM, 2: 98}
+ENCODER_VERSIONS = (1, 2, 3)
+NUM_CHANNELS_BY_VERSION = {1: NUM_CHANNELS, 2: 31, 3: 63}
+GLOBAL_DIM_BY_VERSION = {1: GLOBAL_DIM, 2: 98, 3: 130}
 
 #: 模块级默认版本。仅用于「没有显式传 version」的旧调用点（脚本、网页服务等）；
 #: 训练/评测这类必须严格一致的路径一律显式传参，不依赖全局状态。
@@ -62,6 +64,34 @@ def dims_for_version(version: int) -> tuple[int, int]:
     if version not in ENCODER_VERSIONS:
         raise ValueError(f"未知编码器版本 {version}，可选 {ENCODER_VERSIONS}")
     return NUM_CHANNELS_BY_VERSION[version], GLOBAL_DIM_BY_VERSION[version]
+
+
+def parse_packs_for(version: int, spec):
+    """**按编码器版本**解析特征包写法。
+
+    存在的理由：v3 的包集合是七包（v2 的三包 + d/e/f/g）。若全项目一律用
+    ``encoder_v2.parse_packs``，v3 的 ``"d"``/``"e"``/``"f"``/``"g"`` 会被静默丢弃，
+    于是「关掉某个 v3 包训练」的检查点在评测时又变回全开 —— 与历史踩过的
+    「训练关了包、评测忘了关」是同一类错误，只是方向相反。所以把解析入口
+    统一收在这里，调用方只需要给版本号。
+    """
+    v = int(version)
+    if v >= 3:
+        from .encoder_v3 import parse_packs_v3
+        return parse_packs_v3(spec)
+    if v == 2:
+        from .encoder_v2 import parse_packs
+        return parse_packs(spec)
+    return ()
+
+
+def pack_desc_for(version: int) -> dict:
+    """返回该版本的「包代号 → 中文说明」表（写日志用）。"""
+    if int(version) >= 3:
+        from .encoder_v3 import PACK_DESC_V3
+        return PACK_DESC_V3
+    from .encoder_v2 import PACK_DESC
+    return PACK_DESC
 
 
 HEAD_DISCARD = "discard"
@@ -176,11 +206,13 @@ def encode(game, player: int, version: int | None = None,
            packs=None) -> Observation:
     """按版本编码（``version=None`` 时用模块默认版本，历史默认 v1）。
 
-    v2 的实现在 :mod:`zhuoji.encoder_v2`。这里**延迟导入**，一是避免
-    ``encoder ↔ encoder_v2`` 的循环导入，二是让只跑 v1 的路径完全不加载 v2 代码。
+    v2 的实现在 :mod:`zhuoji.encoder_v2`、v3 在 :mod:`zhuoji.encoder_v3`。
+    这里**延迟导入**，一是避免 ``encoder ↔ encoder_v2/v3`` 的循环导入，
+    二是让只跑 v1 的路径完全不加载后面的代码。
 
-    ``packs`` 只对 v2 有意义：指定启用哪几个 P1 特征包（``None`` = 全开）。
-    见 :func:`zhuoji.encoder_v2.parse_packs`。
+    ``packs`` 只对 v2/v3 有意义：指定启用哪几个特征包（``None`` = 全开）。
+    v2 见 :func:`zhuoji.encoder_v2.parse_packs`，v3 见
+    :func:`zhuoji.encoder_v3.parse_packs_v3`（七包，含 v2 的三包）。
     """
     v = _DEFAULT_VERSION if version is None else int(version)
     if v == 1:
@@ -188,6 +220,9 @@ def encode(game, player: int, version: int | None = None,
     if v == 2:
         from .encoder_v2 import encode_v2
         return encode_v2(game, player, encode_v1, packs)
+    if v == 3:
+        from .encoder_v3 import encode_v3
+        return encode_v3(game, player, encode_v1, packs)
     raise ValueError(f"未知编码器版本 {v}，可选 {ENCODER_VERSIONS}")
 
 

@@ -168,7 +168,7 @@ class HeuristicBot(Bot):
             v[t] += c
         return v
 
-    # -- 摸牌后的闷豆 / 爬坡豆 --------------------------------------------
+    # -- 摸牌后的暗杠 / 补杠 --------------------------------------------
     def _self_kong(self, game) -> Action:
         p = game.actor()          # 抢杠时 actor 是抢杠者，不是 current
         acts = game.legal_actions()
@@ -217,7 +217,7 @@ class HeuristicBot(Bot):
             h = list(hand)
             h[tile] -= 3
             after = shanten(h, n_melds + 1)
-            # 点豆送一个通行证，向听不变也值得做
+            # 点杠送一个通行证，向听不变也值得做
             if after <= cur + 0.0:
                 return mg[0]
 

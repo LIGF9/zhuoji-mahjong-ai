@@ -34,7 +34,7 @@ def counts(s: str) -> list[int]:
 
 
 def build_rob_kong_game():
-    """0 号补杠 T5，1 号听 T5 且手握闷豆 —— 必成抢杠。"""
+    """0 号补杠 T5，1 号听 T5 且手握暗杠 —— 必成抢杠。"""
     g = ZhuojiGame(RulesConfig(), seed=42)
     T5 = parse_tile("T5")
     g.dealer = 0
@@ -46,7 +46,7 @@ def build_rob_kong_game():
     g.melds[0] = [(MELD_PONG, T5, 2)]
     g.hands[0] = counts("T5 W1 W2 W3 W4 W5 W6 B1 B2 B3 B7")
 
-    # 1 号：单一归（T5 单张钓将），且已有闷豆 → 点胡通行证成立
+    # 1 号：单一归（T5 单张钓将），且已有暗杠 → 点胡通行证成立
     g.melds[1] = [(MELD_KONG_CONCEALED, parse_tile("B9"), 1)]
     g.hands[1] = counts("W1 W2 W3 W4 W5 W6 B1 B2 B3 T5")
 

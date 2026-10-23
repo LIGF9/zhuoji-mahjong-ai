@@ -62,6 +62,9 @@ class ZhuojiNet(nn.Module):
                  hidden: int = 256, global_dim: int = GLOBAL_DIM,
                  in_channels: int = NUM_CHANNELS, spatial_head: bool = False):
         super().__init__()
+        self.arch = "s"
+        self.se = False          # 仅供 ``ck_from_model`` 写出元数据用（本类无 SE）
+        self.bn_eps = 1e-5       # BatchNorm2d 的默认 eps，显式记录下来
         self.channels = channels
         self.blocks = blocks
         self.global_dim = global_dim
@@ -137,6 +140,13 @@ class NetConfig:
 
     默认值 = **v1 的历史配置**，因此 ``NetConfig()`` 与旧代码逐位等价，
     旧检查点（``net`` 字典里只有 channels/blocks/hidden）也能原样加载。
+
+    ``arch`` 是 P3 引入的骨干选择器：
+
+    * ``"s"``（默认）→ :class:`zhuoji.net.ZhuojiNet`（ReLU + 普通 ResBlock，
+      s1–s11 全用它；**旧检查点没有这个字段，缺省即 s，行为不变**）；
+    * ``"m1"`` → :class:`zhuoji.net_m1.M1Net`（Mish + SE-ResBlock + BN eps 1e-3，
+      160ch×20 ≈ 9.84M，见 ``docs/P3-10M模型设计.md``）。
     """
     channels: int = 48
     blocks: int = 8
@@ -144,6 +154,12 @@ class NetConfig:
     global_dim: int = GLOBAL_DIM
     in_channels: int = NUM_CHANNELS
     spatial_head: bool = False
+    arch: str = "s"
+    se: bool = True
+    bn_eps: float = 1e-3
+    # M2-AUX（2026-10-18）：1 = 挂 PTIE 式完美信息辅助头（仅 M1Net 支持）。
+    # 缺省 0 → 旧检查点结构与逐位行为完全不变。
+    aux: int = 0
 
 
 def net_config_from_ckpt(ck: dict) -> NetConfig:
@@ -158,6 +174,10 @@ def net_config_from_ckpt(ck: dict) -> NetConfig:
         global_dim=int(d.get("global_dim", GLOBAL_DIM)),
         in_channels=int(d.get("in_channels", NUM_CHANNELS)),
         spatial_head=bool(d.get("spatial_head", False)),
+        arch=str(d.get("arch", "s")),
+        se=bool(d.get("se", True)),
+        bn_eps=float(d.get("bn_eps", 1e-3)),
+        aux=int(d.get("aux", 0)),
     )
 
 
@@ -170,6 +190,10 @@ def net_meta(cfg: NetConfig) -> dict:
         "global_dim": cfg.global_dim,
         "in_channels": cfg.in_channels,
         "spatial_head": cfg.spatial_head,
+        "arch": cfg.arch,
+        "se": cfg.se,
+        "bn_eps": cfg.bn_eps,
+        "aux": int(getattr(cfg, "aux", 0)),
     }
 
 
@@ -179,16 +203,27 @@ def encoder_version_from_ckpt(ck: dict) -> int:
 
 
 def encoder_packs_from_ckpt(ck: dict) -> tuple[str, ...]:
-    """检查点启用过的 P1 特征包。
+    """检查点启用过的特征包。
 
     老文件没有这个字段 → 全开（向后兼容：当时的 v2 检查点一定是全开的）。
     v1 检查点这个字段无意义，调用方应先用
     :func:`encoder_version_from_ckpt` 判断版本。
+
+    **按编码器版本分发解析器**：v3 的包集合是七包（含 v2 的三包），
+    若一律用 ``encoder_v2.parse_packs`` 解析，``"d"``/``"e"``/``"f"``/``"g"``
+    会被静默丢弃 —— 于是「关掉某个 v3 包训练」的检查点在评测时又被全开，
+    正是本项目记录过的「训练关了包、评测忘了关」那类错误的镜像。
     """
     v = ck.get("encoder_packs")
     if v is None:
+        if encoder_version_from_ckpt(ck) >= 3:
+            from .encoder_v3 import ALL_PACKS_V3
+            return ALL_PACKS_V3
         from .encoder_v2 import ALL_PACKS
         return ALL_PACKS
+    if encoder_version_from_ckpt(ck) >= 3:
+        from .encoder_v3 import parse_packs_v3
+        return parse_packs_v3(v)
     from .encoder_v2 import parse_packs
     return parse_packs(v)
 
@@ -221,14 +256,18 @@ def ck_from_model(model, encoder_version: int | None = None,
     打包成检查点风格后，每个快照自己声明版本与包掩码，就不再依赖主模型的配置。
     """
     d = {
-        "net": {
-            "channels": model.channels,
-            "blocks": model.blocks,
-            "hidden": model.fc_in.out_features,
-            "global_dim": model.global_dim,
-            "in_channels": model.in_channels,
-            "spatial_head": bool(model.spatial_head),
-        },
+        "net": net_meta(NetConfig(
+            channels=model.channels,
+            blocks=model.blocks,
+            hidden=model.fc_in.out_features,
+            global_dim=model.global_dim,
+            in_channels=model.in_channels,
+            spatial_head=bool(model.spatial_head),
+            arch=str(getattr(model, "arch", "s")),
+            se=bool(getattr(model, "se", False)),
+            bn_eps=float(getattr(model, "bn_eps", 1e-5)),
+            aux=int(bool(getattr(model, "aux", False))),
+        )),
         "state_dict": model.state_dict(),
     }
     if encoder_version is not None:
@@ -247,7 +286,18 @@ def load_model_file(path, map_location="cpu"):
 
 
 def build_model(cfg: NetConfig | None = None) -> ZhuojiNet:
+    """按 :class:`NetConfig` 构建骨干（``arch="m1"`` 时返回 :class:`M1Net`）。
+
+    返回类型标注保持 ``ZhuojiNet`` 只是为了不破坏既有注解；M1Net 与它
+    **接口完全一致**（属性名 / forward 返回字典 / n_params），调用方无需分支。
+    """
     cfg = cfg or NetConfig()
+    if str(getattr(cfg, "arch", "s")) == "m1":
+        from .net_m1 import M1Net
+        return M1Net(cfg.channels, cfg.blocks, cfg.hidden,
+                     global_dim=cfg.global_dim, in_channels=cfg.in_channels,
+                     spatial_head=cfg.spatial_head, se=cfg.se, bn_eps=cfg.bn_eps,
+                     aux=bool(getattr(cfg, "aux", 0)))
     return ZhuojiNet(cfg.channels, cfg.blocks, cfg.hidden,
                      global_dim=cfg.global_dim, in_channels=cfg.in_channels,
                      spatial_head=cfg.spatial_head)

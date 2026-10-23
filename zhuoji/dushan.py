@@ -24,8 +24,11 @@
   - 翻鸡：胡牌者翻牌墙顶，点数 +1 同花色为翻鸡牌，听牌者手中/副露每张 +1
     （已打出的不算；上下鸡为可选变体）；
   - 金鸡：翻出九条（翻鸡牌与幺鸡重合）时幺鸡计分 ×2；
-  - 牌型奖励（胡牌者，叠加）：清一色 13 / 小七对 13 / 报叫 13 / 单吊 13 /
-    龙七对 26 / 大对子 8。
+  - 牌型奖励（胡牌者，叠加）：清一色 13 / 小七对 13 / 报叫 10 / 单吊 13 /
+    龙七对 26 / 大对子 8；
+  - 报叫胡牌（2026-10-12 用户口径）：赢家报叫且**没有其他具名牌型**时，
+    结算页与对局记录里的牌型标签显示「报叫」而不是「平胡」；
+    具名牌型的判定本身不变（报叫不计入「非平胡·胡牌」统计）。
 * **包鸡/包杠**：终局未听牌者对自己打出的鸡、自己的杠，向其他每家各赔
   相应分值。**是否为包赔可分别开关**（见 ``DushanConfig.end_baoji`` /
   ``end_baogang``：胡牌局默认包鸡开、包杠关；``huang_baoji`` /
@@ -158,13 +161,13 @@ class DushanConfig(RulesConfig):
     """独山规则档（调参口）。"""
 
     baojiao_auto: bool = True        # 首张打出后听牌自动报叫
-    baojiao_bonus: float = 13.0      # 报叫胡牌 +13 鸡
+    baojiao_bonus: float = 10.0      # 报叫胡牌 +10 鸡（2026-10-12 用户口径：13 → 10）
     # 结算翻鸡（胡牌后翻牌墙顶）："both"=上下鸡（默认）/ "up"=仅上鸡 / "down"=仅下鸡
     jiesuan_fanji: str = "both"
     # 开局翻鸡（开局翻牌墙尾）："off"=关闭（默认）/ "up" / "down" / "both"
     kaiju_fanji: str = "off"
     mantiangji: bool = False         # 满堂鸡：翻鸡牌即使已打出（弃牌区）也计入持有
-    jin_ji_multiplier: float = 2.0   # 金鸡倍率（只作用于幺鸡，翻鸡牌本身不翻倍）
+    jin_ji_multiplier: float = 2.0   # 金鸡倍率（2026-10-12：作用于金鸡**牌种**的全部相关分）
     gang_fee: float = 3.0            # 兼容旧字段（新口径不再即时收杠分）
     base_score: float = 1.0
     # ---- 鸡的分值表（教程 10.1，网页设置可改；单位：鸡） ----
@@ -190,10 +193,15 @@ class DushanConfig(RulesConfig):
     huang_baoji: bool = False        # 流局（黄庄）：未听牌者包鸡（默认关）
     huang_baogang: bool = False      # 流局（黄庄）：未听牌者包杠（默认关）
     huang_baodapai: bool = True      # 流局：未听牌者包听牌者的非平胡牌面（默认开）
+    # ---- 追加鸡牌种（2026-10-12 新功能：开局/设置里手动增加，如贵阳玩的八筒） ----
+    # 元组形式（dataclass 字段）；元素是 0..26 的牌种索引，幺鸡（YAOJI）自动忽略。
+    # 追加种与开局翻鸡新增种同权：参与冲锋鸡/横鸡轮/手中鸡/包鸡全套结算。
+    extra_ji: tuple = ()
 
     def __post_init__(self) -> None:
-        # 兼容旧写法：布尔 / 中文标签 / 代码字符串，统一归一为翻鸡模式
-        self.jiesuan_fanji = norm_fanji(self.jiesuan_fanji, allow_off=False)
+        # 兼容旧写法：布尔 / 中文标签 / 代码字符串，统一归一为翻鸡模式。
+        # 结算翻鸡自 2026-10-11 起也允许 "off"（网页设置新增「关闭」，默认仍 both）。
+        self.jiesuan_fanji = norm_fanji(self.jiesuan_fanji, allow_off=True)
         self.kaiju_fanji = norm_fanji(self.kaiju_fanji, allow_off=True)
 
 
@@ -212,6 +220,10 @@ class DushanGame(ZhuojiGame):
         self.hengji_opened = False              # 全场第一张鸡（横鸡）是否已出现
         self.hengji_starter: int | None = None  # 本局第一个开出横鸡轮的玩家
         self.ji_events: list[tuple[int, float, str]] = []   # (打出者, 基础分, 类型名)
+        # 与 ji_events **严格同步**的平行列表：该次打出的鸡是哪张牌。
+        # 金鸡（2026-10-12 用户口径）要按"牌种"判断能不能翻倍，所以必须记住牌面；
+        # 单独开一条平行列表是为了不破坏 ji_events 的 3 元组契约（测试/脚本都在用它）。
+        self.ji_event_tiles: list[int] = []
         # 横鸡按鸡牌种独立成轮（2026-10-08 用户口径：幺鸡与开局翻鸡种各算各的，
         # 互不影响）：_hengji_done[牌种] = 该种鸡的横鸡已出现（本局不再开新轮）。
         self._hengji_done: set[int] = set()
@@ -219,10 +231,22 @@ class DushanGame(ZhuojiGame):
         #   _hengji_rounds[牌种] = {"start": 开轮者, "seats": 轮内已吃横鸡的玩家集合}
         # 轮内任何玩家跟打同种鸡都算横鸡；开轮者或轮内已打过者再次出牌 → 该轮收口。
         self._hengji_rounds: dict[int, dict] = {}
+        # 横鸡轮开/收事件（2026-10-11：流水要记录横鸡轮的开始与结束）：
+        #   (玩家座位, 牌种, "open"/"close") —— open 的玩家=开轮者，close 的玩家=收口者
+        self.hengji_events: list[tuple[int, int, str]] = []
         self._ji_tag_of_last = ["幺鸡"] * 4     # 各家最近一次打出的鸡牌类型名
         # ((玩家, 牌), 被碰/杠鸡的类型名) —— 存类型名而非分值，分值改由配置换算
         self._ji_val_by_meld: dict[tuple[int, int], str] = {}
-        self.claimed_ji: list[tuple[int, int, str, bool]] = []   # (打出者, 碰/杠者, 类型名, 是否明杠)
+        # (打出者, 碰/杠者, 类型名, 是否明杠, 牌) —— 末位「牌」为 2026-10-12 新增，
+        # 用于判断被碰/杠走的是不是金鸡（旧 4 元组仍兼容：缺失时按非金鸡处理）。
+        self.claimed_ji: list[tuple] = []
+        # 牌河「展示视图」（2026-10-12 用户口径）：被碰/杠走的弃牌在真实 ``discards``
+        # 里已被移除（计分口径不能动），但 UI 需要它在**原位**留一张半透明残牌，
+        # 才能一眼看出哪张牌被谁吃走。故另开两条**只增不减**的平行视图：
+        #   discard_view[p]         = 该家按顺序打出的每一张牌（含被吃走的）
+        #   discard_claimed_view[p] = 与之等长，True 表示这张已被碰/明杠吃走
+        self.discard_view: list[list[int]] = [[] for _ in range(4)]
+        self.discard_claimed_view: list[list[bool]] = [[] for _ in range(4)]
         # 捉炮鸡：点炮/热炮的那张牌若是鸡牌，其鸡分归胡牌者（打出者不再计）。
         # (胡牌者, 分值, 类型名, 牌)
         self.captured_ji: list[tuple[int, float, str, int]] = []
@@ -233,6 +257,12 @@ class DushanGame(ZhuojiGame):
         self._after_gang_draw = False           # 本次进牌来自杠后摸牌（杠上开花）
         self._any_discard = False               # 天胡判定用
         self.ji_tiles: set[int] = {YAOJI}       # 本局的鸡牌种（幺鸡 + 开局翻鸡新增）
+        # 2026-10-12：网页「追加鸡牌」（如贵阳玩的八筒）——幺鸡外手动指定的鸡牌种，
+        # 与开局翻鸡新增种完全同权（冲锋鸡/横鸡轮/手中鸡/包鸡 全套结算参与）。
+        for _t in (self.cfg.extra_ji if getattr(self.cfg, "extra_ji", None) else ()):
+            _t = int(_t)
+            if 0 <= _t < NUM_TILE_TYPES and _t != YAOJI:
+                self.ji_tiles.add(_t)
         self.kaiju_flip: int | None = None      # 开局翻出的鸡牌指示牌（None=未启用）
 
     # -- 横鸡轮（只读派生） --------------------------------------------------
@@ -267,6 +297,7 @@ class DushanGame(ZhuojiGame):
         """
         for sp in [s for s, r in self._hengji_rounds.items() if p in r["seats"]]:
             del self._hengji_rounds[sp]
+            self.hengji_events.append((int(p), int(sp), "close"))
 
     def _start(self, dealer: int | None) -> None:  # noqa: D102
         # 独山状态必须先于基类初始化：_enter_self_phase 会用到报叫锁定
@@ -402,6 +433,11 @@ class DushanGame(ZhuojiGame):
 
     # -- 抢杠：补杠可被抢（无视通行证），自杠/明杠不可抢 ------------------------
     def _step_self_kong(self, action) -> None:  # noqa: D102
+        # 纵深防御：报叫玩家严禁自杠（暗杠/补杠）——_self_kong_options 已锁，这里兜底
+        if action.kind in (ANGANG, BUGANG) and self._rob_kong is None \
+                and self.baojiao[self.current]:
+            raise ValueError(
+                f"非法动作（玩家 {self.current}）：已报叫，严禁碰杠（收到 {action.label()}）")
         if self._rob_kong is None and action.kind == BUGANG:
             p = self.current
             t = action.tile
@@ -433,6 +469,9 @@ class DushanGame(ZhuojiGame):
         self.repao_discard = self.gang_discard[p]
         self.hands[p][t] -= 1
         self.discards[p].append(t)
+        # 展示视图（只增不减）：牌河里永远保留这张（被碰/杠走时下面只改 claimed 标记）
+        self.discard_view[p].append(int(t))
+        self.discard_claimed_view[p].append(False)
         self._any_discard = True
 
         # 横鸡轮收口：开轮者 / 轮内已吃横鸡者再次出牌 → 该种轮结束（与本次牌无关）
@@ -452,6 +491,7 @@ class DushanGame(ZhuojiGame):
             else:
                 self._hengji_done.add(t)
                 self._hengji_rounds[t] = {"start": p, "seats": {p}}
+                self.hengji_events.append((int(p), int(t), "open"))
                 if not self.hengji_opened:
                     self.hengji_opened = True
                     self.hengji_starter = p
@@ -462,6 +502,7 @@ class DushanGame(ZhuojiGame):
                 rnd["seats"].add(p)
             val = self.ji_value(tag)
             self.ji_events.append((p, val, tag))
+            self.ji_event_tiles.append(int(t))     # 与 ji_events 严格同步（金鸡判定用牌面）
             self._ji_tag_of_last[p] = tag
 
         # 自动报叫：第一张打出后已听牌
@@ -534,61 +575,104 @@ class DushanGame(ZhuojiGame):
             self.pass_lock[p].add(tile)
             self._advance_respond(discarder, tile)
             return
+        # 2026-10-12 纵深防御：报叫玩家严禁碰杠。三条锁（_can_peng/_can_minggang/
+        # _self_kong_options）经 1500 局压力测试闭合、合法动作表从不出现碰杠，
+        # 但仍加硬闸——万一上游某条路径（掩码/会话/前端）漏判，
+        # 这里**宁可抛异常也不静默碰杠**（与 _step_discard 的非法自摸胡防线同风格）。
+        if action.kind in (PENG, MINGGANG) and self.baojiao[p]:
+            raise ValueError(
+                f"非法动作（玩家 {p}）：已报叫，严禁碰杠（收到 {action.label()}）")
         claim = action.kind in (PENG, MINGGANG)
         ji_tag = self._ji_tag_of_last[discarder] if discarder is not None else "幺鸡"
         super()._step_respond(action)
         self._respond_hu_votes = []
         self._n_hu = 0
         if claim:
+            # 展示视图：这张被碰/明杠吃走的牌，原位留一张灰显残牌（2026-10-12）
+            if discarder is not None:
+                cv = self.discard_claimed_view[discarder]
+                if cv:
+                    cv[-1] = True
             if tile in self.ji_tiles:
                 # 记录被碰/杠的鸡（含普通鸡）：该张从打出者名下**转移**给碰/杠者，
                 # 打出者另付溢价（= 该张打出值 − 手中鸡单值，见 _claimed_ji_rows）
                 self._ji_val_by_meld[(p, tile)] = ji_tag
-                self.claimed_ji.append((discarder, p, ji_tag, action.kind == MINGGANG))
+                self.claimed_ji.append((discarder, p, ji_tag, action.kind == MINGGANG, int(tile)))
             self.repao_discard = False
 
     # -- 翻鸡（胡牌者翻牌墙顶；按结算翻鸡模式取 +1 / -1 同花色牌） --------------
     def _dushan_chicken_state(self) -> tuple[bool, set[int]]:
         """返回 (是否金鸡, 翻鸡牌集合)。
 
-        模式见 ``cfg.jiesuan_fanji``：up=仅上鸡(+1)、down=仅下鸡(-1)、both=上下鸡。
-        金鸡：翻出的牌按当前模式算出的翻鸡牌里有幺鸡
-        （上鸡翻九条 9→1；下鸡翻二条 2→1），此时幺鸡计分翻倍。
+        模式见 ``cfg.jiesuan_fanji``：up=仅上鸡(+1)、down=仅下鸡(-1)、both=上下鸡、
+        off=关闭（2026-10-11 新增：胡牌后不翻鸡，翻鸡牌集合为空）。
+        金鸡（2026-10-12 用户口径修订）：结算翻出的**翻鸡牌种**与本局
+        **开局时定下来的鸡牌**（``ji_tiles`` = 幺鸡 ＋ 开局翻鸡新增种 ＋ 手动追加种）
+        有重合即算金鸡；重合的那几张牌就是「金鸡」，其一切相关分（手中鸡 / 打出的鸡 /
+        捉炮鸡 / 责任鸡溢价）一律乘 ``cfg.jin_ji_multiplier``。
+        （旧实现只看「翻鸡牌里有没有幺鸡」，漏掉了手动追加种与开局翻鸡种重合的情形。）
         """
+        if self.cfg.jiesuan_fanji == FANJI_OFF:
+            return False, set()
         if self.wall_left <= 0:
             return False, set()
         mode = self.cfg.jiesuan_fanji
         flip = self.wall[self.wall_pos]
         fanji = fanji_tiles_from(flip, mode)
-        gold = YAOJI in fanji
+        gold = bool(self._gold_tiles_of(fanji))
         return gold, fanji
 
+    def _gold_tiles_of(self, fanji) -> set[int]:
+        """金鸡牌种 = 结算翻出的翻鸡牌 ∩ 开局定下的本局鸡牌（``ji_tiles``）。
+
+        与 ``_dushan_chicken_state`` 共用同一口径；单独抽出来是因为计分各处
+        （手中鸡 / 打出鸡 / 捉炮鸡 / 责任溢价 / 包鸡副露）都要按牌种乘倍率。
+        """
+        if not fanji:
+            return set()
+        return {int(t) for t in fanji if int(t) in self.ji_tiles}
+
     # -- 结算（教程口径） ------------------------------------------------------
-    def _own_ji_after_claims(self) -> tuple[list[list[float]], list[list[str]]]:
-        """各家「自己打出的鸡」（值/标签）。
+    def _own_ji_after_claims(self, gold=None
+                             ) -> tuple[list[list[float]], list[list[str]], list[list[int]]]:
+        """各家「自己打出的鸡」（值/标签/牌种）。
 
         被碰/杠走的鸡（含普通鸡）从打出者名单中抵消——那张牌已经**转移**给
         碰/杠者，由碰/杠者的副露张数在「手中鸡」里计（碰 3 / 杠 4 张）。
+
+        ``gold``：金鸡牌种集合（2026-10-12 用户口径）——该种打出的鸡分值
+        乘 ``cfg.jin_ji_multiplier``；同时把牌种一并返回，供包鸡/明细按种区分。
         """
-        vals: list[list[float]] = [[] for _ in range(4)]
-        tags: list[list[str]] = [[] for _ in range(4)]
-        for pp, val, tag in self.ji_events:
-            vals[pp].append(val)
-            tags[pp].append(tag)
+        cfg: DushanConfig = self.cfg  # type: ignore[assignment]
+        gold = {int(t) for t in (gold or ())}
+        jin = float(cfg.jin_ji_multiplier) if gold else 1.0
+        alive = [True] * len(self.ji_events)
         for ev in self.claimed_ji:
             discarder, tag = int(ev[0]), str(ev[2])
-            for i in range(len(tags[discarder]) - 1, -1, -1):
-                if tags[discarder][i] == tag:
-                    vals[discarder].pop(i)
-                    tags[discarder].pop(i)
-                    break
-        return vals, tags
+            for i in range(len(self.ji_events) - 1, -1, -1):
+                if not alive[i] or int(self.ji_events[i][0]) != discarder \
+                        or str(self.ji_events[i][2]) != tag:
+                    continue
+                alive[i] = False
+                break
+        vals: list[list[float]] = [[] for _ in range(4)]
+        tags: list[list[str]] = [[] for _ in range(4)]
+        tiles: list[list[int]] = [[] for _ in range(4)]
+        for i, (pp, val, tag) in enumerate(self.ji_events):
+            if not alive[i]:
+                continue
+            t = int(self.ji_event_tiles[i]) if i < len(self.ji_event_tiles) else -1
+            vals[int(pp)].append(float(val) * (jin if t in gold else 1.0))
+            tags[int(pp)].append(str(tag))
+            tiles[int(pp)].append(t)
+        return vals, tags, tiles
 
     def _chicken_counts(self, tenpai: list[bool], fanji: set[int], jin: float,
                         void: int | None = None):
         """统计各家鸡数（仅听牌者计鸡）。
 
-        返回 (c, items, own_vals, own_tags)；items[p] = [(label, info, val), ...]
+        返回 (c, items, own_vals, own_tags, hold_bd, fanji_bd)；
+        items[p] = [(label, info, val), ...]
         为该玩家鸡数的来源明细（冲锋鸡/横鸡/手中鸡/捉炮鸡/翻鸡…）。
 
         ``void``：鸡分全烧的玩家（热炮放炮者 / 被抢杠者）——其自身鸡分一律作废
@@ -596,12 +680,21 @@ class DushanGame(ZhuojiGame):
 
         分值口径（2026-10-08 用户确认，全部可在网页设置里改）：
         手中/副露鸡 ``cfg.ji_hold``、打出的普通鸡 ``cfg.ji_discard_plain``、
-        冲锋鸡 ``cfg.ji_chongfeng``、横鸡 ``cfg.ji_heng``、翻鸡 ``cfg.ji_fanji``；
-        金鸡时**只有幺鸡**乘 ``cfg.jin_ji_multiplier``。
+        冲锋鸡 ``cfg.ji_chongfeng``、横鸡 ``cfg.ji_heng``、翻鸡 ``cfg.ji_fanji``。
+
+        金鸡（2026-10-12 用户口径修订）：**按牌种**判定——翻鸡牌种 ∩ 本局开局定下的
+        鸡牌（``ji_tiles``）。金鸡牌种 ① 只走「手中鸡」一条计分路径（不再另立「翻鸡」
+        项，消除原先幺鸡被「手中鸡 + 翻鸡」重复计分的老问题）；② 其相关分（手中鸡 /
+        打出的鸡 / 捉炮鸡）一律乘 ``cfg.jin_ji_multiplier``。责任溢价见
+        ``_claimed_ji_rows``，包鸡副露见 ``_settle_win_multi``。
         """
         cfg: DushanConfig = self.cfg  # type: ignore[assignment]
         c = [0.0] * 4
         items: list[list[tuple[str, str, float]]] = [[] for _ in range(4)]
+        # 逐牌种张数（2026-10-11：结算页「手中鸡」「翻鸡」要显示 鸡牌图×数量）：
+        # hold_bd[p] = [[牌, 张数], ...]，fanji_bd[p] = [[牌, 张数], ...]（含满堂鸡的弃牌张）
+        hold_bd: list[list[list[int]]] = [[] for _ in range(4)]
+        fanji_bd: list[list[list[int]]] = [[] for _ in range(4)]
 
         def add(p: int, val: float, label: str, info: str = "") -> None:
             if val <= 0:
@@ -609,47 +702,61 @@ class DushanGame(ZhuojiGame):
             c[p] += val
             items[p].append((label, info, val))
 
-        own_vals, own_tags = self._own_ji_after_claims()
+        # 金鸡牌种（2026-10-12 用户口径）= 结算翻出的翻鸡牌 ∩ 开局定下的本局鸡牌。
+        # 它只走「手中鸡」这一条计分路径，且相关分 ×jin（见下方各分支）。
+        gold = self._gold_tiles_of(fanji)
+        # 「翻鸡」项只保留**非金鸡**的翻鸡牌种（金鸡种已并入手中鸡，避免重复）
+        fanji_only = {int(t) for t in (fanji or ()) if int(t) not in self.ji_tiles}
+
+        own_vals, own_tags, _own_tiles = self._own_ji_after_claims(gold)
         # 打出的鸡**全部计分**（2026-10-08 口径修正）：冲锋鸡 / 横鸡 / 普通鸡
         # （打出的普通鸡 = cfg.ji_discard_plain，默认 1，原来按 0 处理）。
         # 被碰/杠走的那张已由 _own_ji_after_claims 从打出者名下转移走，
         # 不会与碰/杠者副露里的同张重复计算。
 
         # 捉炮鸡：点炮张若是鸡牌，该张已并入捉炮者手牌，此处按张全额计分
-        # （手中鸡已把这张算作 1×ji_hold，故先扣张数避免重复，再按原值全额计入）
-        cap_cnt = [0] * 4
-        cap_yao = [0] * 4
+        # （手中鸡已把这张算过，故先按牌种扣张数避免重复，再按原值全额计入）
+        cap_by: list[dict[int, int]] = [{} for _ in range(4)]
         for (w, _val, _tag, _tile) in self.captured_ji:
-            cap_cnt[w] += 1
-            if int(_tile) == YAOJI:
-                cap_yao[w] += 1
+            cap_by[int(w)][int(_tile)] = cap_by[int(w)].get(int(_tile), 0) + 1
 
         for p in range(4):
             if not tenpai[p]:
                 continue
-            # 1) 打出的鸡：冲锋鸡 / 横鸡 / 普通鸡（含被碰/杠走的已扣除）
+            # 1) 打出的鸡：冲锋鸡 / 横鸡 / 普通鸡（含被碰/杠走的已扣除；金鸡 ×jin）
             for val, tag in zip(own_vals[p], own_tags[p]):
                 add(p, val, tag, "打出")
-            # 2) 手中/副露鸡牌（幺鸡 + 开局翻鸡新增种）；金鸡时**只有幺鸡** ×jin。
+            # 2) 手中/副露鸡牌：逐牌种统计（幺鸡 + 开局翻鸡新增种 + 手动追加种）。
             #    被碰/杠走的鸡牌牌面同样计入（碰 3 / 杠 4 张，对所有人有效）；
-            #    打出者的责任溢价单独结算（见 _claimed_ji_rows）
+            #    打出者的责任溢价单独结算（见 _claimed_ji_rows）。
+            #    金鸡牌种：×jin（2026-10-12）。
             hold = float(cfg.ji_hold)
-            n_yao = self.hands[p][YAOJI] + self.melded_count(p, YAOJI) - cap_yao[p]
-            n_oth = sum(self.hands[p][t] + self.melded_count(p, t)
-                        for t in self.ji_tiles if t != YAOJI)
-            n_yao = max(0, n_yao)
-            n_hand = n_yao + max(0, n_oth)
-            n_val = (n_yao * jin + max(0, n_oth)) * hold
+            n_hand = 0
+            n_val = 0.0
+            n_gold = 0
+            for t in sorted(self.ji_tiles):
+                n_t = self.hands[p][t] + self.melded_count(p, t) - cap_by[p].get(t, 0)
+                n_t = max(0, int(n_t))
+                if n_t <= 0:
+                    continue
+                mult = jin if t in gold else 1.0
+                n_hand += n_t
+                n_val += n_t * hold * mult
+                if t in gold:
+                    n_gold += n_t
+                hold_bd[p].append([int(t), n_t])
             if n_val > 0:
-                add(p, n_val, "手中鸡",
-                    f"{n_hand:g} 只" + ("（金鸡×2）" if jin > 1 and n_yao > 0 else ""))
+                info = f"{n_hand:g} 只"
+                if n_gold:
+                    info += f"（含金鸡 {n_gold:g} 张 ×{jin:g}）"
+                add(p, n_val, "手中鸡", info)
             # 3) 杠分：不再计入鸡数池（明杠只对点杠者、暗杠/补杠对全场，见 _settle_*）
-            # 4) 翻鸡牌（不乘金鸡）；满堂鸡：弃牌区里的翻鸡牌同样计入
-            if fanji:
-                nf = sum(self.hands[p][ft] + self.melded_count(p, ft) for ft in fanji)
+            # 4) 翻鸡牌（只算非金鸡种；不乘金鸡）；满堂鸡：弃牌区里的翻鸡牌同样计入
+            if fanji_only:
+                nf = sum(self.hands[p][ft] + self.melded_count(p, ft) for ft in fanji_only)
                 extra_info = ""
-                if self.cfg.mantiangji:
-                    nd = sum(self.discards[p].count(ft) for ft in fanji)
+                if cfg.mantiangji:
+                    nd = sum(self.discards[p].count(ft) for ft in fanji_only)
                     if nd:
                         nf += nd
                         extra_info = f"（含弃牌 {nd:g} 张）"
@@ -657,15 +764,25 @@ class DushanGame(ZhuojiGame):
                     # 翻鸡牌种由前端渲染成牌图（res.fanji_tiles），这里只给数量
                     add(p, float(nf) * float(cfg.ji_fanji), "翻鸡",
                         f"共持有 {nf:g} 张" + extra_info)
-        # 5) 捉炮鸡：点炮/热炮张归胡牌者，按其鸡牌类型全额计入（冲锋3/横2/普通1）
+                    for ft in sorted(fanji_only):
+                        n_ft = int(self.hands[p][ft] + self.melded_count(p, ft))
+                        if cfg.mantiangji:
+                            n_ft += int(self.discards[p].count(ft))
+                        if n_ft > 0:
+                            fanji_bd[p].append([int(ft), n_ft])
+        # 5) 捉炮鸡：点炮/热炮张归胡牌者，按其鸡牌类型全额计入（冲锋3/横2/普通1）；
+        #    金鸡张 ×jin（与手中鸡、责任溢价同口径）
         for (w, val, tag, tile) in self.captured_ji:
-            add(w, float(val), "捉炮鸡", f"{tag}·{tile_cn(tile)}")
+            v = float(val) * (jin if int(tile) in gold else 1.0)
+            add(w, v, "捉炮鸡", f"{tag}·{tile_cn(tile)}")
         # 全烧：该玩家自身鸡分一律作废（仍照付他人）
         if void is not None and 0 <= int(void) < 4:
             v0 = int(void)
             c[v0] = 0.0
             items[v0] = []
-        return c, items, own_vals, own_tags
+            hold_bd[v0] = []
+            fanji_bd[v0] = []
+        return c, items, own_vals, own_tags, hold_bd, fanji_bd
 
     # -- 牌型/听牌辅助 ---------------------------------------------------------
     def _hu_type_value(self, tp: str) -> float:
@@ -770,7 +887,32 @@ class DushanGame(ZhuojiGame):
                     DUSHAN_FAN_CN.get(tp, tp) for tp in sorted(types) if tp != PING_HU)
         return best_v, best_cn
 
-    def _claimed_ji_rows(self) -> list[tuple[int, int, float, str]]:
+    def _claimed_ji_detail(self, gold=None) -> list[dict]:
+        """责任鸡明细（2026-10-13：结算页「责任鸡」分类用的逐张数据）。
+
+        与 ``_claimed_ji_rows`` 同一口径（溢价 = 该张打出值 − 手中鸡单值；金鸡张
+        溢价 ×``cfg.jin_ji_multiplier``），只是多带**牌面**与金鸡标记，供前端把
+        「[五条横鸡金鸡]×2」这种牌图+角标渲染出来。``_claimed_ji_rows`` 由本函数派生，
+        两者不可能跑偏。
+        """
+        cfg: DushanConfig = self.cfg  # type: ignore[assignment]
+        gold = {int(t) for t in (gold or ())}
+        jin = float(cfg.jin_ji_multiplier) if gold else 1.0
+        out: list[dict] = []
+        for ev in self.claimed_ji:
+            discarder, claimer, tag = int(ev[0]), int(ev[1]), str(ev[2])
+            tile = int(ev[4]) if len(ev) > 4 else -1
+            premium = self.ji_value(tag) - float(cfg.ji_hold)
+            is_gold = tile in gold
+            if is_gold:
+                premium *= jin
+            if premium > 0:
+                out.append({"claimer": claimer, "discarder": discarder, "tile": tile,
+                            "tag": tag, "premium": round(float(premium), 3),
+                            "gold": bool(is_gold)})
+        return out
+
+    def _claimed_ji_rows(self, gold=None) -> list[tuple[int, int, float, str]]:
         """碰/杠鸡牌的溢价结算行 [(碰/杠者, 打出者, 溢价, 鸡类名)]。
 
         口径（2026-10-08 用户确认）：B 碰/杠 A 打出的鸡——那张牌**转移**给 B，
@@ -780,15 +922,15 @@ class DushanGame(ZhuojiGame):
 
         AB 之间合计：碰冲锋 5（面 3+溢 2）/ 碰横 4（面 3+溢 1）/
         杠冲锋 9（=杠分 3+面 4+溢 2）/ 杠横 8（=杠分 3+面 4+溢 1）。
+
+        ``gold``（2026-10-12 用户口径）：被碰/杠走的那张若是**金鸡**，
+        溢价同样乘 ``cfg.jin_ji_multiplier``（"包括责任鸡的溢价分"）。
+
+        2026-10-13：实现改由 ``_claimed_ji_detail`` 派生（同一口径，返回值仍是
+        4 元组 —— 契约不变，测试与调用点都不用改）。
         """
-        cfg: DushanConfig = self.cfg  # type: ignore[assignment]
-        rows: list[tuple[int, int, float, str]] = []
-        for ev in self.claimed_ji:
-            discarder, claimer, tag = int(ev[0]), int(ev[1]), str(ev[2])
-            premium = self.ji_value(tag) - float(cfg.ji_hold)
-            if premium > 0:
-                rows.append((claimer, discarder, premium, tag))
-        return rows
+        return [(d["claimer"], d["discarder"], d["premium"], d["tag"])
+                for d in self._claimed_ji_detail(gold)]
 
     def _transfer_discarded_ji(self, discarder: int, winners: list[int], tile: int) -> None:
         """点炮/热炮的那张牌若是鸡牌：把该张鸡分从打出者转给各胡牌者。
@@ -807,6 +949,8 @@ class DushanGame(ZhuojiGame):
             return
         val, tag = float(self.ji_events[idx][1]), str(self.ji_events[idx][2])
         self.ji_events.pop(idx)
+        if idx < len(self.ji_event_tiles):
+            self.ji_event_tiles.pop(idx)        # 与 ji_events 同步（金鸡判定用牌面）
         for w in winners:
             self.captured_ji.append((int(w), val, tag, int(tile)))
 
@@ -839,12 +983,27 @@ class DushanGame(ZhuojiGame):
         types_by = {w: self._win_type_set(self.hands[w], self.melds[w],
                                           wt_i if wt_i >= 0 else None) for w in winners}
 
-        gold, fanji = self._dushan_chicken_state()
-        jin = cfg.jin_ji_multiplier if gold else 1.0
+        def _fan_cn_of(w: int) -> str:
+            """赢家的牌型显示名（2026-10-12 用户口径）：报叫胡牌且没有其他具名牌型时
+            显示「报叫」而不是「平胡」（结算页标签与对局记录共用这一口径）。
+            注意：只影响**显示名**，``fan_type`` / 非平胡统计仍按具名牌型判定。"""
+            named = "+".join(DUSHAN_FAN_CN.get(tp, tp)
+                             for tp in sorted(types_by[w]) if tp != PING_HU)
+            if named:
+                return named
+            return "报叫" if self.baojiao[w] else "平胡"
+
+
+        _gold_bool, fanji = self._dushan_chicken_state()
+        # 金鸡牌种（2026-10-12 用户口径）= 翻鸡牌 ∩ 开局定下的本局鸡牌；
+        # 一切相关分 ×jin（手中鸡/打出鸡/捉炮鸡在 _chicken_counts，责任溢价在
+        # _claimed_ji_rows，包鸡副露在下方 end_baoji 分支）。
+        gold_tiles = self._gold_tiles_of(fanji)
+        jin = cfg.jin_ji_multiplier if gold_tiles else 1.0
         detail: list[tuple] = []
         fanji_flip = self.wall[self.wall_pos] if self.wall_left > 0 else None
         if fanji:
-            detail.append((-1, "翻鸡", tile_cn(fanji_flip) + ("（金鸡）" if gold else ""), 0.0))
+            detail.append((-1, "翻鸡", tile_cn(fanji_flip) + ("（金鸡）" if gold_tiles else ""), 0.0))
 
         pair = [[0.0] * 4 for _ in range(4)]
         pair_det: dict = {}
@@ -869,13 +1028,41 @@ class DushanGame(ZhuojiGame):
             void_player = int(loser)
 
         # ---- 鸡数统计（手中/打出/捉炮/翻鸡，对所有人有效；两两互减） ----
-        c, items, own_vals, own_tags = self._chicken_counts(
+        c, items, own_vals, own_tags, hold_bd, fanji_bd = self._chicken_counts(
             tenpai, fanji, jin, void=void_player)
         for p in range(4):
             for label, info, val in items[p]:
                 detail.append((p, label, info, val))
         if void_player is not None:
             detail.append((void_player, "全烧", "鸡分作废", 0.0))
+
+        # ---- 结算页鸡牌三分类的逐张明细（2026-10-13 用户口径）----
+        # 前端把结算里散落的「冲锋鸡/横鸡/幺鸡/手中鸡/翻鸡/捉炮鸡」收拢成
+        # 「手中鸡牌 / 打出鸡牌 / 责任鸡」三类，每类都要显示**哪一张鸡牌有几张**，
+        # 所以这里额外给出三份只读明细（不动任何计分口径，`detail` 保持原样）：
+        #   ji_discard_detail[p] = 该家**打出且未被碰/杠走**的鸡，逐张 {tile, tag, val}
+        #                          （val 已按金鸡牌种乘过倍率）
+        #   ji_capture_detail[p] = 该家点炮/热炮被捉走的那张鸡（捉炮鸡）{tile, tag, val}
+        #   ji_claim_detail      = 责任鸡逐条 {claimer, discarder, tile, tag, premium, gold}
+        dvals, dtags, dtiles = self._own_ji_after_claims(gold_tiles)
+        discard_detail: dict[str, list[dict]] = {}
+        for p in range(4):
+            discard_detail[str(p)] = [
+                {"tile": int(t), "tag": str(tg), "val": round(float(v), 3)}
+                for v, tg, t in zip(dvals[p], dtags[p], dtiles[p])
+            ]
+        capture_detail: dict[str, list[dict]] = {str(p): [] for p in range(4)}
+        for (w, val, tag, tile) in self.captured_ji:
+            v = float(val) * (jin if int(tile) in gold_tiles else 1.0)
+            capture_detail[str(int(w))].append(
+                {"tile": int(tile), "tag": str(tag), "val": round(float(v), 3)})
+        if void_player is not None:
+            # 全烧者自身鸡分一律作废（仍照付他人）——明细也要跟着清，避免与计分不一致
+            discard_detail[str(int(void_player))] = []
+            capture_detail[str(int(void_player))] = []
+        claim_detail = self._claimed_ji_detail(gold_tiles)
+        if void_player is not None:
+            claim_detail = [d for d in claim_detail if int(d["claimer"]) != int(void_player)]
 
         # ---- 胡牌方式：自摸/杠上开花全场每家付；点炮/热炮/抢杠由放炮者独付 ----
         if is_tsumo:
@@ -944,7 +1131,7 @@ class DushanGame(ZhuojiGame):
         # 例外：碰/杠者自己未听牌（走包鸡）时不再收溢价——改由包鸡那一步
         # 按「面 + 溢价」赔给打出者，保证 AB 之间合计仍是 4（用户 2026-10-08 例）。
         unt = {q for q in range(4) if not tenpai[q]}
-        for claimer, discarder, premium, tag in self._claimed_ji_rows():
+        for claimer, discarder, premium, tag in self._claimed_ji_rows(gold_tiles):
             if void_player is not None and claimer == void_player:
                 continue        # 全烧者不再获得责任鸡溢价
             if claimer in unt:
@@ -961,7 +1148,7 @@ class DushanGame(ZhuojiGame):
         # （2026-10-09 修复：原先按打出者索引，会把溢价错付给任意未听牌者；
         #   且随「已亮明」明细行数重复收取）。
         prem_pairs: dict[tuple[int, int], list[tuple[str, float]]] = {}
-        for cl, dsc, prem, tg in self._claimed_ji_rows():
+        for cl, dsc, prem, tg in self._claimed_ji_rows(gold_tiles):
             prem_pairs.setdefault((int(cl), int(dsc)), []).append((tg, float(prem)))
         for p in range(4):
             if tenpai[p]:
@@ -973,12 +1160,17 @@ class DushanGame(ZhuojiGame):
                 continue
             if cfg.end_baoji:
                 ming: list[tuple[str, float]] = list(zip(own_tags[p], own_vals[p]))
-                n_yao_m = self.melded_count(p, YAOJI)
-                n_oth_m = sum(self.melded_count(p, t)
-                              for t in self.ji_tiles if t != YAOJI)
-                v_m = (n_yao_m * jin + n_oth_m) * float(cfg.ji_hold)
+                # 副露鸡（碰 3 / 杠 4 张）：逐牌种计价，金鸡种 ×jin（2026-10-12）
+                n_m = 0
+                v_m = 0.0
+                for t in sorted(self.ji_tiles):
+                    k = int(self.melded_count(p, t))
+                    if k <= 0:
+                        continue
+                    n_m += k
+                    v_m += k * float(cfg.ji_hold) * (jin if t in gold_tiles else 1.0)
                 if v_m > 0:
-                    ming.append((f"副露鸡 {n_yao_m + n_oth_m:g} 张", v_m))
+                    ming.append((f"副露鸡 {n_m:g} 张", v_m))
                 for tg, val in ming:
                     if val <= 0:
                         continue
@@ -1031,7 +1223,7 @@ class DushanGame(ZhuojiGame):
                 delta[a] += pair[a][b] - pair[b][a]
 
         p_types = types_by[primary]
-        fan_cn = "+".join(DUSHAN_FAN_CN.get(tp, tp) for tp in sorted(p_types)) or "平胡"
+        fan_cn = _fan_cn_of(primary)
         fan_total = float(sum(pair[primary]))   # 首位赢家总进账（两两矩阵按行求和）
         # 胡牌张：点炮/抢杠为那张弃牌；自摸为最后摸进的那张（结算页隔开展示）
         if wt_i >= 0:
@@ -1043,8 +1235,7 @@ class DushanGame(ZhuojiGame):
         # 各赢家牌型名/净进账（一炮多响时前端分别展示）
         winners_fan = [{
             "seat": w,
-            "fan_cn": "+".join(DUSHAN_FAN_CN.get(tp, tp)
-                               for tp in sorted(types_by[w])) or "平胡",
+            "fan_cn": _fan_cn_of(w),
             "fan_type": "+".join(sorted(types_by[w])) or PING_HU,
             "fan": float(sum(pair[w])),
         } for w in winners]
@@ -1064,9 +1255,20 @@ class DushanGame(ZhuojiGame):
             "chickens": c,
             # 终局听牌者（座位列表，赢家计入；流水/总览查验用）
             "tenpai": [q for q in range(4) if tenpai[q]],
-            "fanji_flip": int(fanji_flip) if fanji_flip is not None else None,
+            # 结算翻鸡关闭（mode=off）时不翻鸡：指示牌与翻鸡牌种一律为空
+            "fanji_flip": int(fanji_flip) if (fanji and fanji_flip is not None) else None,
             "fanji_tiles": sorted(int(t) for t in fanji),
-            "fanji_gold": bool(gold),
+            "fanji_gold": bool(gold_tiles),
+            # 金鸡牌种（2026-10-12）：结算页给这些牌加「金鸡」角标、明细里标注 ×N。
+            "gold_tiles": sorted(int(t) for t in gold_tiles),
+            # 「手中鸡」「翻鸡」的逐牌种张数（键=座位；结算页渲染 鸡牌图×数量）。
+            # 注意：金鸡牌种只出现在 ji_hold_detail 里（翻鸡项已排除，避免重复计分）。
+            "ji_hold_detail": {str(p): hold_bd[p] for p in range(4)},
+            "fanji_detail": {str(p): fanji_bd[p] for p in range(4)},
+            # 「手中鸡牌 / 打出鸡牌 / 责任鸡」三分类的逐张明细（2026-10-13 用户口径）
+            "ji_discard_detail": discard_detail,
+            "ji_capture_detail": capture_detail,
+            "ji_claim_detail": claim_detail,
             "jiesuan_fanji": cfg.jiesuan_fanji,
             "kaiju_fanji": cfg.kaiju_fanji,
             "how": how,
@@ -1135,8 +1337,10 @@ class DushanGame(ZhuojiGame):
         # ---- 可选：包鸡 / 包杠（默认关；打开才结算未听者「已亮明」的鸡与杠）----
         # 口径与胡牌局一致：打出的鸡（含普通鸡）+ 副露里的鸡牌
         if cfg.huang_baoji or cfg.huang_baogang:
-            own_vals, own_tags = self._own_ji_after_claims()
-            jin_h = float(cfg.jin_ji_multiplier) if YAOJI in self.ji_tiles else 1.0
+            own_vals, own_tags, _own_tiles = self._own_ji_after_claims()
+            # 荒牌不翻鸡（结算翻鸡只在胡牌时进行）→ 本局不存在金鸡，倍率恒 1
+            # （旧实现误用「幺鸡在鸡牌里」判定，会让荒庄未听者的副露鸡平白 ×2）
+            jin_h = 1.0
             for p in range(4):
                 if tenpai[p]:
                     continue

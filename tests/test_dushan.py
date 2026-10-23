@@ -625,9 +625,13 @@ def test_jiesuan_fanji():
     assert _fanji_of("down", tile_from(T, 9))[0] is False
     assert _fanji_of("both", tile_from(T, 9))[0] is True
     assert _fanji_of("both", tile_from(T, 2))[0] is True
-    # 兼容旧写法：布尔 True/False（结算翻鸡不允许关闭 → False 回落上下鸡）
+    # 兼容旧写法：布尔 True/False
+    #   2026-10-11 起结算翻鸡**允许关闭**（网页设置新增「关闭」选项 value="off"），
+    #   所以 False 归一为 "off"；True 仍是 "both"。
     assert DushanConfig(jiesuan_fanji=True).jiesuan_fanji == "both"
-    assert DushanConfig(jiesuan_fanji=False).jiesuan_fanji == "both"
+    assert DushanConfig(jiesuan_fanji=False).jiesuan_fanji == "off"
+    assert DushanConfig(jiesuan_fanji="关闭").jiesuan_fanji == "off"
+    assert DushanConfig(jiesuan_fanji=None).jiesuan_fanji == "off"
     print("ok 结算翻鸡（上下鸡/上鸡/下鸡）")
 
 
@@ -648,7 +652,8 @@ def test_mantiangji():
     g.hands[0][tile_from(W, 6)] = 1        # 玩家 0 手持 1 张 6万
     g.hands[0][tile_from(W, 5)] -= 1       # 保持 14 张不严格要求，鸡数统计只看鸡
     g.discards[0].append(tile_from(W, 6))  # 弃牌区还有 1 张 6万
-    c, items, _v, _t = g._chicken_counts([True, True, True, True], fanji, 1.0)
+    # 2026-10-11 起 _chicken_counts 返回 6 元组：(c, items, own_vals, own_tags, hold_bd, fanji_bd)
+    c, items, _v, _t, _hb, _fb = g._chicken_counts([True, True, True, True], fanji, 1.0)
     fanji_items = [it for it in items[0] if it[0] == "翻鸡"]
     assert fanji_items and fanji_items[0][2] == 2.0, items[0]   # 手持1 + 弃牌1
     assert "含弃牌" in fanji_items[0][1]
@@ -660,7 +665,7 @@ def test_mantiangji():
                              *[tile_from(B, r) for r in (1, 2, 3, 5)])
     g2.hands[0][tile_from(W, 6)] = 1
     g2.discards[0].append(tile_from(W, 6))
-    c2, items2, _v, _t = g2._chicken_counts([True, True, True, True], fanji, 1.0)
+    c2, items2, _v, _t, _hb2, _fb2 = g2._chicken_counts([True, True, True, True], fanji, 1.0)
     f2 = [it for it in items2[0] if it[0] == "翻鸡"]
     assert f2 and f2[0][2] == 1.0, items2[0]
     print("ok 满堂鸡")
@@ -720,7 +725,7 @@ def test_kaiju_fanji():
     assert g.ji_events[-1][:2] == (0, JI_HENG), g.ji_events[-1]
     # 手中鸡计数：玩家 1 手里塞两张新增鸡牌
     g.hands[1][up] += 2
-    c, items, _v, _t = g._chicken_counts([True, True, False, False], set(), 1.0)
+    c, items, _v, _t, _hb, _fb = g._chicken_counts([True, True, False, False], set(), 1.0)
     shou = [it for it in items[1] if it[0] == "手中鸡"]
     assert shou and shou[0][2] >= 2.0, items[1]
     print("ok 开局翻鸡")
@@ -820,7 +825,7 @@ def test_mask_matches_legal_actions():
     except ValueError:
         pass
 
-    # 2) 随机对局全流程一致性（含响应/闷豆/出牌三种决策点）
+    # 2) 随机对局全流程一致性（含响应/暗杠/出牌三种决策点）
     checked = 0
     for seed in range(60):
         g2 = new_game(seed=1000 + seed)
@@ -1222,6 +1227,189 @@ def test_plain_ji_counts():
     print("ok 打出的普通鸡计 1（2026-10-08 修正）")
 
 
+def test_gold_chicken():
+    """金鸡（2026-10-12 新口径）：
+
+    ① 金鸡 = 结算翻出的翻鸡牌种 ∩ **开局定下的本局鸡牌**（``ji_tiles``）——
+       不再只看「翻鸡牌里有没有幺鸡」，手动追加种 / 开局翻鸡种与翻鸡重合同样算；
+    ② 金鸡种只走「手中鸡」一条计分路径（原先幺鸡被「手中鸡 + 翻鸡」重复计的老问题消除）；
+    ③ 金鸡的**一切相关分** ×``jin_ji_multiplier``：手中鸡 / 打出的鸡 / 捉炮鸡 / 责任溢价。
+    """
+    HE = tile_from(W, 3)                 # 手动追加的鸡牌种（本例会变成金鸡）
+    g = DushanGame(DushanConfig(jiesuan_fanji="up"), seed=7)
+    g.ji_tiles = {int(YAOJI), int(HE)}
+    g.wall = list(g.wall[:40])
+    g.wall[0] = tile_from(W, 2)          # 上鸡：W2+1 = W3 = HE
+    g.wall_pos = 0
+    gold, fanji = g._dushan_chicken_state()
+    assert gold is True and fanji == {HE}, (gold, fanji)
+    assert g._gold_tiles_of(fanji) == {HE}, g._gold_tiles_of(fanji)
+
+    # ---- ① 手中鸡：幺鸡 1 张（非金鸡）+ HE 3 张（金鸡 ×2）→ 1 + 3×2 = 7 ----
+    for p in range(4):
+        g.hands[p] = [0] * 27
+    g.hands[0][int(YAOJI)] = 1
+    g.hands[0][int(HE)] = 3
+    c, items, _v, _t, hb, fb = g._chicken_counts([True] * 4, fanji, 2.0)
+    assert [it for it in items[0] if it[0] == "翻鸡"] == [], items[0]      # 不再重复计
+    hold = [it for it in items[0] if it[0] == "手中鸡"][0]
+    assert abs(hold[2] - 7.0) < 1e-9, items[0]
+    assert abs(c[0] - 7.0) < 1e-9, c
+    assert [int(YAOJI), 1] in hb[0] and [int(HE), 3] in hb[0], hb[0]
+
+    # ---- ② 打出的鸡：HE 打出横鸡 → ji_heng(2) × 2 = 4 ----
+    g.ji_events.append((1, g.ji_value("横鸡"), "横鸡"))
+    g.ji_event_tiles.append(int(HE))
+    vals, tags, tiles = g._own_ji_after_claims({HE})
+    assert abs(vals[1][0] - 4.0) < 1e-9, vals
+    assert tags[1][0] == "横鸡" and tiles[1][0] == int(HE), (tags, tiles)
+
+    # ---- ③ 责任鸡溢价：被碰走的 HE 横鸡 → (2−1) × 2 = 2 ----
+    g.claimed_ji.append((1, 0, "横鸡", False, int(HE)))
+    rows = g._claimed_ji_rows({HE})
+    assert rows and abs(rows[0][2] - 2.0) < 1e-9, rows
+
+    # ---- ④ 非金鸡的翻鸡牌仍单独计（回归）：翻 5万 → 上鸡 6万（=本局鸡牌→金鸡）
+    #          + 下鸡 4万（非鸡牌→仍走单独「翻鸡」项） ----
+    g2 = new_game()
+    g2.ji_tiles = {int(YAOJI), tile_from(W, 6)}
+    g2.wall = list(g2.wall[:40])
+    g2.wall[0] = tile_from(W, 5)
+    g2.wall_pos = 0
+    _g2, fj2 = g2._dushan_chicken_state()
+    assert fj2 == {tile_from(W, 6), tile_from(W, 4)}, fj2
+    assert g2._gold_tiles_of(fj2) == {tile_from(W, 6)}, g2._gold_tiles_of(fj2)
+    for p in range(4):
+        g2.hands[p] = [0] * 27
+    g2.hands[0][tile_from(W, 4)] = 2     # 非金鸡翻鸡：单独计
+    g2.hands[0][tile_from(W, 6)] = 1     # 金鸡（同时是本局鸡牌）：并入手中鸡 ×2
+    c2, items2, _v, _t, hb2, fb2 = g2._chicken_counts([True] * 4, fj2, 2.0)
+    fjrow = [it for it in items2[0] if it[0] == "翻鸡"]
+    assert fjrow and abs(fjrow[0][2] - 2.0) < 1e-9, items2[0]     # 2 张 × ji_fanji(1)
+    assert abs(c2[0] - 4.0) < 1e-9, c2                            # 翻鸡 2 + 手中鸡 1×1×2
+    assert fb2[0] == [[int(tile_from(W, 4)), 2]], fb2[0]          # 金鸡不进 fanji 明细
+    assert [int(tile_from(W, 6)), 1] in hb2[0], hb2[0]
+
+    # ---- ⑤ 结算翻鸡关闭 / 荒牌不翻鸡 → 无翻鸡牌、不存在金鸡 ----
+    g3 = DushanGame(DushanConfig(jiesuan_fanji="off"), seed=7)
+    g3.ji_tiles = {int(YAOJI), int(HE)}
+    assert g3._dushan_chicken_state() == (False, set())
+    assert g3._gold_tiles_of(set()) == set()
+    print("ok 金鸡（按牌种判定 / 不重复计 / 相关分 ×2）")
+
+
+def test_discard_view_claimed():
+    """牌河展示视图（2026-10-12 用户口径）：
+
+    被碰/明杠吃走的弃牌要在牌河里**原位留一张灰显残牌**（前端 .mc.claimed），
+    于是引擎另开只增不减的 ``discard_view`` / ``discard_claimed_view``；
+    真实的 ``discards`` 仍按旧口径把那张移除——满堂鸡计数、点炮张判定等
+    计分逻辑一个字都不改。
+    """
+    from zhuoji.rules import MINGGANG, PENG
+
+    g = DushanGame(DushanConfig(), seed=1)
+    guard = 0
+    while getattr(g, "result", None) is None and guard < 4000:
+        guard += 1
+        acts = g.legal_actions()
+        if not acts:
+            break
+        cl = [a for a in acts if a.kind in (PENG, MINGGANG)]
+        g.step(cl[0] if cl else acts[0])
+        if any(any(r) for r in g.discard_claimed_view):
+            break
+
+    claimed = [p for p in range(4) if any(g.discard_claimed_view[p])]
+    assert claimed, "种子 1 的前若干手内必出现一次碰/明杠"
+    for p in range(4):
+        view, mark, real = g.discard_view[p], g.discard_claimed_view[p], list(g.discards[p])
+        assert len(view) == len(mark), (p, view, mark)
+        # 视图 ⊇ 真实牌河：被吃走的那张只在视图里
+        assert len(view) - sum(1 for b in mark if b) == len(real), (p, view, mark, real)
+    # 被碰走的那张牌：真实牌河里已经没有它（旧口径），视图里还在且带标记
+    p0 = claimed[0]
+    idx = g.discard_claimed_view[p0].index(True)
+    assert g.discard_claimed_view[p0][idx] is True
+    assert g.discard_view[p0][idx] not in g.discards[p0] or \
+        g.discards[p0].count(g.discard_view[p0][idx]) < g.discard_view[p0].count(
+            g.discard_view[p0][idx])
+    print("ok 牌河展示视图（被碰走的牌原位灰显，计分口径不变）")
+
+
+def test_encoder_claimed_ji_contract():
+    """守门：``claimed_ji`` 契约从 4 元组扩到 5 元组后，所有消费点必须仍可用。
+
+    2026-10-12 教训：为金鸡判定给 ``claimed_ji`` 追加了第 5 位牌面，
+    引擎与 web 层都同步了，但 ``encoder_v2`` / ``encoder_v3`` 里仍在写
+    ``for _dsc, cl, _tag, _ming in getattr(game, "claimed_ji", [])`` ——
+    于是 S1 段训练在 iter 268 的 collect 阶段整段崩掉
+    （ValueError: too many values to unpack (expected 4)），白烧约 1.3 h。
+
+    这里设两道闸，任何一端漏改都会当场红：
+    ① 静态：源码中禁止对 ``claimed_ji`` 做元组解包（只允许下标访问）；
+    ② 动态：真跑一局到出现碰/明杠，再对 4 家分别做 v1/v2/v3 编码。
+    """
+    import re
+
+    import numpy as np
+
+    from zhuoji.encoder import encode
+    from zhuoji.rules import MINGGANG, PENG
+
+    # ---- 闸 ①：静态扫描（先扫，改错了更早暴露） ----
+    # 注意用负向后顾排除 ``_claimed_ji_rows``（它返回的确实是 4 元组，解包合法）
+    unpack = re.compile(r"for\s+([^:\n]*?)\s+in\s+[^\n]*(?<![\w])claimed_ji(?![\w])")
+    bad: list[str] = []
+    for sub in ("zhuoji", "scripts", "web"):
+        for f in sorted((ROOT / sub).rglob("*.py")):
+            for ln, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+                m = unpack.search(line)
+                if m and "," in m.group(1):
+                    bad.append(f"{f.relative_to(ROOT)}:{ln}")
+    assert not bad, (
+        "禁止对 claimed_ji 做元组解包（4/5 元组并存，解包必崩），"
+        f"请改用下标访问 ev[1]：{bad}"
+    )
+
+    # ---- 闸 ②：动态编码 ----
+    g = DushanGame(DushanConfig(), seed=1)
+    guard = 0
+    # 跑到出现碰/明杠（claim 副露）为止，让 encoder 走到副露相关分支。
+    # 注意不能等 claimed_ji —— 它只记**鸡牌**被碰走，种子 1 的碰未必是鸡。
+    while (getattr(g, "result", None) is None
+           and not any(any(r) for r in g.discard_claimed_view) and guard < 4000):
+        guard += 1
+        acts = g.legal_actions()
+        if not acts:
+            break
+        cl = [a for a in acts if a.kind in (PENG, MINGGANG)]
+        g.step(cl[0] if cl else acts[0])
+    assert any(any(r) for r in g.discard_claimed_view), "种子 1 的前若干手内必出现碰/明杠"
+
+    def _enc_all(tag: str) -> None:
+        for p in range(4):
+            for ver in (1, 2, 3):
+                obs = encode(g, p, version=ver)
+                assert obs.tiles.ndim == 2 and obs.tiles.shape[1] == 27, \
+                    (tag, p, ver, obs.tiles.shape)
+                assert obs.glob.ndim == 1 and obs.glob.size > 0, (tag, p, ver, obs.glob.shape)
+                assert np.isfinite(obs.tiles).all(), (tag, p, ver, "tiles 含非有限值")
+                assert np.isfinite(obs.glob).all(), (tag, p, ver, "glob 含非有限值")
+
+    _enc_all("无 claimed_ji")
+
+    # 鸡牌未必恰好被碰走 → 视需要补一条 5 元组，确保 encoder 的 claimed_ji
+    # 分支（下标访问 ev[1]）真的被执行到
+    if not g.claimed_ji:
+        g.claimed_ji.append((0, 1, "横鸡", False, int(YAOJI)))
+    ev0 = g.claimed_ji[0]
+    assert len(ev0) == 5, ("claimed_ji 应为 5 元组 (打出者, 碰杠者, 类型名, 明杠, 牌)", ev0)
+
+    _enc_all("含 claimed_ji")
+    print("ok encoder 契约守门（claimed_ji 5 元组下 v1/v2/v3 全部可编码）")
+
+
 def test_claimed_ji_pair_totals():
     """碰走打出的鸡：AB 之间合计 = 面 + 溢价；未听牌包鸡时方向反转但合计不变。
 
@@ -1391,6 +1579,9 @@ if __name__ == "__main__":
     test_qiang_gang()
     test_plain_ji_counts()
     test_claimed_ji_pair_totals()
+    test_gold_chicken()
+    test_discard_view_claimed()
+    test_encoder_claimed_ji_contract()
     test_rob_kong_burns_claimed_ji()
     test_long_qi_dui_needs_winning_tile()
     test_ji_values_configurable()

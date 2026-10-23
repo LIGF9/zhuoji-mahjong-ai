@@ -215,8 +215,10 @@ def encode_glob_v2(game, me: int, g: np.ndarray) -> np.ndarray:
     per_player = np.zeros(4, dtype=np.float32)
     for p, _val, _tag in getattr(game, "ji_events", []):
         per_player[int(p) % 4] += 1.0
-    for _dsc, cl, _tag, _ming in getattr(game, "claimed_ji", []):
-        per_player[int(cl) % 4] += 1.0
+    # 注意：claimed_ji 元素为 4 元组(旧)或 5 元组(2026-10-12 起附加牌面)，
+    # 故此处处用下标访问第 2 位（碰/杠者），不做元组解包，避免契约扩展后再崩。
+    for ev in getattr(game, "claimed_ji", []):
+        per_player[int(ev[1]) % 4] += 1.0
     for p in range(4):
         g[74 + _rel(p, me)] = min(per_player[p], 4.0) / 4.0
 

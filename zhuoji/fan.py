@@ -64,16 +64,16 @@ FAN_CN: dict[str, str] = {
 #: 副露类型
 MELD_CHOW = 0             # 顺子（捉鸡不能吃，保留枚举以兼容）
 MELD_PONG = 1             # 碰
-MELD_KONG_EXPOSED = 2     # 点豆（明杠）
-MELD_KONG_ADDED = 3       # 爬坡豆（补杠）
-MELD_KONG_CONCEALED = 4   # 闷豆（暗杠）
+MELD_KONG_EXPOSED = 2     # 点杠（别人打出的明杠）
+MELD_KONG_ADDED = 3       # 补杠（碰后加杠）
+MELD_KONG_CONCEALED = 4   # 暗杠
 
 MELD_CN = {
     MELD_CHOW: "吃",
     MELD_PONG: "碰",
-    MELD_KONG_EXPOSED: "点豆",
-    MELD_KONG_ADDED: "爬坡豆",
-    MELD_KONG_CONCEALED: "闷豆",
+    MELD_KONG_EXPOSED: "点杠",
+    MELD_KONG_ADDED: "补杠",
+    MELD_KONG_CONCEALED: "暗杠",
 }
 
 KONG_TYPES = (MELD_KONG_EXPOSED, MELD_KONG_ADDED, MELD_KONG_CONCEALED)
