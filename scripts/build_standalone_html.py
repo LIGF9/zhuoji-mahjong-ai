@@ -164,6 +164,8 @@ window.__DushanReady = (async () => {
 window.__LocalAPI = function (path, body) {
   return window.__DushanReady.then(api => api.handle(path, body));
 };
+/* 桥就绪：放行 UI 脚本解析期就已排队的 api() 调用（meta/自动重连） */
+if (window.__LocalAPIResolve) window.__LocalAPIResolve();
 })();
 """
 
@@ -237,6 +239,8 @@ def build(mode: str) -> tuple[str, str]:
                  "P4 resIconSrc")
 
     # ---- P1 api() shim ----
+    # 启动竞态桥接：UI 脚本在解析期就会调 api()（meta/自动重连），
+    # 而 __LocalAPI 在 </body> 尾的引擎脚本里才赋值 —— 必须等桥就绪。
     html = patch(html,
                  'async function api(path, body) {\n'
                  '  const opt = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};\n'
@@ -244,7 +248,11 @@ def build(mode: str) -> tuple[str, str]:
                  '  return r.json();\n'
                  '}',
                  'async function api(path, body) {\n'
-                 '  /* 离线单机版：直接调用内嵌本地引擎（无 HTTP） */\n'
+                 '  /* 离线单机版：直接调用内嵌本地引擎（无 HTTP）。\n'
+                 '     UI 脚本解析期即调 api()，早于引擎脚本赋值 __LocalAPI，\n'
+                 '     故先等桥就绪（引擎脚本尾部会触发 __LocalAPIResolve）。 */\n'
+                 '  if (!window.__LocalAPI) await (window.__LocalAPIReady ||\n'
+                 '    (window.__LocalAPIReady = new Promise(r => { window.__LocalAPIResolve = r; })));\n'
                  '  return window.__LocalAPI(path, body);\n'
                  '}',
                  "P1 api shim")
@@ -275,6 +283,14 @@ def build(mode: str) -> tuple[str, str]:
     if single:
         ort_src = (LIB_DIR / "ort.min.js").read_text(encoding="utf-8")
         mjs_src = (LIB_DIR / "ort-wasm-simd-threaded.mjs").read_text(encoding="utf-8")
+        # ★ 关键补丁：mjs 以 Blob URL 动态 import 时 import.meta.url 是 blob:，
+        #   不能作相对解析 base → new URL("ort-wasm-...wasm", import.meta.url) 抛
+        #   "Failed to construct 'URL': Invalid URL"（单文件版必现）。
+        #   本版恒提供 wasmBinary，该 URL 只被构造不被使用 → 替换为无害常量。
+        MJS_URL_BUG = '(new URL("ort-wasm-simd-threaded.wasm",import.meta.url)).href'
+        if MJS_URL_BUG not in mjs_src:
+            die("mjs 胶水内容与预期不符（找不到 blob URL bug 语句），请核对 ort 版本")
+        mjs_src = mjs_src.replace(MJS_URL_BUG, '"./ort-wasm-simd-threaded.wasm"')
         wasm_b64 = base64.b64encode((LIB_DIR / "ort-wasm-simd-threaded.wasm")
                                     .read_bytes()).decode()
         model_b64 = base64.b64encode(MODEL.read_bytes()).decode()
