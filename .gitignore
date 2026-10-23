@@ -93,3 +93,7 @@ web/standalone/test/*.json
 
 # === ORT 运行时二进制（scripts/fetch_ort_runtime.py 一键恢复）===
 web/standalone/lib/
+
+# === CDP 截图临时产物 ===
+reports/_shot_*.png
+reports/_multi6.log

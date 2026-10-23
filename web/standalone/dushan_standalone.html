@@ -1624,6 +1624,28 @@ function __asset(path) {
   }
   return __ASSET_BASE + path;
 }
+/* ==== 沙箱安全 localStorage ====
+   WorkBuddy 内嵌 webview 等受限环境（不透明源 iframe）里直接访问 localStorage
+   抛 SecurityError，而 UI 脚本**顶层解析期**就 getItem（SOUND_ON）→ 整个脚本死掉
+   = 「点开始没反应」。这里探测可用性，不可用则退化为内存 Map。 */
+window.__LS = (function () {
+  try {
+    const k = "__dushan_ls_probe";
+    window.localStorage.setItem(k, "1");
+    window.localStorage.removeItem(k);
+    return window.localStorage;
+  } catch (e) {
+    const m = new Map();
+    return {
+      getItem: k => (m.has(k) ? m.get(k) : null),
+      setItem: (k, v) => m.set(k, String(v)),
+      removeItem: k => m.delete(k),
+      clear: () => m.clear(),
+      key: i => { const a = [...m.keys()]; return i < a.length ? a[i] : null; },
+      get length() { return m.size; },
+    };
+  }
+})();
 </script>
 <style>/* 离线单机版：内嵌唯一模型（c4_it2280），隐藏对手模型下拉 */
 #boot-players .pickmodel, #set-players .pickmodel { display: none !important; }
@@ -2334,7 +2356,7 @@ const YAOJI = 9;    // 1条
 let META = null, SID = null, MY_SEAT = 0;
 let SELECTED = -1, SELECTED_IDX = -1, LAST_STATE = null, COACH_HINTS = [];
 // 声音总开关：从 localStorage 恢复（2026-10-13 修复：旧版只写不读 → 每次刷新都变静音）
-let SOUND_ON = localStorage.getItem("dushan_sound") === "1";
+let SOUND_ON = __LS.getItem("dushan_sound") === "1";
 let POLL_TIMER = null;
 let PAGE_VER = null, UPDATE_NAG = null;
 
@@ -2375,7 +2397,7 @@ const SCORE_DEFAULT = { zimo: 3, dianpao: 3, gangkai: 5, gangpao: 5,
 const SCORE_OLD_BAOJIAO = 13;
 function loadScores() {
   try {
-    const o = JSON.parse(localStorage.getItem("dushan_scores") || "{}") || {};
+    const o = JSON.parse(__LS.getItem("dushan_scores") || "{}") || {};
     if (Number(o.baojiao) === SCORE_OLD_BAOJIAO) o.baojiao = SCORE_DEFAULT.baojiao;
     return Object.assign({}, SCORE_DEFAULT, o);
   } catch (e) { return Object.assign({}, SCORE_DEFAULT); }
@@ -2384,14 +2406,14 @@ function loadScores() {
 const RULE_DEFAULT = { end_baoji: true, end_baogang: false,
   huang_baoji: false, huang_baogang: false, huang_baodapai: true };
 function loadRules() {
-  try { return Object.assign({}, RULE_DEFAULT, JSON.parse(localStorage.getItem("dushan_rules") || "{}")); }
+  try { return Object.assign({}, RULE_DEFAULT, JSON.parse(__LS.getItem("dushan_rules") || "{}")); }
   catch (e) { return Object.assign({}, RULE_DEFAULT); }
 }
 /* 翻鸡模式：结算翻鸡（both/up/down）与开局翻鸡（多一个 off） */
 const FANJI_LABEL = { both: "上下鸡", up: "上鸡", down: "下鸡", off: "关闭" };
 const FANJI_STRATEGY_LABEL = { both: "上下鸡", up: "仅上鸡", down: "仅下鸡", off: "关闭" };
 function loadFanji(key, def, allowed) {
-  const v = localStorage.getItem(key);
+  const v = __LS.getItem(key);
   return allowed.includes(v) ? v : def;
 }
 /* 四家头像：名字不再单独保存（= 头像名，对手再拼模型版本缩写），选头像即改名。
@@ -2399,7 +2421,7 @@ function loadFanji(key, def, allowed) {
 function loadPlayers() {
   const def = AVA_DEFAULT.map(a => ({ name: "", avatar: a }));
   try {
-    const raw = JSON.parse(localStorage.getItem("dushan_players") || "null");
+    const raw = JSON.parse(__LS.getItem("dushan_players") || "null");
     if (Array.isArray(raw)) {
       return def.map((d, i) => ({
         name: "",
@@ -2415,7 +2437,7 @@ function loadPlayers() {
 function loadOppModels() {
   const def = ["model:master", "model:master", "model:master"];
   try {
-    const raw = JSON.parse(localStorage.getItem("dushan_opp_models") || "null");
+    const raw = JSON.parse(__LS.getItem("dushan_opp_models") || "null");
     if (Array.isArray(raw)) {
       return def.map((d, i) => (typeof raw[i] === "string" && raw[i] ? raw[i] : d));
     }
@@ -2430,7 +2452,7 @@ function clampSetting(raw, lo, hi, def) {
 }
 /* 布尔开关：键缺失时取默认值（便于新增开关时兼容旧配置） */
 function loadBool(key, def) {
-  const v = localStorage.getItem(key);
+  const v = __LS.getItem(key);
   return v === null ? def : v === "1";
 }
 /* 0~1 音量取值：非数字回落 0（在 SET 初始化前就要用，所以放在 clampSetting 旁边） */
@@ -2443,9 +2465,9 @@ function clamp01(v) { const n = Number(v); return Math.max(0, Math.min(1, Number
    新键：`dushan_bgm_on`（"1"/"0"）、`dushan_bgm_track`（random | bg0..bg4）。 */
 const BGM_TRACKS = ["random", "bg0", "bg1", "bg2", "bg3", "bg4"];
 function loadBgm() {
-  const old = localStorage.getItem("dushan_bgm");
-  const onRaw = localStorage.getItem("dushan_bgm_on");
-  const trRaw = localStorage.getItem("dushan_bgm_track");
+  const old = __LS.getItem("dushan_bgm");
+  const onRaw = __LS.getItem("dushan_bgm_on");
+  const trRaw = __LS.getItem("dushan_bgm_track");
   const on = (onRaw === null) ? (old === null ? true : old !== "off") : onRaw === "1";
   const tr = BGM_TRACKS.includes(trRaw) ? trRaw
     : (BGM_TRACKS.includes(old) && old !== "random" ? old : "random");
@@ -2454,12 +2476,12 @@ function loadBgm() {
 const _BGM_INIT = loadBgm();
 /* 旧版把「关闭」编码进时间值本身（超时=0 = 不自动操作）。
    一次性迁移：若没有独立开关键、而时间值为 0 → 关掉开关，并把时间恢复为默认 15 秒。 */
-const _timeoutRaw = localStorage.getItem("dushan_timeout");
+const _timeoutRaw = __LS.getItem("dushan_timeout");
 const _timeoutVal = clampSetting(_timeoutRaw, 0, 600, 15);
 const _timeoutLegacyOff = _timeoutRaw !== null && _timeoutVal === 0
-  && localStorage.getItem("dushan_timeouton") === null;
+  && __LS.getItem("dushan_timeouton") === null;
 const SET = {
-  strategy: localStorage.getItem("dushan_strategy") || "model:master",
+  strategy: __LS.getItem("dushan_strategy") || "model:master",
   // ---- 功能开关（与时间设置分离：关闭后其时间设置自动置灰）----
   hintOn: loadBool("dushan_hinton", true),               // 显示大师推荐
   timeoutOn: _timeoutLegacyOff ? false : loadBool("dushan_timeouton", true),
@@ -2467,44 +2489,44 @@ const SET = {
   timeout: _timeoutLegacyOff ? 15 : _timeoutVal,
   // 推荐延迟：轮到我后等 N 秒才显示推荐（0=立即）。
   // 2026-10-12：推荐出牌形式（上浮/指示器）的出现时间都用这一个，不再单独设置。
-  hintDelay: clampSetting(localStorage.getItem("dushan_hintdelay"), 0, 600, 0),
+  hintDelay: clampSetting(__LS.getItem("dushan_hintdelay"), 0, 600, 0),
   // 推荐出牌形式（2026-10-12，替代原「推荐自动上浮」开关 + 上浮时机）：
   //   "float" = 上浮（把推荐打出的那张牌自动浮起，默认）
   //   "ind"   = 指示器（在推荐打出的牌上方显示 SET.recColor 指示器）
-  recForm: localStorage.getItem("dushan_rec_form") === "ind" ? "ind" : "float",
+  recForm: __LS.getItem("dushan_rec_form") === "ind" ? "ind" : "float",
   // 推荐理由形态（2026-10-09 合并「大师推荐」与「大师建议」两个机制，去掉牌桌💡/🧠开关）：
   //   "full"  = 完整推荐（默认）：桌面上显示大师建议面板（讲解 / 概率 / 理由）
   //   "brief" = 一句话推荐：只在操作区上方显示一行理由
   //   "tile"  = 仅推荐出牌（2026-10-13）：只把推荐的牌上浮/标记，不显示任何理由文字
   // 旧配置迁移：老「简短推荐理由=开」且大师建议面板原本关着 → 迁移为「一句话推荐」
-  reasonMode: (localStorage.getItem("dushan_reasonmode")
-    || (localStorage.getItem("dushan_briefreason") === "1"
-        && localStorage.getItem("dushan_coach_on") !== "1" ? "brief" : "full")),
+  reasonMode: (__LS.getItem("dushan_reasonmode")
+    || (__LS.getItem("dushan_briefreason") === "1"
+        && __LS.getItem("dushan_coach_on") !== "1" ? "brief" : "full")),
   // 对手出牌节奏（秒）：开局页与设置面板共用；对局中修改立即生效（0~5 秒，可自由填）
-  speed: clampSetting(localStorage.getItem("dushan_speed"), 0, 5, 0.45),
-  indColor: localStorage.getItem("dushan_ind_color") || "red",
-  recColor: localStorage.getItem("dushan_rec_color") || "green",
+  speed: clampSetting(__LS.getItem("dushan_speed"), 0, 5, 0.45),
+  indColor: __LS.getItem("dushan_ind_color") || "red",
+  recColor: __LS.getItem("dushan_rec_color") || "green",
   // 打牌听牌提示：我的出牌决策点常驻显示听什么（我的弃牌区下方）
   tipOn: loadBool("dushan_tingtip", true),
   // 全局流水面板显隐（设置 → 界面显示；旧键 dushan_log_hidden 一次性迁移）
   logShow: (() => {
-    const v = localStorage.getItem("dushan_logshow");
+    const v = __LS.getItem("dushan_logshow");
     if (v !== null) return v === "1";
-    return localStorage.getItem("dushan_log_hidden") === "0";   // 旧口径：0=展开
+    return __LS.getItem("dushan_log_hidden") === "0";   // 旧口径：0=展开
   })(),
   // 记牌器（设置 → 界面显示）：桌面手牌右侧那枚 🧮 的显隐。**默认关**
   // （2026-10-12 用户口径）；与「浮窗展开态」counterOpen 是两件事。
   counterOn: loadBool("dushan_counteron", false),
   // 记牌器浮窗展开态
-  counterOpen: localStorage.getItem("dushan_counter") === "1",
+  counterOpen: __LS.getItem("dushan_counter") === "1",
   // 冲锋鸡/横鸡全屏特效时长（秒；2026-10-12 #84 可设置，默认 3；0=关闭特效）
   fxDur: (() => {
-    const v = parseFloat(localStorage.getItem("dushan_fx_dur"));
+    const v = parseFloat(__LS.getItem("dushan_fx_dur"));
     return Number.isFinite(v) && v >= 0 ? Math.min(v, 10) : 3;
   })(),
   // 开局鸡牌提醒特效时长（秒；2026-10-13 用户需求，默认 3；0=关闭特效）
   kaijuFxDur: (() => {
-    const v = parseFloat(localStorage.getItem("dushan_kaiju_fx_dur"));
+    const v = parseFloat(__LS.getItem("dushan_kaiju_fx_dur"));
     return Number.isFinite(v) && v >= 0 ? Math.min(v, 10) : 3;
   })(),
   // ---- 声音（2026-10-13 详细设置：总音量 / 背景音乐 / 读牌 / 操作音效）----
@@ -2514,18 +2536,18 @@ const SET = {
   bgmTrack: _BGM_INIT.track,               // 背景音乐曲目：random（默认）| bg0..bg4
   voiceOn: loadBool("dushan_voice_on", true),      // 读牌声音
   sfxOn: loadBool("dushan_sfx_on", true),          // 操作音效
-  masterVol: clamp01(localStorage.getItem("dushan_vol_master") === null
-    ? 0.8 : localStorage.getItem("dushan_vol_master")),
-  bgmVol: clamp01(localStorage.getItem("dushan_vol_bgm") === null
-    ? 0.35 : localStorage.getItem("dushan_vol_bgm")),
-  voiceVol: clamp01(localStorage.getItem("dushan_vol_voice") === null
-    ? 1 : localStorage.getItem("dushan_vol_voice")),
-  sfxVol: clamp01(localStorage.getItem("dushan_vol_sfx") === null
-    ? 0.9 : localStorage.getItem("dushan_vol_sfx")),
+  masterVol: clamp01(__LS.getItem("dushan_vol_master") === null
+    ? 0.8 : __LS.getItem("dushan_vol_master")),
+  bgmVol: clamp01(__LS.getItem("dushan_vol_bgm") === null
+    ? 0.35 : __LS.getItem("dushan_vol_bgm")),
+  voiceVol: clamp01(__LS.getItem("dushan_vol_voice") === null
+    ? 1 : __LS.getItem("dushan_vol_voice")),
+  sfxVol: clamp01(__LS.getItem("dushan_vol_sfx") === null
+    ? 0.9 : __LS.getItem("dushan_vol_sfx")),
   // 规则开关（下一局生效）：结算翻鸡默认上下鸡（可关）；开局翻鸡默认关闭；满堂鸡默认关
   jiesuan: loadFanji("dushan_jiesuan_fanji", "both", ["both", "up", "down", "off"]),
   kaijuFanji: loadFanji("dushan_kaiju_fanji", "off", ["off", "up", "down", "both"]),
-  mantiangji: localStorage.getItem("dushan_mantiangji") === "1",
+  mantiangji: __LS.getItem("dushan_mantiangji") === "1",
   // 未听牌包赔开关（下一局生效）
   rule: loadRules(),
   // 追加鸡牌种（2026-10-12 N1：如贵阳玩的八筒；随 rules.extra_ji 发给服务端）
@@ -2545,38 +2567,38 @@ Object.defineProperty(SET, "coach", {
   set(v) { SET.reasonMode = v ? "full" : "brief"; },
 });
 function saveSet() {
-  localStorage.setItem("dushan_strategy", SET.strategy);
-  localStorage.setItem("dushan_hinton", SET.hintOn ? "1" : "0");
-  localStorage.setItem("dushan_timeouton", SET.timeoutOn ? "1" : "0");
-  localStorage.setItem("dushan_timeout", String(SET.timeout));
-  localStorage.setItem("dushan_hintdelay", String(SET.hintDelay));
-  localStorage.setItem("dushan_rec_form", SET.recForm);
-  localStorage.setItem("dushan_reasonmode", SET.reasonMode);
-  localStorage.setItem("dushan_speed", String(SET.speed));
-  localStorage.setItem("dushan_ind_color", SET.indColor);
-  localStorage.setItem("dushan_rec_color", SET.recColor);
-  localStorage.setItem("dushan_tingtip", SET.tipOn ? "1" : "0");
-  localStorage.setItem("dushan_logshow", SET.logShow ? "1" : "0");
-  localStorage.setItem("dushan_counteron", SET.counterOn ? "1" : "0");
-  localStorage.setItem("dushan_fx_dur", String(SET.fxDur));
-  localStorage.setItem("dushan_kaiju_fx_dur", String(SET.kaijuFxDur));
-  localStorage.setItem("dushan_bgm_on", SET.bgmOn ? "1" : "0");
-  localStorage.setItem("dushan_bgm_track", SET.bgmTrack);
-  localStorage.setItem("dushan_voice_on", SET.voiceOn ? "1" : "0");
-  localStorage.setItem("dushan_sfx_on", SET.sfxOn ? "1" : "0");
-  localStorage.setItem("dushan_vol_master", String(clamp01(SET.masterVol)));
-  localStorage.setItem("dushan_vol_bgm", String(clamp01(SET.bgmVol)));
-  localStorage.setItem("dushan_vol_voice", String(clamp01(SET.voiceVol)));
-  localStorage.setItem("dushan_vol_sfx", String(clamp01(SET.sfxVol)));
-  localStorage.setItem("dushan_jiesuan_fanji", SET.jiesuan);
-  localStorage.setItem("dushan_kaiju_fanji", SET.kaijuFanji);
-  localStorage.setItem("dushan_mantiangji", SET.mantiangji ? "1" : "0");
-  localStorage.setItem("dushan_extra_ji", JSON.stringify(SET.extraJi));
-  localStorage.setItem("dushan_opp_models", JSON.stringify(SET.oppModels));
-  localStorage.setItem("dushan_rules", JSON.stringify(SET.rule));
-  localStorage.setItem("dushan_players", JSON.stringify(SET.players));
-  localStorage.setItem("dushan_scores", JSON.stringify(SET.score));
-  localStorage.setItem("dushan_sound", SOUND_ON ? "1" : "0");
+  __LS.setItem("dushan_strategy", SET.strategy);
+  __LS.setItem("dushan_hinton", SET.hintOn ? "1" : "0");
+  __LS.setItem("dushan_timeouton", SET.timeoutOn ? "1" : "0");
+  __LS.setItem("dushan_timeout", String(SET.timeout));
+  __LS.setItem("dushan_hintdelay", String(SET.hintDelay));
+  __LS.setItem("dushan_rec_form", SET.recForm);
+  __LS.setItem("dushan_reasonmode", SET.reasonMode);
+  __LS.setItem("dushan_speed", String(SET.speed));
+  __LS.setItem("dushan_ind_color", SET.indColor);
+  __LS.setItem("dushan_rec_color", SET.recColor);
+  __LS.setItem("dushan_tingtip", SET.tipOn ? "1" : "0");
+  __LS.setItem("dushan_logshow", SET.logShow ? "1" : "0");
+  __LS.setItem("dushan_counteron", SET.counterOn ? "1" : "0");
+  __LS.setItem("dushan_fx_dur", String(SET.fxDur));
+  __LS.setItem("dushan_kaiju_fx_dur", String(SET.kaijuFxDur));
+  __LS.setItem("dushan_bgm_on", SET.bgmOn ? "1" : "0");
+  __LS.setItem("dushan_bgm_track", SET.bgmTrack);
+  __LS.setItem("dushan_voice_on", SET.voiceOn ? "1" : "0");
+  __LS.setItem("dushan_sfx_on", SET.sfxOn ? "1" : "0");
+  __LS.setItem("dushan_vol_master", String(clamp01(SET.masterVol)));
+  __LS.setItem("dushan_vol_bgm", String(clamp01(SET.bgmVol)));
+  __LS.setItem("dushan_vol_voice", String(clamp01(SET.voiceVol)));
+  __LS.setItem("dushan_vol_sfx", String(clamp01(SET.sfxVol)));
+  __LS.setItem("dushan_jiesuan_fanji", SET.jiesuan);
+  __LS.setItem("dushan_kaiju_fanji", SET.kaijuFanji);
+  __LS.setItem("dushan_mantiangji", SET.mantiangji ? "1" : "0");
+  __LS.setItem("dushan_extra_ji", JSON.stringify(SET.extraJi));
+  __LS.setItem("dushan_opp_models", JSON.stringify(SET.oppModels));
+  __LS.setItem("dushan_rules", JSON.stringify(SET.rule));
+  __LS.setItem("dushan_players", JSON.stringify(SET.players));
+  __LS.setItem("dushan_scores", JSON.stringify(SET.score));
+  __LS.setItem("dushan_sound", SOUND_ON ? "1" : "0");
 }
 /* 收集「下一局生效」的全部设置 → /api/new 与 /api/next 共用的 rules 载荷。
    ⚠️ 2026-10-12 修复：此前只有 /api/new 带 rules，"下一局"（/api/next）不带 →
@@ -3105,7 +3127,7 @@ function seatEl(rel) { return el(["me", "p1", "p2", "p3"][rel]); }
    点哪张就把哪张选为 / 取消本局鸡牌；幺鸡永远是鸡（锁定，不可取消）。 */
 function loadExtraJi() {
   try {
-    const a = JSON.parse(localStorage.getItem("dushan_extra_ji") || "[]");
+    const a = JSON.parse(__LS.getItem("dushan_extra_ji") || "[]");
     if (!Array.isArray(a)) return [];
     return [...new Set(a.map(Number).filter(t =>
       Number.isInteger(t) && t >= 0 && t < 27 && t !== YAOJI))];
@@ -3269,7 +3291,7 @@ async function boot() {
     note.textContent = "⚠️ 大师模型训练中，暂时由进阶模型（rl.pt）代班";
   }
   // 恢复上局
-  const prev = localStorage.getItem("dushan_sid");
+  const prev = __LS.getItem("dushan_sid");
   if (prev) {
     const st = await api("/api/state?sid=" + prev);
     if (st && st.ready && !st.over) {
@@ -3302,7 +3324,7 @@ el("startBtn").onclick = async () => {
   SID = r.sid; MY_SEAT = r.my_seat;
   SERVER_HOLD = false;
   if (kaijuFxOn()) setFlowHold(true);   // 服务端已扣住第一手；本地兜底定时器同时起跳
-  localStorage.setItem("dushan_sid", SID);
+  __LS.setItem("dushan_sid", SID);
   el("boot").classList.remove("on2");
   // 只清内容层，别清 #log 自身——否则会把 #log-body 和缩放把手一起删掉
   const lb = el("log-body"); lb.innerHTML = ""; lb._h = "";
@@ -4037,7 +4059,7 @@ const LOG_FILTERS = [
   ["all", "全部"], ["draw", "摸牌"], ["discard", "出牌"], ["meld", "碰杠"],
   ["call", "报叫/听/胡"], ["ji", "鸡牌"], ["hengji", "横鸡轮"], ["result", "结算"],
 ];
-let LOG_FILTER = localStorage.getItem("dushan_logfilter") || "all";
+let LOG_FILTER = __LS.getItem("dushan_logfilter") || "all";
 if (!LOG_FILTERS.some(f => f[0] === LOG_FILTER)) LOG_FILTER = "all";
 function logFilterMatch(e) {
   switch (LOG_FILTER) {
@@ -4059,7 +4081,7 @@ el("log-filter").addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-f]");
   if (!b || b.dataset.f === LOG_FILTER) return;
   LOG_FILTER = b.dataset.f;
-  localStorage.setItem("dushan_logfilter", LOG_FILTER);
+  __LS.setItem("dushan_logfilter", LOG_FILTER);
   renderLogFilter();
   if (LAST_STATE) renderLog(LAST_STATE.events || []);
 });
@@ -4521,7 +4543,7 @@ let RP_MODE = false;    // 回放模式：牌桌显示回放内容、暂停实�
    正常对局的声音设置（SET.* / SOUND_ON）一概不碰。
    同日三次口径：**进回放时与牌局的总开关同步**（牌局静音 → 进来就是 🔇），
    之后在回放器里可以独立开关并**真正生效**（snd 在回放模式下只认 RP_SOUND）。 */
-let RP_SOUND = localStorage.getItem("dushan_rp_sound") !== "0";
+let RP_SOUND = __LS.getItem("dushan_rp_sound") !== "0";
 function syncRpSnd() {
   const b = el("rp-snd");
   if (b) {
@@ -4540,7 +4562,7 @@ let RP_LAST = null;     // 当前帧状态（调试/复用）
 const RP_SPEED_KEY = "dushan_rp_speed";
 const RP_SPEED_MIN = 0.5, RP_SPEED_MAX = 5;
 let RP_SPEED = (() => {
-  const v = parseFloat(localStorage.getItem(RP_SPEED_KEY));
+  const v = parseFloat(__LS.getItem(RP_SPEED_KEY));
   return Number.isFinite(v) ? Math.min(Math.max(v, RP_SPEED_MIN), RP_SPEED_MAX) : 0.5;
 })();
 const rpSpeedMs = () => Math.round(RP_SPEED * 1000);
@@ -4962,7 +4984,7 @@ if (el("rp-speed")) el("rp-speed").addEventListener("change", () => {
   const v = parseFloat(el("rp-speed").value);
   RP_SPEED = Number.isFinite(v)
     ? Math.min(Math.max(v, RP_SPEED_MIN), RP_SPEED_MAX) : RP_SPEED_MIN;
-  localStorage.setItem(RP_SPEED_KEY, String(RP_SPEED));
+  __LS.setItem(RP_SPEED_KEY, String(RP_SPEED));
   if (RP_TIMER && RP && RP_IDX < RP.ev.length) { stopReplayPlay(); startReplayPlay(); }
 });
 /* 回放速度下拉回填（进回放/初始化时调） */
@@ -4993,7 +5015,7 @@ el("rp-play").onclick = () => { if (RP_TIMER) stopReplayPlay(); else startReplay
 el("rp-res").onclick = () => { RP_RES_OPEN ? closeReplayResult() : openReplayResult(); };
 el("rp-snd").onclick = () => {
   RP_SOUND = !RP_SOUND;
-  localStorage.setItem("dushan_rp_sound", RP_SOUND ? "1" : "0");
+  __LS.setItem("dushan_rp_sound", RP_SOUND ? "1" : "0");
   unlockAudio();          // 用户手势顺手解锁自动播放策略
   syncRpSnd();
 };
@@ -5666,14 +5688,14 @@ el("btn-sound").onclick = () => {
 syncSoundMaster();
 
 /* ================= 透视（查看所有人手牌） ================= */
-let PEEK = localStorage.getItem("dushan_peek") === "1";
+let PEEK = __LS.getItem("dushan_peek") === "1";
 function applyPeekBtn() {
   el("btn-peek").classList.toggle("peek-on", PEEK);
   el("btn-peek").title = PEEK ? "透视已开启：显示所有人手牌" : "透视：查看所有玩家的手牌";
 }
 el("btn-peek").onclick = () => {
   PEEK = !PEEK;
-  localStorage.setItem("dushan_peek", PEEK ? "1" : "0");
+  __LS.setItem("dushan_peek", PEEK ? "1" : "0");
   applyPeekBtn();
   toast(PEEK ? "透视已开启：显示所有人手牌" : "透视已关闭");
   if (SID) poll();
@@ -5712,7 +5734,7 @@ function applyCounterShow() {
 el("counter-btn").onclick = () => {
   COUNTER_OPEN = !COUNTER_OPEN;
   SET.counterOpen = COUNTER_OPEN;
-  localStorage.setItem("dushan_counter", COUNTER_OPEN ? "1" : "0");
+  __LS.setItem("dushan_counter", COUNTER_OPEN ? "1" : "0");
   applyCounterBtn();
   renderCounter(LAST_STATE);
 };
@@ -5794,7 +5816,7 @@ function makeDraggable(box, storeKey, handle) {
   handle = handle || box;
   let restored = false;
   try {
-    const saved = JSON.parse(localStorage.getItem(storeKey) || "null");
+    const saved = JSON.parse(__LS.getItem(storeKey) || "null");
     if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
       // 只有「整块都还在当前视口内」才恢复：手机与桌面的视口差很多，
       // 直接套用桌面保存的坐标会把面板甩到屏幕外，此时改用 CSS 默认位（小屏已是紧凑默认位）
@@ -5835,7 +5857,7 @@ function makeDraggable(box, storeKey, handle) {
     if (!drag || (e && drag.id !== e.pointerId)) return;
     box.classList.remove("dragging");
     if (drag.moved)
-      localStorage.setItem(storeKey, JSON.stringify({ x: box.offsetLeft, y: box.offsetTop }));
+      __LS.setItem(storeKey, JSON.stringify({ x: box.offsetLeft, y: box.offsetTop }));
     drag = null;
   };
   handle.addEventListener("pointerup", end);
@@ -5937,7 +5959,7 @@ const COACH_SIZE_KEY = "dushan_coach_size";
 const COACH_MIN_W = 220, COACH_MIN_H = 140;
 function applyCoachSize() {
   let s = null;
-  try { s = JSON.parse(localStorage.getItem(COACH_SIZE_KEY) || "null"); } catch (e) {}
+  try { s = JSON.parse(__LS.getItem(COACH_SIZE_KEY) || "null"); } catch (e) {}
   if (!s || !Number.isFinite(s.w) || !Number.isFinite(s.h)) return;
   const mob = document.documentElement.classList.contains("mob");   // 小屏上限收紧，理由同 applyLogSize
   const maxW = mob ? 320 : window.innerWidth - 24;
@@ -5970,7 +5992,7 @@ applyCoachSize();
   const end = (e) => {
     if (!rz || (e && rz.id !== e.pointerId)) return;
     coachBox.classList.remove("resizing");
-    localStorage.setItem(COACH_SIZE_KEY, JSON.stringify(
+    __LS.setItem(COACH_SIZE_KEY, JSON.stringify(
       { w: coachBox.offsetWidth, h: coachBox.offsetHeight }));
     rz = null;
   };
@@ -5984,7 +6006,7 @@ const LOG_SIZE_KEY = "dushan_log_size_v1";
 const LOG_MIN_W = 150, LOG_MIN_H = 80;
 function applyLogSize() {
   let s = null;
-  try { s = JSON.parse(localStorage.getItem(LOG_SIZE_KEY) || "null"); } catch (e) {}
+  try { s = JSON.parse(__LS.getItem(LOG_SIZE_KEY) || "null"); } catch (e) {}
   if (!s || !Number.isFinite(s.w) || !Number.isFinite(s.h)) return;
   // 小屏上限收紧：桌面记下来的大面板直接套用会糊住半个手机屏幕
   const mob = document.documentElement.classList.contains("mob");
@@ -6019,7 +6041,7 @@ applyLogSize();
   const end = (e) => {
     if (!rz || (e && rz.id !== e.pointerId)) return;
     logBox.classList.remove("resizing");
-    localStorage.setItem(LOG_SIZE_KEY, JSON.stringify(
+    __LS.setItem(LOG_SIZE_KEY, JSON.stringify(
       { w: logBox.offsetWidth, h: logBox.offsetHeight }));
     rz = null;
   };
@@ -6274,7 +6296,7 @@ function applySoundNow() {
 });
 
 /* ---- 设置面板：左侧分类导航（记忆上次分类） ---- */
-let SET_PANE = localStorage.getItem("dushan_setpane") || "who";
+let SET_PANE = __LS.getItem("dushan_setpane") || "who";
 let PANE_TM = null;   // 高度过渡的收尾计时器（连续点击时互相打断）
 function showSetPane(name) {
   const nav = el("set-nav"), panes = el("set-panes");
@@ -6323,7 +6345,7 @@ el("set-nav").onclick = (ev) => {
   const b = ev.target.closest("button[data-pane]");
   if (!b) return;
   showSetPane(b.dataset.pane);
-  localStorage.setItem("dushan_setpane", SET_PANE);
+  __LS.setItem("dushan_setpane", SET_PANE);
 };
 el("btn-settings").onclick = () => {
   fillSetSelects(); showSetPane(SET_PANE); el("set-mask").classList.add("on");

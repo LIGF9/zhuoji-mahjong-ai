@@ -179,6 +179,28 @@ function __asset(path) {
   }
   return __ASSET_BASE + path;
 }
+/* ==== 沙箱安全 localStorage ====
+   WorkBuddy 内嵌 webview 等受限环境（不透明源 iframe）里直接访问 localStorage
+   抛 SecurityError，而 UI 脚本**顶层解析期**就 getItem（SOUND_ON）→ 整个脚本死掉
+   = 「点开始没反应」。这里探测可用性，不可用则退化为内存 Map。 */
+window.__LS = (function () {
+  try {
+    const k = "__dushan_ls_probe";
+    window.localStorage.setItem(k, "1");
+    window.localStorage.removeItem(k);
+    return window.localStorage;
+  } catch (e) {
+    const m = new Map();
+    return {
+      getItem: k => (m.has(k) ? m.get(k) : null),
+      setItem: (k, v) => m.set(k, String(v)),
+      removeItem: k => m.delete(k),
+      clear: () => m.clear(),
+      key: i => { const a = [...m.keys()]; return i < a.length ? a[i] : null; },
+      get length() { return m.size; },
+    };
+  }
+})();
 </script>
 <style>/* 离线单机版：内嵌唯一模型（c4_it2280），隐藏对手模型下拉 */
 #boot-players .pickmodel, #set-players .pickmodel { display: none !important; }
@@ -272,6 +294,12 @@ def build(mode: str) -> tuple[str, str]:
 
     html = re.sub(r'(["\'(])/assets/([^"\')$`]+)(["\')])', sub, html)
     print(f"[build] 静态资产引用替换：{len(static_refs)} 种路径")
+
+    # ---- P7 localStorage → __LS（沙箱安全 shim，prelude 里定义）----
+    # 内嵌 webview 不透明源下 localStorage 抛 SecurityError 且 UI 顶层解析期就访问
+    n_ls = len(re.findall(r"\blocalStorage\.", html))
+    html = re.sub(r"\blocalStorage\.", "__LS.", html)
+    print(f"[build] localStorage 访问点替换为安全 shim：{n_ls} 处")
 
     # ---- P2 注入：资产解析器 + 引擎装配 + ORT ----
     engine_modules = "".join(
