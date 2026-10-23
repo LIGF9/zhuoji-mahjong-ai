@@ -415,7 +415,7 @@ function renderOpp(el, p, state){
   let melds = '';
   if (p.melds.length){
     melds = '<div class="melds">' + p.melds.map(m => {
-      const hidden = m.type === 4;              // 闷豆：别人看不到牌面
+      const hidden = m.type === 4;              // 暗杠：别人看不到牌面
       const n = m.type >= 2 ? 4 : 3;
       const inner = hidden
         ? '<div class="tile tiny"><span class="num">?</span></div>'.repeat(n)

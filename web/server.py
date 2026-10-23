@@ -70,9 +70,9 @@ MODEL_DIR = ROOT / "models"
 
 MELD_LABEL = {
     MELD_PONG: "碰",
-    MELD_KONG_EXPOSED: "点豆",
-    MELD_KONG_ADDED: "爬坡豆",
-    MELD_KONG_CONCEALED: "闷豆",
+    MELD_KONG_EXPOSED: "点杠",
+    MELD_KONG_ADDED: "补杠",
+    MELD_KONG_CONCEALED: "暗杠",
 }
 
 #: 动作按钮的展示优先级（越小越靠前）
@@ -543,7 +543,7 @@ class Session:
         elif k in (ANGANG, BUGANG):
             self._push("kong", rel, f"{who} {action.label()}", action.tile)
         elif k == MINGGANG:
-            self._push("kong", rel, f"{who} 点豆 {tile_cn(action.tile)}", action.tile)
+            self._push("kong", rel, f"{who} 点杠 {tile_cn(action.tile)}", action.tile)
         # PASS 不记录：响应阶段的"过"太吵
 
     def _emit_draw(self, seat: int, game: ZhuojiGame) -> None:
