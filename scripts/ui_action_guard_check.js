@@ -4,7 +4,7 @@
 const fs = require('fs');
 const { JSDOM } = require('jsdom');
 
-const ROOT = 'C:/Users/hyzor/WorkBuddy/2026-09-30-12-49-43/zhuoji-mahjong';
+const ROOT = 'C:/Users/LIGF/WorkBuddy/2026-09-30-12-49-43/zhuoji-mahjong';
 const html = fs.readFileSync(ROOT + '/web/static/dushan.html', 'utf8');
 const errs = [];
 const meta = JSON.parse(fs.readFileSync(ROOT + '/reports/ui_fixtures_meta.json', 'utf8'));
@@ -20,6 +20,10 @@ const dom = new JSDOM(html, {
   pretendToBeVisual: true,
   url: 'http://127.0.0.1:8770/static/dushan.html',
   beforeParse(w) {
+    // jsdom 未实现 matchMedia（fitStage 用它判定触屏）→ 补一个「非触屏」桩
+    if (!w.matchMedia) w.matchMedia = q => ({ matches: false, media: String(q),
+      onchange: null, addEventListener() {}, removeEventListener() {},
+      addListener() {}, removeListener() {}, dispatchEvent: () => false });
     w.fetch = (url, opt) => {
       const u = String(url);
       if (u.includes('/api/meta')) return Promise.resolve({ ok: true, json: () => Promise.resolve(meta) });

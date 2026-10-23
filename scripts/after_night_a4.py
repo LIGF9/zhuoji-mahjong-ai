@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PY = r"C:\Users\hyzor\.workbuddy\binaries\python\envs\zhuoji\Scripts\python.exe"
+PY = r"C:\Users\LIGF\.workbuddy\binaries\python\envs\zhuoji\Scripts\python.exe"
 NIGHT_SUMMARY = ROOT / "reports" / "night_plan_b_stage2_summary.json"
 LOG = ROOT / "reports" / "after_night_a4.log"
 A4 = ROOT / "scripts" / "shift_plan_a_s12.py"

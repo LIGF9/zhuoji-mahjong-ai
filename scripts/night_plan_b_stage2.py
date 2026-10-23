@@ -50,7 +50,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PY = r"C:\Users\hyzor\.workbuddy\binaries\python\envs\zhuoji\Scripts\python.exe"
+PY = r"C:\Users\LIGF\.workbuddy\binaries\python\envs\zhuoji\Scripts\python.exe"
 
 #: 方案 A4 的收尾标志（它跑完我们才上机，避免两条训练互相拖慢）
 A_SUMMARY = ROOT / "reports" / "shift_plan_a_s12_summary.json"

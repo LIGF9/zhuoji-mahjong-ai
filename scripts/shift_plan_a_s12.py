@@ -48,7 +48,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PY = r"C:\Users\hyzor\.workbuddy\binaries\python\envs\zhuoji\Scripts\python.exe"
+PY = r"C:\Users\LIGF\.workbuddy\binaries\python\envs\zhuoji\Scripts\python.exe"
 LADDER_JSON = ROOT / "reports" / "ladder_s7_s11_coop.json"
 LOG = ROOT / "reports" / "shift_plan_a_s12.log"
 SUMMARY = ROOT / "reports" / "shift_plan_a_s12_summary.json"

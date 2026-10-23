@@ -39,7 +39,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PY = r"C:\Users\hyzor\.workbuddy\binaries\python\envs\zhuoji\Scripts\python.exe"
+PY = r"C:\Users\LIGF\.workbuddy\binaries\python\envs\zhuoji\Scripts\python.exe"
 A4_SUMMARY = ROOT / "reports" / "shift_plan_a_s12_summary.json"
 LOG = ROOT / "reports" / "after_a4_plan_c.log"
 SUMMARY = ROOT / "reports" / "plan_c_summary.json"
@@ -52,7 +52,13 @@ POOL = "dushan_big_s3,dushan_big_s7,dushan_big_s11"
 #: 复评同批比较的检查点：C3 本体 + 第一次消融的几个关键臂 + 纯扰动对照 + 锚点。
 #: `_diag_c1_v2warm` 是"只热启动、零训练"的模型 —— 它给出**纯扰动造成的分数损失**，
 #: 与 `p_abc`（扰动 + 400 轮训练后）一比，就知道训练到底修回来多少。
-RESCORE_CKPTS = [TAG, "_diag_c1_v2warm", "dushan_b2_p_abc", "dushan_b2_p_none",
+#:
+#: 注意文件名口径：`score_checkpoints.py` 按 `models/{stem}.pt` 直接拼路径，
+#: 拿的是**磁盘上的真实文件名**；而 `TAG` 是"训练产物逻辑名"（脚本自己补 `dushan_` 前缀）。
+#: 2026-10-11 踩坑：这里原先直接写 `TAG`，导致找 `models/b2c_p_abc_zero.pt` 失败，
+#: 复评进程秒退、错误又被 stderr 重定向吞掉，最后只在汇总里留下一个空 `rescore: {}`。
+TAG_FILE = f"dushan_{TAG}"                       # = models/dushan_b2c_p_abc_zero.pt
+RESCORE_CKPTS = [TAG_FILE, "_diag_c1_v2warm", "dushan_b2_p_abc", "dushan_b2_p_none",
                  "dushan_b2_sp_off", "dushan_big_s11"]
 
 
@@ -81,6 +87,13 @@ def main() -> int:
     ap.add_argument("--max-hours", type=float, default=8.0,
                     help="最长等待 A4 的小时数（默认 8h）")
     ap.add_argument("--iters", type=int, default=400)
+    # 新机（i7-14700K：20 物理核 / 28 逻辑核 / 32 GB）实测选点：
+    # 更新阶段 threads=24 最快（171ms/batch，比 20 快 11%，28 反而回落）；
+    # 采集阶段 workers>10 后收益饱和（96 局 collect 1.2s → 0.9s）。
+    ap.add_argument("--threads", type=int, default=24,
+                    help="torch 更新阶段线程数（14700K 实测 24 最优）")
+    ap.add_argument("--workers", type=int, default=12,
+                    help="向量化采集进程数（14700K 实测 >10 后饱和）")
     args = ap.parse_args()
 
     say("=" * 62)
@@ -109,7 +122,7 @@ def main() -> int:
            "--history", f"reports/rl_history_{TAG}.json",
            "--iters", str(args.iters), "--games-per-iter", "96", "--batch", "512",
            "--lr", "8.0e-6", "--temperature", "0.95", "--teacher-prob", "0.08",
-           "--threads", "8", "--vectorized", "--workers", "4",
+           "--threads", str(args.threads), "--vectorized", "--workers", str(args.workers),
            "--eval-every", "10", "--eval-rounds", "40",
            "--select", "guard", "--select-metric", "vs_anchor",
            "--eval-anchor", "dushan_big_s11",
@@ -145,14 +158,17 @@ def main() -> int:
 
     # ---- 2. 同批复评（含对照臂，配对可比） ----
     out_json = ROOT / "reports" / "plan_c_rescore.json"
+    err_log = ROOT / "reports" / "_plan_c_rescore_stderr.log"
     say(f"复评：{len(RESCORE_CKPTS)} 个检查点 × 1200 副（同批牌池 + 同对手）")
-    subprocess.run(
-        [PY, "scripts/score_checkpoints.py",
-         "--ckpts", ",".join(RESCORE_CKPTS), "--ref", REF,
-         "--deals", "1200", "--threads", "8",
-         "--anchor", "dushan_big_s11", "--out", "reports/plan_c_rescore.json",
-         "--no-per-deal"],
-        cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    # stderr 落盘而不是丢弃：复评失败时能直接看到原因（原先 DEVNULL 让失败静默）
+    with open(err_log, "wb") as errf:
+        subprocess.run(
+            [PY, "scripts/score_checkpoints.py",
+             "--ckpts", ",".join(RESCORE_CKPTS), "--ref", REF,
+             "--deals", "1200", "--threads", str(args.threads),
+             "--anchor", "dushan_big_s11", "--out", "reports/plan_c_rescore.json",
+             "--no-per-deal"],
+            cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=errf)
     rows = {}
     if out_json.exists():
         sc = json.loads(out_json.read_text(encoding="utf-8"))
@@ -164,7 +180,7 @@ def main() -> int:
                 f"± {r.get('vs_anchor_ci95', float('nan')):.3f}  {r.get('verdict', '')}")
 
         # H1 / H2 判读（前置声明见本文件 docstring）
-        a = rows.get(TAG) or {}
+        a = rows.get(TAG_FILE) or {}
         b = rows.get("dushan_b2_p_abc") or {}
         if a and b:
             diff = (a.get("vs_anchor") or 0.0) - (b.get("vs_anchor") or 0.0)
@@ -180,7 +196,13 @@ def main() -> int:
             say(f"  [判读] C3 − p_abc = {diff:+.3f}（保守 95% CI [{lo:+.3f}, "
                 f"{diff + 1.96 * se:+.3f}]）→ {verdict}")
     else:
-        say("复评未产出 json")
+        say("复评未产出 json —— 子进程 stderr 末尾：")
+        try:
+            tail = err_log.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-6:]
+            for ln in tail:
+                say("    " + ln)
+        except Exception as e:
+            say(f"    （读取 {err_log.name} 失败：{e}）")
 
     SUMMARY.write_text(json.dumps(
         {"train": train, "rescore": rows, "anchor": "dushan_big_s11",

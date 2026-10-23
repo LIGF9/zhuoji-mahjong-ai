@@ -25,7 +25,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from zhuoji.dushan import DushanConfig, DushanGame  # noqa: E402
-from zhuoji.net import build_model, build_from_ckpt, net_config_from_ckpt  # noqa: E402
+from zhuoji.encoder import dims_for_version  # noqa: E402
+from zhuoji.net import (  # noqa: E402
+    NetConfig, build_model, build_from_ckpt, net_config_from_ckpt,
+    warm_start_from_v1)
 from zhuoji.vcollect import collect_vectorized  # noqa: E402
 
 
@@ -48,13 +51,54 @@ def main() -> int:
     ap.add_argument("--out", default=str(ROOT / "data" / "bc_dushan_s7.npz"))
     ap.add_argument("--encoder", choices=["auto", "v1", "v2"], default="auto",
                     help="生成数据时用哪版编码器。auto=跟随教师模型自带版本")
+    ap.add_argument("--label", choices=["argmax", "sample"], default="argmax",
+                    help="记进数据的标签用哪种动作。argmax=教师的贪心动作（默认，"
+                         "给 BC 预热用：对局仍按温度采样保证覆盖面，但学习目标"
+                         "是教师的确定策略，**不把采样噪声当目标**）；"
+                         "sample=历史行为，按温度采样的动作")
     args = ap.parse_args()
 
     torch.set_num_threads(args.threads)
-    model, cfg, enc_v = load_model(args.model)
+    ck_path = args.model
+    model, cfg, enc_v = load_model(ck_path)
     if args.encoder != "auto":
         enc_v = int(args.encoder[1:])
-    print(f"教师模型 {args.model}  网络 {cfg}  编码器 v{enc_v}  "
+
+    # ---- 版本对齐：这是本脚本最容易踩的坑 ----------------------------------
+    # `vcollect._advance()` 里版本与包掩码**优先取模型自带属性**
+    # （`getattr(mdl, "encoder_version", slot.enc_version)`）——这是为了跨代
+    # 对手池能混坐 v1/v2 而设计的。于是只把 `encoder_version` 传进
+    # `collect_vectorized()` 是**无效的**：s11 这类 v1 检查点自带
+    # `encoder_version = 1`，会把请求的 v2 直接盖掉，最终生成一份
+    # "标着 encoder_version=2、实际是 15 通道 v1" 的数据（train_bc 会在
+    # 通道数断言上炸，或更糟：静默训出一个错误的网络）。
+    #
+    # 正确做法是把模型**真的升级到 v2 结构**再采集：用零初始化热启动
+    # （`new_init="zero"`），新通道权重为 0 ⇒ 前向输出与 v1 逐位相同 ⇒
+    # 教师的下法完全不变，而观测变成真正的 v2（31 通道 / 98 全局维）。
+    # 于是"策略来自 s11、观测来自 v2"这两个诉求同时满足。
+    src_v = int(getattr(model, "encoder_version", 1))
+    if enc_v != src_v:
+        ck = torch.load(ck_path, map_location="cpu", weights_only=False)
+        if enc_v < src_v:
+            raise SystemExit(f"不支持从 v{src_v} 降到 v{enc_v} 采集数据")
+        # 先按目标版本**建出 v2 骨架**，再把 v1 权重灌进去。
+        # （warm_start_from_v1 只负责搬运，它不会替你换形状：
+        #   直接灌进 v1 形状的模型上会"全部整样复制、部分复制为空"，
+        #   然后前向在 31 通道输入上炸掉。）
+        n_ch, g_dim = dims_for_version(enc_v)
+        cfg = NetConfig(cfg.channels, cfg.blocks, cfg.hidden, global_dim=g_dim,
+                        in_channels=n_ch, spatial_head=cfg.spatial_head)
+        model = build_model(cfg)
+        info = warm_start_from_v1(model, ck, new_init="zero")
+        print(f"[warm] {ck_path}（v{src_v}）→ v{enc_v}：零初始化热启动，"
+              f"原样复制 {info['copied']} / 部分复制 {info['partial']}；"
+              f"输出与 v{src_v} 逐位相同 => 教师行为不变，仅观测升级")
+    model.encoder_version = enc_v
+    model.encoder_packs = None      # 数据里保留**全开**的 v2 特征，掩码留给训练侧
+    model.eval()
+
+    print(f"教师模型 {ck_path}  网络 {cfg}  编码器 v{enc_v}  "
           f"参数量 {model.n_params():,}")
     print(f"目标 {args.games} 局，温度 {args.temperature}，教师概率 {args.teacher_prob}")
 
@@ -69,7 +113,7 @@ def main() -> int:
             reward_scale=1.0, teacher_prob=args.teacher_prob,
             threads=max(2, args.threads // 2), snapshots=[], past_prob=0.0,
             game_cls=DushanGame, config_cls=DushanConfig, want_traj=True,
-            encoder_version=enc_v)
+            encoder_version=enc_v, label_mode=args.label)
         for (tiles, glob, mask, head, act, seat, gi) in traj:
             T.append(tiles.astype(np.float16))
             G.append(glob.astype(np.float16))

@@ -14,6 +14,7 @@ wall clock 继续走）。``after_a4_plan_c.py`` 缺了 A4 脚本里那段防休
 import ctypes
 import sys
 import time
+from pathlib import Path
 
 import psutil
 
@@ -36,10 +37,15 @@ def set_state(flags: int) -> int:
 
 def targets_alive() -> list:
     alive = []
+    me = Path(__file__).name          # keep_awake.py —— 别把自己算成目标
     for p in psutil.process_iter(["cmdline"]):
         cl = list(p.info.get("cmdline") or [])
-        # cl[1] 是脚本路径；只看第 2 段，绝不匹配本守护进程自己
-        if len(cl) > 1 and any(cl[1].endswith(t) for t in TARGETS):
+        # 必须扫**全部**参数，不能只看 cl[1]：训练是用 `python -u .../selfplay.py ...`
+        # 起的（-u 是第 2 段），旧实现 `cl[1].endswith(t)` 于是永远匹配不到 ——
+        # 守护 5 分钟后自退，防休眠形同虚设（2026-10-12 实测复现）。
+        if any(Path(str(a)).name == me for a in cl):
+            continue
+        if any(str(a).endswith(t) for a in cl for t in TARGETS):
             alive.append(p.pid)
     return alive
 

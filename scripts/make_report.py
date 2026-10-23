@@ -165,14 +165,14 @@ def compute_data_stats(path: Path) -> dict:
         return {}
     d = np.load(path)
     head = d["head"]
-    names = ["discard（出牌/自摸胡）", "self_kong（闷豆/爬坡豆）", "respond（碰/点豆/胡/过）"]
+    names = ["discard（出牌/自摸胡）", "self_kong（暗杠/补杠）", "respond（碰/点杠/胡/过）"]
     out = {"数据文件大小": f"{path.stat().st_size / 1024 / 1024:.1f} MB"}
     out["总样本数（决策点）"] = int(len(head))
     for i, nm in enumerate(names):
         out[f"动作头 {nm}"] = int((head == i).sum())
     resp = head == 2
     if resp.any():
-        for idx, nm in enumerate(["过", "碰", "点豆", "胡"]):
+        for idx, nm in enumerate(["过", "碰", "点杠", "胡"]):
             out[f"  响应动作「{nm}」"] = int(((head == 2) & (d["act"] == idx)).sum())
     val = d["value"]
     out["终局得分均值 / 标准差"] = f"{val.mean():.3f} / {val.std():.3f}"

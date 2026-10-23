@@ -39,9 +39,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import statistics as st
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +52,7 @@ sys.path.insert(0, str(ROOT))
 import torch  # noqa: E402
 
 from zhuoji.agent import NetAgent  # noqa: E402
-from zhuoji.bots import TEACHER_STYLES, HeuristicBot  # noqa: E402
+from zhuoji.bots import TEACHER_STYLES, HeuristicBot, RandomBot  # noqa: E402
 from zhuoji.dushan import DushanConfig, DushanGame  # noqa: E402
 from zhuoji.net import build_model, build_from_ckpt, net_config_from_ckpt  # noqa: E402
 
@@ -85,6 +87,12 @@ def make_opponent(spec: str, seat_seed: int):
         b = HeuristicBot(seed=seat_seed, weights=TEACHER_STYLES[style])
         b.name = spec
         return b
+    # 随机基线：强度分解里的"地板"参照。历史上只在训练内评测里用过，
+    # 这里补上是为了让"全面落后 vs 只在对抗型局面落后"能有第三条参照线。
+    if spec == "random" or spec.startswith("random:"):
+        b = RandomBot(seed=seat_seed)
+        b.name = spec
+        return b
     stem = spec.split(":", 1)[1] if spec.startswith("net:") else spec
     return NetAgent(load(stem), seed=seat_seed, temperature=0.0, name=spec)
 
@@ -93,6 +101,62 @@ def _wrap(bot):
     def f(game):
         return bot.choose(game)
     return f
+
+
+def _init_worker(worker_threads: int) -> None:
+    """子进程初始化。
+
+    **单线程**是刻意的：本负载是「小张量 + 海量 Python 调用」（实测 2 副牌里
+    ``_call_impl`` 被调 10192 次，单次 ``conv2d`` 只有几十微秒），torch 的
+    intra-op 线程池在这里同步开销大于收益 —— 实测 ``threads=1`` 44 ms/局，
+    ``threads=8`` 75 ms/局、``threads=24`` 90 ms/局，**线程越多越慢**。
+    真正可用的并行度在「进程 × 副牌」这一维。
+    """
+    torch.set_num_threads(max(1, int(worker_threads)))
+    _MODELS.clear()
+
+
+def _deal_scores(r: int, ckpts: list[str], refs: list[str],
+                 seed0: int) -> tuple[int, dict[str, float]]:
+    """算「第 r 副牌」上各检查点的分值：4 个座位各坐一遍再取均值。
+
+    只依赖 ``(r, ckpts, refs, seed0)``，与前后副牌**没有任何共享状态**
+    （对手种子由 ``_seed(r, shift, slot, spec)`` 显式推出，检查点用 seed=0）。
+    正因如此，按副切分到多个进程后结果与单进程**逐位相同** —— 并行只改变
+    谁来算，不改变算什么。
+    """
+    deal_seed = seed0 + r * 1013
+    # 每副牌换一次对手的座位排布，避免某个对手长期坐在同一侧
+    opp_order = [refs[(i + r) % 3] for i in range(3)]
+    rot: dict[str, list[float]] = {c: [] for c in ckpts}
+    for shift in range(4):
+        free = [s for s in range(4) if s != shift]
+        for c in ckpts:
+            # 每个检查点都重建一次对手：有状态的教师（带 noise 的 rng）必须拿到
+            # 同一个初始种子，否则它会因为上一个检查点的走法不同而漂到别的随机流上，
+            # 「共用随机数」的前提就破了。
+            seat_agents = [None] * 4
+            for k, slot in enumerate(free):
+                spec = opp_order[k]
+                seat_agents[slot] = make_opponent(spec, _seed(r, shift, slot, spec))
+            seat_agents[shift] = NetAgent(load(c), seed=0, temperature=0.0, name=c)
+            game = DushanGame(DushanConfig(), seed=deal_seed)
+            res = game.play([_wrap(a) for a in seat_agents])
+            rot[c].append(res["deltas"][shift])
+    return r, {c: st.mean(rot[c]) for c in ckpts}
+
+
+def auto_workers(cap: int = 16) -> int:
+    """默认并行度：按核数取，但不超过 cap。
+
+    每个 worker 实测常驻 ≈0.45 GB（6 个模型全载入），16 个 ≈7 GB，在 31.8 GB
+    的机器上留足余量；再往上加，调度抖动与内存换页会吃掉收益。
+    """
+    try:
+        n = os.cpu_count() or 1
+    except Exception:
+        n = 1
+    return max(1, min(cap, n))
 
 
 def summarize(per_deal: dict[str, list[float]], anchor: str) -> list[dict]:
@@ -125,42 +189,73 @@ def summarize(per_deal: dict[str, list[float]], anchor: str) -> list[dict]:
 
 
 def score(ckpts: list[str], refs: list[str], deals: int, seed0: int,
-          threads: int, anchor: str, progress_every: int = 50) -> dict:
+          threads: int, anchor: str, progress_every: int = 50,
+          workers: int = 1, worker_threads: int = 1) -> dict:
+    """共用牌池配对评分。
+
+    ``workers=1`` 走单进程路径（与历史行为逐位一致）；``workers>1`` 把**副**
+    切分给进程池 —— 每副牌彼此独立，所以两种路径的数值结果相同，差别只在墙钟
+    时间（1200 副 6 模型实测：单进程 139.6 分 → 多进程数分钟）。
+
+    多进程时每个 worker 固定 ``worker_threads``（默认 1）：见 ``_init_worker``
+    的说明，torch intra-op 多线程在本负载上是负优化。
+    """
     if len(refs) != 3:
         raise SystemExit(f"--ref 需要 3 个对手（用 | 分隔），当前 {len(refs)} 个")
-    torch.set_num_threads(threads)
+    # 先在父进程把模型都加载一遍：一是失败要快速暴露（路径写错就别开进程池），
+    # 二是单进程路径直接用这份缓存。
     models = {c: load(c) for c in ckpts}
 
     per_deal: dict[str, list[float]] = {c: [] for c in ckpts}
+    per_deal_r: dict[int, dict[str, float]] = {}
     t0 = time.time()
+    workers = max(1, int(workers))
 
-    for r in range(deals):
-        deal_seed = seed0 + r * 1013
-        # 每副牌换一次对手的座位排布，避免某个对手长期坐在同一侧
-        opp_order = [refs[(i + r) % 3] for i in range(3)]
-        rot_scores: dict[str, list[float]] = {c: [] for c in ckpts}
-        for shift in range(4):
-            free = [s for s in range(4) if s != shift]
+    def _progress(done: int) -> None:
+        if not (progress_every and done % progress_every == 0):
+            return
+        el = time.time() - t0
+        eta = el / done * (deals - done) / 60
+        lead = max(ckpts, key=lambda c: st.mean(per_deal[c]) if per_deal[c] else 0.0)
+        print(f"[进度 {done}/{deals}] 已用 {el / 60:.1f} 分，"
+              f"预计剩余 {eta:.0f} 分；暂列第一 {lead}", flush=True)
+
+    if workers == 1:
+        # ---- 单进程（历史路径，逐位复现旧结果）----
+        torch.set_num_threads(threads)
+        for r in range(deals):
+            _, vals = _deal_scores(r, ckpts, refs, seed0)
             for c in ckpts:
-                # 每个检查点都重建一次对手：有状态的教师（带 noise 的 rng）必须拿到
-                # 同一个初始种子，否则它会因为上一个检查点的走法不同而漂到别的随机流上，
-                # 「共用随机数」的前提就破了。
-                seat_agents = [None] * 4
-                for k, slot in enumerate(free):
-                    spec = opp_order[k]
-                    seat_agents[slot] = make_opponent(spec, _seed(r, shift, slot, spec))
-                seat_agents[shift] = NetAgent(models[c], seed=0, temperature=0.0, name=c)
-                game = DushanGame(DushanConfig(), seed=deal_seed)
-                res = game.play([_wrap(a) for a in seat_agents])
-                rot_scores[c].append(res["deltas"][shift])
-        for c in ckpts:
-            per_deal[c].append(st.mean(rot_scores[c]))
-        if progress_every and (r + 1) % progress_every == 0:
-            el = time.time() - t0
-            eta = el / (r + 1) * (deals - r - 1) / 60
-            lead = max(ckpts, key=lambda c: st.mean(per_deal[c]))
-            print(f"[进度 {r + 1}/{deals}] 已用 {el / 60:.1f} 分，"
-                  f"预计剩余 {eta:.0f} 分；暂列第一 {lead}", flush=True)
+                per_deal[c].append(vals[c])
+            _progress(r + 1)
+    else:
+        # ---- 多进程（按副切分）----
+        torch.set_num_threads(1)
+        print(f"[并行] {workers} 个进程 × {worker_threads} 线程/进程"
+              f"（按副切分；结果与单进程一致）", flush=True)
+        with ProcessPoolExecutor(max_workers=workers, initializer=_init_worker,
+                                 initargs=(worker_threads,)) as ex:
+            futs = {ex.submit(_deal_scores, r, ckpts, refs, seed0): r
+                    for r in range(deals)}
+            done = 0
+            running: dict[str, list[float]] = {c: [] for c in ckpts}  # 进度展示用
+            for fu in as_completed(futs):
+                r_done, vals = fu.result()
+                per_deal_r[r_done] = vals
+                for c in ckpts:
+                    running[c].append(vals[c])
+                done += 1
+                if progress_every and done % progress_every == 0:
+                    el = time.time() - t0
+                    eta = el / done * (deals - done) / 60
+                    lead = max(ckpts, key=lambda c: st.mean(running[c]))
+                    print(f"[进度 {done}/{deals}] 已用 {el / 60:.1f} 分，"
+                          f"预计剩余 {eta:.0f} 分；暂列第一 {lead}", flush=True)
+        # 按副号顺序回填，保证与单进程的 per_deal 完全同序（配对比较依赖它）
+        for r in range(deals):
+            vals = per_deal_r[r]
+            for c in ckpts:
+                per_deal[c].append(vals[c])
 
     rows = summarize(per_deal, anchor)
     return {
@@ -170,6 +265,7 @@ def score(ckpts: list[str], refs: list[str], deals: int, seed0: int,
         "deals": deals,
         "games_per_ckpt": deals * 4,
         "elapsed_min": round((time.time() - t0) / 60, 2),
+        "workers": workers,
         "rows": rows,
         "per_deal": {c: per_deal[c] for c in ckpts},
     }
@@ -183,7 +279,13 @@ def main() -> int:
                     help="三个对手，用 | 分隔，支持 net:xxx 或 teacher:风格")
     ap.add_argument("--deals", type=int, default=600)
     ap.add_argument("--seed", type=int, default=31337)
-    ap.add_argument("--threads", type=int, default=8)
+    ap.add_argument("--threads", type=int, default=8,
+                    help="单进程路径的 torch 线程数（仅 --workers 1 时生效）")
+    ap.add_argument("--workers", type=int, default=0,
+                    help="按副并行的进程数；0 = 自动（核数，上限 16）。"
+                         "每副牌彼此独立，并行不改变数值结果，只改变墙钟时间")
+    ap.add_argument("--worker-threads", type=int, default=1,
+                    help="多进程时每个 worker 的 torch 线程数（默认 1，实测多线程是负优化）")
     ap.add_argument("--anchor", default="",
                     help="作为比较基准的检查点（默认取 --ckpts 的第一个）")
     ap.add_argument("--out", default="reports/checkpoint_scores.json")
@@ -197,11 +299,14 @@ def main() -> int:
     if anchor not in ckpts:
         raise SystemExit(f"--anchor {anchor} 不在 --ckpts 里")
 
-    res = score(ckpts, refs, args.deals, args.seed, args.threads, anchor)
+    workers = args.workers if args.workers > 0 else auto_workers()
+    res = score(ckpts, refs, args.deals, args.seed, args.threads, anchor,
+                workers=workers, worker_threads=args.worker_threads)
 
     print(f"\n对手（三个座位）：{' + '.join(res['ref_field'])}")
     print(f"牌池 seed={res['seed0']}，{res['deals']} 副 × 4 座位 = "
           f"{res['games_per_ckpt']} 局/检查点；共用牌池 + 共用对手")
+    print(f"并行度：{res.get('workers', 1)} 进程 × {args.worker_threads} 线程")
     print(f"\n{'检查点':<26}{'分值水平':>12}{'±95%CI':>10}"
           f"{'vs 锚点':>11}{'±95%CI':>10}   结论")
     for r in res["rows"]:

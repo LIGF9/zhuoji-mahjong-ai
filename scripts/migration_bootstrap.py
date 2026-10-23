@@ -32,7 +32,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 # 旧机器上残留的解释器绝对路径（任意 ``...python.exe`` 都视为待替换目标）
-PY_RE = re.compile(r'^(PY\s*=\s*r?)"[^"]*python\.exe"', re.MULTILINE)
+#
+# 注意 group(1) **只捕获 ``PY = ``**，前缀 r 用 ``r*`` 吞掉（不是 ``r?``）：
+# 若把 ``r?`` 写进捕获组再在替换串里补一个 ``r``，源本是 ``PY = r"..."`` 的
+# 文件会被改写成 ``PY = rr"..."``（2026-10-11 在 14700K 上实际踩到，
+# 7 个脚本全部 SyntaxError）。用 ``r*`` 还有一个好处：它**能反向修复**
+# 已经被写成 ``rr"..."`` 的文件，重跑一次 --fix-paths 即可自愈。
+PY_RE = re.compile(r'^(PY\s*=\s*)r*"[^"]*python\.exe"', re.MULTILINE)
 JS_ROOT_RE = re.compile(r"const ROOT\s*=\s*'[^']*';")
 
 #: 修路径时扫描的脚本范围（曾经只扫 shift_chain_*，漏掉 4 个新脚本）
@@ -183,6 +189,21 @@ def check(verbose: bool = True) -> int:
                         + "  → 运行 --fix-paths")
     else:
         print("路径      : 无旧机器残留")
+
+    # ---- 脚本语法：被改写的 .py 必须仍能解析 ----
+    # 这一项是补上 2026-10-11 的真实盲区：fix-paths 写出了 ``PY = rr"..."``，
+    # 而旧版 check() 只 import 库模块（zhuoji/*）、从不解析 scripts/*.py，
+    # 于是"自检全绿"却是 7 个脚本全 SyntaxError。改写过的文件必须过一遍 compile()。
+    broken = []
+    for f in _py_targets():
+        try:
+            compile(_read(f), str(f), "exec")
+        except SyntaxError as exc:
+            broken.append(f"{_rel(f)}:{exc.lineno}: {exc.msg}")
+    if broken:
+        problems.append("脚本语法错误: " + "; ".join(broken))
+    else:
+        print(f"脚本语法  : OK（{len(_py_targets())} 个 .py 全部可解析）")
 
     # ---- 功能自测：建模型 + 走一步前向 + 引擎落一局 ----
     if not problems:

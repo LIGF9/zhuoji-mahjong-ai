@@ -2,7 +2,7 @@
 const fs = require('fs');
 const { JSDOM } = require('jsdom');
 
-const ROOT = 'C:/Users/hyzor/WorkBuddy/2026-09-30-12-49-43/zhuoji-mahjong';
+const ROOT = 'C:/Users/LIGF/WorkBuddy/2026-09-30-12-49-43/zhuoji-mahjong';
 const html = fs.readFileSync(ROOT + '/web/static/dushan.html', 'utf8');
 const errs = [];
 
@@ -13,6 +13,10 @@ const dom = new JSDOM(html, {
   pretendToBeVisual: true,
   url: 'http://127.0.0.1:8770/static/dushan.html',
   beforeParse(w) {
+    // jsdom 未实现 matchMedia（fitStage 用它判定触屏）→ 补一个「非触屏」桩
+    if (!w.matchMedia) w.matchMedia = q => ({ matches: false, media: String(q),
+      onchange: null, addEventListener() {}, removeEventListener() {},
+      addListener() {}, removeListener() {}, dispatchEvent: () => false });
     // 只喂 /api/meta（填充 TILES），其余请求挂起，让 boot() 停住但不抛未捕获异常
     w.fetch = (url) => {
       if (String(url).includes('/api/meta')) {
@@ -34,7 +38,8 @@ const w = dom.window;
 // ---------------------------------------------------------------------------
 function checkOverview(st, cards, htmlSrc) {
   const relOf = s => ((s - st.my_seat) % 4 + 4) % 4;
-  const nameOf = s => (st.players[relOf(s)] || {}).name || "";
+  // 2026-10-11 起名字与头像绑定：显示名 = 派生名（头像名[+模型缩写]），与前端同口径
+  const nameOf = s => w.eval(`playerName(${relOf(s)}, ${JSON.stringify((st.players[relOf(s)] || {}).name || "")})`);
   const msgs = [];
   let ok = cards.length === 4;
   // 展示顺序与前端同口径：胡牌局 = 赢家、我、其余两家；流局 0..3
@@ -45,7 +50,7 @@ function checkOverview(st, cards, htmlSrc) {
   // 顺序断言：胡牌局第一张卡必须是赢家
   if (res0.type === "win") {
     const firstNm = cards[0] ? cards[0].querySelector('.nm').textContent : "";
-    const wantNm = st.players[order[0]].name;
+    const wantNm = nameOf(order[0]);
     if (!firstNm.includes(wantNm)) { ok = false; msgs.push(`首卡=${firstNm} 应为赢家 ${wantNm}`); }
   }
 
@@ -285,6 +290,77 @@ setTimeout(() => {
   } catch (e) {
     bad++;
     console.log(`构造态 | RENDER THREW: ${String(e.stack).split('\n').slice(0, 7).join('\n    ')}`);
+  }
+
+  console.log(`\n=== 7b. 开局鸡牌特效（实盘换局：立刻显示本局鸡牌 + 真播特效 + 请服务端暂停） ===`);
+  // 2026-10-13 用户反馈「开局不显示本局鸡牌反而卡一下，然后第一张牌已经打完」：
+  // ① 实盘从来没调用过 kaijuJiFx（只扣了 3 秒帧，特效根本没播）；② 扣牌期间连
+  // 左上角「本局鸡牌」都没更新；③ 服务端没停，3 秒里 AI 已经打掉好几张。
+  // 这里在 jsdom 里把 LIVE_HOLD 打开，走一遍真实换局链路。
+  try {
+    const mid2 = JSON.parse(fs.readFileSync(ROOT + '/reports/ui_fixtures_mid.json', 'utf8'))[0].state;
+    const st2 = JSON.parse(JSON.stringify(mid2));
+    st2.hand_index = 7; st2.over = false; st2.ji_tiles = [9, 12, 14];
+    w.__kaijuSt = st2;
+    const holdCalls = [];
+    w.__holdCalls = holdCalls;
+    const oldFetch = w.fetch;
+    w.fetch = (url, opt) => {
+      if (String(url).includes('/api/hold')) {
+        try { holdCalls.push(JSON.parse((opt && opt.body) || '{}')); } catch (e) {}
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, hold: true }) });
+      }
+      return oldFetch(url, opt);
+    };
+    const r = w.eval(`(() => {
+      SID = "TESTKAJ"; SET.kaijuFxDur = 3; LIVE_HOLD = true; KAIJU_FX_KEY = "";
+      SERVER_HOLD = false; clearTimeout(FLOW_HOLD_TM); KAIJU_HELD = null; KAIJU_HOLD_KEY = null;
+      const held = maybeKaijuFx(window.__kaijuSt);
+      const kj = document.getElementById("kaiju-info");
+      const fx = document.getElementById("kaiju-fx");
+      const wt = fx.querySelector(".kj-word");
+      return { held: held, kjOn: kj.classList.contains("on"),
+               kjN: kj.querySelectorAll("img").length,
+               fxOn: fx.classList.contains("on"),
+               fxN: fx.querySelectorAll(".kj-tiles img").length,
+               fxWord: wt ? wt.textContent : "",
+               serverHold: SERVER_HOLD, locked: !!KAIJU_HELD };
+    })()`);
+    const post0 = holdCalls[0] || {};
+    let ok7 = 0, bad7 = 0;
+    const ck7 = (name, cond, extra) => {
+      if (cond) ok7++; else bad7++;
+      console.log(`   ${cond ? 'OK  ' : 'FAIL'}  ${name}${extra ? ' | ' + extra : ''}`);
+    };
+    ck7('换局 → 扣牌，且左上角「本局鸡牌」立刻换成新一局（3 张）',
+      r.held === true && r.kjOn && r.kjN === 3 && r.locked === true, JSON.stringify(r));
+    ck7('换局 → 真的播「本局鸡牌」全屏特效（此前实盘压根没调用 kaijuJiFx）',
+      r.fxOn === true && r.fxN === 3 && r.fxWord === '本局鸡牌',
+      `on=${r.fxOn} tiles=${r.fxN} word=${r.fxWord}`);
+    ck7('换局 → 同时请求服务端暂停推进（/api/hold on:true）',
+      r.serverHold === true && post0.on === true && post0.sid === 'TESTKAJ',
+      JSON.stringify(holdCalls));
+    const r2 = w.eval(`(() => {
+      KAIJU_HOLD_UNTIL = 0; KAIJU_HOLD_LIMIT = 0;    // 视为特效已经播完
+      releaseKaijuHold();
+      return { locked: !!KAIJU_HELD, serverHold: SERVER_HOLD,
+               fxOn: document.getElementById("kaiju-fx") === null ? null : true };
+    })()`);
+    ck7('特效播完 → 铺开牌局并放行服务端（/api/hold on:false）',
+      r2.locked === false && r2.serverHold === false &&
+      !!holdCalls[1] && holdCalls[1].on === false,
+      JSON.stringify(holdCalls));
+    ck7('非轮询渲染（夹具/回执）不扣牌：LIVE_HOLD 闸门只在轮询路径开',
+      /if \(!LIVE_HOLD\) return false;/.test(html) && /LIVE_HOLD = true;/.test(html) &&
+      /try \{ render\(st\); \} finally \{ LIVE_HOLD = false; \}/.test(html));
+    ck7('回放帧不触发实盘扣牌，且顺手放行服务端',
+      /if \(RP_MODE\) \{ setFlowHold\(false\); return false; \}/.test(html));
+    ck7('关页兜底：pagehide 放行服务端',
+      /window\.addEventListener\("pagehide", \(\) => setFlowHold\(false, true\)\)/.test(html));
+    ok += ok7; bad += bad7;
+  } catch (e) {
+    bad++;
+    console.log(`   开局鸡牌特效检查 THREW: ${e.message}`);
   }
 
   console.log(`\nok=${ok} threw=${bad}`);
