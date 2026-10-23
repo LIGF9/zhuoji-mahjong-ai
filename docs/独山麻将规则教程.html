@@ -910,7 +910,10 @@ hr { border: none; border-top: 1px solid var(--line); margin: 34px 0; }
 </table>
 <hr />
 <h2>14. 所有可调参数与开关</h2>
-<p>网页「设置 → 规则开关 / 分值表 / 未听牌包赔」里能改的，以及它们的默认值：</p>
+<p>网页「设置」分六页：<strong>玩家身份 / 出牌节奏 / 大师推荐 / 界面显示 / 规则开关（含未听牌包赔）/ 分值表</strong>。
+「大师推荐」是从原来的「出牌与推荐」里抽出来的独立一页（总开关 / 策略 / 出现时间 /
+推荐理由 / 自动上浮）；「出牌节奏」只剩超时自动操作与对手出牌节奏。
+大师建议面板<strong>只在轮到你决策时显示</strong>，打出牌后立刻收起，下一次轮到你再出现。</p>
 <h3>14.1 分值表（单位：鸡）</h3>
 <table>
 <thead>
@@ -1052,7 +1055,7 @@ hr { border: none; border-top: 1px solid var(--line); margin: 34px 0; }
 </tr>
 </tbody>
 </table>
-<h3>14.3 未听牌包赔</h3>
+<h3>14.3 未听牌包赔（在「规则开关」页内，作为独立的第二组）</h3>
 <table>
 <thead>
 <tr>
@@ -1089,6 +1092,37 @@ hr { border: none; border-top: 1px solid var(--line); margin: 34px 0; }
 </tr>
 </tbody>
 </table>
+<h3>14.4 辅助功能（「界面显示」页）</h3>
+<table>
+<thead>
+<tr>
+<th>设置项</th>
+<th>参数名（localStorage）</th>
+<th>默认</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>打牌听牌提示</td>
+<td><code>dushan_tingtip</code></td>
+<td><strong>开</strong></td>
+<td>点击手牌上浮（候选打出牌）时，若打出这张牌就听牌，弹出 toast：听什么牌（牌面小图）+ 各还剩几张（0 张标红）；有牌型时一并标注。接口：<code>GET /api/ting</code></td>
+</tr>
+<tr>
+<td>结算单人视角布局</td>
+<td><code>dushan_reslayout</code></td>
+<td><code>new</code>（新版）</td>
+<td>新版在「共有板块」与「各家独有项」之上各补一行该玩家的 头像+手牌+标签（与总览同一套渲染，只少名字与总分；头像放大金边，下方表格首列左侧与头像右侧平齐，手牌区与明细同底色连成一个板块）；<code>old</code> 为旧版纯表格。两种布局的表格都已省去表头行、「各家独有项」提示行与末行「本局总计」，改为<strong>卡片首行居中显示「本局结算总计 ±X」</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>其他界面细节：左上角按钮竖排（数据统计 / 对局记录 / 局数一列，牌局流水、设置、
+透视、声音四个图标折叠成「⋯」，点击展开）；窗口宽度 1024~1200px 时「我的信息板块」
+自动抬到手牌左上方，头像与新摸进的牌不再出屏；设置弹窗切换分类带高度过渡；
+分值表底部的鸡溢价说明为小字弱色说明块。</p>
+</blockquote>
 <hr />
 <h2>附：术语中英对照</h2>
 <table>
