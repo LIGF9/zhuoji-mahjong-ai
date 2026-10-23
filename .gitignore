@@ -90,3 +90,6 @@ _archive_baks/
 
 # === 单 HTML 加强语料（可由 test/export_*.py 再生成，不入库）===
 web/standalone/test/*.json
+
+# === ORT 运行时二进制（scripts/fetch_ort_runtime.py 一键恢复）===
+web/standalone/lib/
