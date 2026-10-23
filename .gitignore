@@ -84,3 +84,6 @@ web/history/
 Thumbs.db
 desktop.ini
 *.swp
+
+# === 本地代码备份归档（C 阶段整理产物，不入库）===
+_archive_baks/
