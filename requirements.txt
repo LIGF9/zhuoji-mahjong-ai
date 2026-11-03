@@ -1,0 +1,8 @@
+# 独山麻将 AI —— 运行依赖（只含跑游戏所需）
+# Python 3.10+（开发环境 3.13）
+
+torch>=2.6          # Apple Silicon 自动用 MPS；纯 CPU 也能跑，只是慢些
+numpy>=2.0
+
+# 可选：推理加速（CoreML / CPU EP）。不装也能玩，自动回落 MPS/CPU。
+# onnxruntime>=1.18
