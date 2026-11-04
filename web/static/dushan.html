@@ -1045,6 +1045,12 @@ html.replaying #timer::after {
   border-bottom: 1px solid rgba(255,255,255,.06); }
 .setgroup .gbody .setrow:last-of-type { border-bottom: none; }
 .setgroup .gbody select { min-width: 0; width: auto; padding: 5px 9px; }
+/* 「名称 + 下拉框」成对绑定（2026-11-04 第十批反馈）：
+   .gbody .setrow 是 flex-wrap，窄屏时浏览器可能把 select 单独折到下一行，
+   造成「推荐理由 / 推荐出牌指示器颜色」的名称与下拉框分离。把两者包进
+   .pair（内部 nowrap），整对参与外层换行 → 名称与其下拉框永远同一行。 */
+.setrow .pair { display: inline-flex; align-items: center; flex-wrap: nowrap;
+  gap: 4px 10px; min-width: 0; }
 .setgroup.disabled .gbody { opacity: .38; }
 .setgroup.disabled .gbody * { pointer-events: none; }
 /* 参数直接挂在标题行里的功能块（如 grp-timeout：名字+开关 与 超时时间 同一行）：
@@ -3275,6 +3281,64 @@ html.mob #counter-btn, html.mob #ting-btn {
    C) 我的徽标与信息牌错位：删除 avatar-wrap 内重复的 id="me-abadges"，
       杠·通行证 / 报叫 统一走 .ava-side（整卡居中）。
    ================================================================== */
+
+/* ==================================================================
+   第十八轮修订（2026-11-04 晚，用户第十批反馈 · 移动端 UI）
+   ------------------------------------------------------------------
+   A) 碰/杠「横置鸡牌」红点：按牌宽 / 手牌宽等比缩放，与手牌红点协调；
+   B) 设置面板 ×1.2；下拉框与名称同行；开关两两并排；规则页每行两项；
+   C) ⋯ 菜单改 fixed 贴按钮 + 点击外部 / 5 秒超时关闭。
+   ================================================================== */
+
+/* ---- A) 横置鸡牌红点（.mc.heng / 侧家 .mc.vz）------------------------
+   手牌红点固定 8px（.tile-mine .jimark），与手牌宽度构成用户认可的协调比例。
+   横置指示牌的点径应 = 8px × (该牌宽 / 手牌宽)。CSS calc 不支持「长度÷长度」，
+   故由 JS 实测手牌宽后把无量纲系数 --jd-hand-ratio = 8/手牌宽 写到根节点，
+   这里用 `--tm-w × 系数` 得到等比点径（桌面上同样生效）。
+   旧口径 clamp(4.5px, --tm-w*.18, 11px) 在小牌上明显偏大。 */
+.mc.heng .jidots i, .mc.vz .jidots i {
+  --jd: calc(var(--tm-w, 26px) * var(--jd-hand-ratio, .11765));
+}
+.mc.heng .jidots.q4 i, .mc.vz .jidots.q4 i {
+  --jd: calc(var(--tm-w, 26px) * var(--jd-hand-ratio, .11765) * .8);
+}
+
+/* ---- B) 设置面板：宽度 ×1.2（520 → 624）----------------------------
+   横屏手机 96vw 远大于 520，此前被 520 卡住；放宽后下拉框才有空间与名称同行。 */
+html.mob .setmodal { width: min(96vw, 624px) !important; }
+/* 次级参数（推荐理由 / 推荐出牌指示器颜色）：名称与其下拉框**同一行**。
+   上一轮 .lbl.sub2 { flex-basis:100% } 把整块推到下一行，撤销并按更窄面板兜底。 */
+html.mob .setgroup .gbody .setrow .lbl.sub2 { flex-basis: auto; }
+/* 界面显示：听牌提示 + 全局流水 同一行；弃牌颜色 + 记牌器 同一行。
+   给这几行打 .duo-a/.duo-b，两列各占一半，其余行仍独占整行。 */
+html.mob #grid-display { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+html.mob #grid-display > .setrow:not(.duo-a):not(.duo-b) { grid-column: 1 / -1; }
+html.mob #grid-display > .setrow.duo-a { grid-column: 1; }
+html.mob #grid-display > .setrow.duo-b { grid-column: 2; }
+/* 规则开关页：每行两项（下拉紧跟名称，窄栏也放得下） */
+html.mob .setpanes section[data-pane="rule"] .setgrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+/* 两列后每格只有半宽：列宽允许收缩、间距收紧，长标签自动换行不撑破邻格 */
+html.mob .setpanes section[data-pane="rule"] .setgrid .setrow { gap: 4px 8px; }
+html.mob .setpanes section[data-pane="rule"] .setgrid > .setrow:not(.jirow) {
+  grid-template-columns: minmax(0, auto) minmax(0, auto);
+}
+/* 「追加鸡牌」是牌宫格入口（内容较宽），不是开关 —— 仍独占整行 */
+html.mob .setpanes section[data-pane="rule"] .setgrid > .setrow.jirow {
+  grid-column: 1 / -1;
+}
+/* 界面显示两列：每格内「名称 + 控件」同样允许收缩，避免半宽里溢出重叠 */
+html.mob #grid-display > .setrow {
+  min-width: 0; gap: 4px 8px;
+  grid-template-columns: minmax(0, auto) minmax(0, auto);
+}
+
+/* ---- C) ⋯ 菜单：fixed 贴住按钮 --------------------------------------
+   旧规则 `html.mob #nav #nav-more { position:absolute }` 特异性压过后面的
+   `html.mob #nav-more { position:fixed }`，菜单相对 #nav 定位，而 JS 写入的是
+   视口坐标 → 面板被整体推远（用户截图：离按钮 100+ px）。这里同特异性后置覆盖。 */
+html.mob #nav #nav-more { position: fixed; }
 </style>
 </head>
 <body>
@@ -3470,12 +3534,14 @@ html.mob #counter-btn, html.mob #ting-btn {
         <div class="setrow">
           <div class="lbl">推荐策略<span class="q" data-q="轮到你时按此策略计算推荐出牌；= 上面「我」的模型，两处任一改动同步">?</span></div>
           <select id="set-strategy"></select>
-          <div class="lbl sub2">推荐理由<span class="q" data-q="「完整推荐」= 桌面上显示大师建议面板（含讲解、各选项概率与理由）；「一句话推荐」= 只在操作区上方显示一行理由；「仅推荐出牌」= 只把推荐的牌上浮/标记，不显示任何理由文字">?</span></div>
-          <select id="set-reasonmode">
-            <option value="full">完整推荐</option>
-            <option value="brief">一句话推荐</option>
-            <option value="tile">仅推荐出牌</option>
-          </select>
+          <span class="pair">
+            <span class="lbl sub2">推荐理由<span class="q" data-q="「完整推荐」= 桌面上显示大师建议面板（含讲解、各选项概率与理由）；「一句话推荐」= 只在操作区上方显示一行理由；「仅推荐出牌」= 只把推荐的牌上浮/标记，不显示任何理由文字">?</span></span>
+            <select id="set-reasonmode">
+              <option value="full">完整推荐</option>
+              <option value="brief">一句话推荐</option>
+              <option value="tile">仅推荐出牌</option>
+            </select>
+          </span>
         </div>
         <div class="setrow">
           <div class="lbl">出现时间<span class="q" data-q="轮到你后延迟 N 秒才显示推荐（0=立即）；可直接填任意秒数。上浮/指示器都用这一个时间，不再单独设置">?</span></div>
@@ -3503,11 +3569,13 @@ html.mob #counter-btn, html.mob #ting-btn {
             <option value="float">上浮</option>
             <option value="ind">指示器</option>
           </select>
-          <div class="lbl sub2">推荐出牌指示器颜色<span class="q" data-q="推荐形式选「指示器」时，在推荐打出的手牌上方显示的指示器颜色">?</span></div>
-          <select id="set-rec-color">
-            <option value="green">绿</option><option value="yellow">黄</option><option value="red">红</option>
-            <option value="off">关闭</option>
-          </select>
+          <span class="pair">
+            <span class="lbl sub2">推荐出牌指示器颜色<span class="q" data-q="推荐形式选「指示器」时，在推荐打出的手牌上方显示的指示器颜色">?</span></span>
+            <select id="set-rec-color">
+              <option value="green">绿</option><option value="yellow">黄</option><option value="red">红</option>
+              <option value="off">关闭</option>
+            </select>
+          </span>
         </div>
         <div class="setnote">指示器颜色仅当上面的「推荐出牌形式」选<b>指示器</b>时生效。</div>
       </div>
@@ -3592,18 +3660,18 @@ html.mob #counter-btn, html.mob #ting-btn {
     </div>
 
     <h4 class="setsec">界面显示<span class="sechint">立即生效</span></h4>
-    <div class="setgrid">
-      <div class="setrow">
+    <div class="setgrid" id="grid-display">
+      <div class="setrow duo-a">
         <div class="lbl">打牌听牌提示<span class="q" data-q="我的出牌决策点内，在我的弃牌区下方常驻显示当前听什么牌；打出牌后消失">?</span></div>
         <input type="checkbox" id="set-tipon" class="switch">
       </div>
-      <div class="setrow">
+      <div class="setrow duo-b">
         <div class="lbl">全局流水面板<span class="q" data-q="屏幕右上角的牌局流水（可拖动、右下角可调大小）；关闭即整块隐藏">?</span></div>
         <input type="checkbox" id="set-logshow" class="switch">
       </div>
       <!-- 2026-10-12 #84：冲锋鸡/横鸡全屏特效时长可设置（默认 3 秒；0=关闭特效） -->
       <div class="setrow">
-        <div class="lbl">冲锋鸡/横鸡动画<span class="q" data-q="打出冲锋鸡或横鸡时全屏特效的时长；0=关闭特效；改动立即生效">?</span></div>
+        <div class="lbl">冲锋鸡/横鸡动画<span class="q" data-q="打出冲锋鸡或横鸡时全屏特效的时长；0=关闭特效（此时改弹文字提示）；改动立即生效">?</span></div>
         <span class="numrow">
           <input id="set-fxdur" type="number" min="0" max="10" step="0.5" value="3">
           <span class="unit">秒</span>
@@ -3644,12 +3712,18 @@ html.mob #counter-btn, html.mob #ting-btn {
           </span>
         </span>
       </div>
-      <div class="setrow">
+      <div class="setrow duo-a">
         <div class="lbl">最新弃牌指示颜色<span class="q" data-q="在对手刚打出的那张牌上方显示浮动指示器；关闭后不显示">?</span></div>
         <select id="set-ind-color">
           <option value="red">红</option><option value="yellow">黄</option><option value="green">绿</option>
           <option value="off">关闭</option>
         </select>
+      </div>
+      <!-- 记牌器（2026-10-12 用户口径）：桌面按钮的显隐开关，默认**关**。
+           2026-11-04：与「最新弃牌指示颜色」同一行（移动端两列并排）。 -->
+      <div class="setrow duo-b">
+        <div class="lbl">记牌器<span class="q" data-q="桌面手牌右侧的 🧮 按钮（点开看各牌种还剩几张）。默认关闭；打开后按钮出现在我的手牌右侧">?</span></div>
+        <input type="checkbox" id="set-counteron" class="switch">
       </div>
       <!-- 2026-10-12 #86：桌面左上角的「结束本局」按钮迁到这里。
            仍走同一个确认弹窗；对局进行中可用、结束时置灰（render() 里同步）。
@@ -3657,12 +3731,6 @@ html.mob #counter-btn, html.mob #ting-btn {
       <div class="setrow">
         <div class="lbl">结束对局<span class="q" data-q="提前结束当前这一局：本局不计分、不写历史记录，直接开下一局；对局已结束时置灰">?</span></div>
         <button type="button" id="set-endhand" class="setbtn-danger icononly" title="提前结束本局" aria-label="结束对局"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 3.2v8.6"/><path d="M6.6 6.3a8 8 0 1 0 10.8 0"/></svg></button>
-      </div>
-      <!-- 记牌器（2026-10-12 用户口径）：桌面按钮的显隐开关，默认**关**。
-           关掉后手牌右侧那枚 🧮 与它的浮窗一起隐藏。 -->
-      <div class="setrow">
-        <div class="lbl">记牌器<span class="q" data-q="桌面手牌右侧的 🧮 按钮（点开看各牌种还剩几张）。默认关闭；打开后按钮出现在我的手牌右侧">?</span></div>
-        <input type="checkbox" id="set-counteron" class="switch">
       </div>
     </div>
     <!-- 推荐出牌指示颜色已并入「玩家与模型 → 大师推荐」（随推荐出牌形式一起设置） -->
@@ -5840,6 +5908,18 @@ function fitMyRow(melds, slots, hasDraw) {
   html.style.setProperty("--my-scale", (w / 68).toFixed(4));
 }
 
+/* 副露「横置鸡牌」红点与手牌红点等比（2026-11-04 用户口径）：
+   手牌红点固定 8px，手牌宽由 fitMyRow 动态计算（移动端 < 68px）。
+   CSS calc 不支持长度÷长度，故把 8/手牌宽 作为无量纲系数写到根节点，
+   CSS 里 `.mc.heng .jidots i { --jd: calc(var(--tm-w) * var(--jd-hand-ratio)) }`
+   即得到 8px × (该牌宽 / 手牌宽)，与手牌上的红点视觉比例一致。 */
+function syncJiDotScale() {
+  const t = document.querySelector(".tile-mine:not(.ghost)");
+  const w = t ? t.getBoundingClientRect().width : 0;
+  const ratio = w > 0 ? 8 / w : 8 / 68;
+  document.documentElement.style.setProperty("--jd-hand-ratio", ratio.toFixed(5));
+}
+
 function renderHand(st) {
   const meMelds = (st.players[0] && st.players[0].melds) || [];
   const hand = st.hand.slice().sort((a, b) => a - b);
@@ -5897,6 +5977,7 @@ function renderHand(st) {
   }).join("") + '<span class="tile-mine ghost"></span>'.
     repeat(Math.max(0, slots - hand.length - extra));
   setHTML(el("hand"), html);
+  syncJiDotScale();   // 手牌宽可能刚被 fitMyRow 改过 → 重算副露横置鸡牌红点比例
   // 听牌提示条：我的出牌决策点常驻（数据源 = 服务端 my_ting，不再依赖大师推荐；
   // 一直显示到我打出牌为止——pend 一变就自动消失）
   const tb = el("tingbar");
@@ -6008,7 +6089,7 @@ function renderLog(events) {
     lg.dataset.sid = SID; lastShown = events.length; lg.dataset.count = events.length;
   }
   // 新事件音效（2026-10-13 重构）：摸牌/打牌 = 操作音效；出牌牌名 = 读牌（按该家性别）；
-  // 碰/杠 = 操作音效（按该家性别）。冲锋鸡/横鸡/报叫 另弹 toast 播报。
+  // 碰/杠 = 操作音效（按该家性别）。冲锋鸡/横鸡：动画开→动画播报；动画关→toast 播报。
   if (events.length > lastShown) {
     for (let i = Math.max(lastShown, events.length - 4); i < events.length; i++) {
       const e = events[i];
@@ -6026,7 +6107,10 @@ function renderLog(events) {
         }
       }
       if (e.kind === "discard" && (e.ctag === "冲锋鸡" || e.ctag === "横鸡")) {
-        toast(`${logToastName(e.rel)} 打出 ${e.ctag}`, 2200);
+        // 2026-11-04 用户口径：与「冲锋鸡/横鸡动画」互补 —— 动画开（SET.fxDur>0）
+        // 时动画本身已播报，不再弹「XXX 打出 X 鸡」toast；动画关闭（=0）才用 toast 播报。
+        const jiAnimOn = Math.max(0, Number(SET.fxDur) || 0) > 0 && !!TILES[e.tile];
+        if (!jiAnimOn) toast(`${logToastName(e.rel)} 打出 ${e.ctag}`, 2200);
         if (lastShown > 0) jiFx(e.tile, e.ctag);   // N2：全屏特效（普通鸡不触发；首屏回放历史不播）
       } else if (e.kind === "baojiao") {
         // 报叫 = 独山关键公开信息（其弃牌点胡免通行证），单独提示一次
@@ -8860,6 +8944,8 @@ const gateEl = el("gate");
 gateEl.addEventListener("cancel", e => e.preventDefault());   // Esc 不放行，必须满足条件
 /* 顶栏重组（2026-11-02 用户口径）：移动端把除设置外的功能按钮搬进「⋯」的纵向
    菜单；桌面保持原两列布局（按钮搬回原位）。纯 DOM 挪动，不改任何按钮逻辑。 */
+/* ⋯ 菜单 5 秒自动关闭的计时器（第十八轮 C）；提前声明，避免 reflow 时 TDZ */
+let navMoreTimer = null;
 const NAV_MORE_IDS = ["btn-stats", "btn-history", "btn-peek", "btn-sound", "round-chip"];
 /* 第十四轮：⚙ 设置 与 ⋯ 功能坞在移动端脱离导航框，搬到 body 固定定位
    （贴对家面板左缘，位置由 placeTopTools 按实测摆放；桌面原位归还） */
@@ -8868,6 +8954,7 @@ const NAV_HOME = {};
 function navMoreReflow(mob) {
   const box = el("nav-more");
   if (!box) return;
+  if (!mob) closeNavMore();   // 切回桌面：菜单不该残留（按钮也已搬回 #nav）
   NAV_MORE_IDS.forEach(id => {
     const n = el(id);
     if (!n) return;
@@ -8890,13 +8977,41 @@ function navMoreReflow(mob) {
     }
   });
 }
-el("btn-more").onclick = () => {
+/* 第十八轮 C（2026-11-04 第十批反馈）：⋯ 菜单关闭逻辑函数化。
+   旧行为：只有再点一次 ⋯ 或点菜单里的按钮才关；且菜单改 fixed 后被推远。
+   新行为：① 展开时贴在 ⋯ 正下方（fixed）；② 点击菜单/按钮以外的任意区域关闭；
+           ③ 展开 5 秒无操作自动关闭。
+   注意：btn-more 的 click 必须 stopPropagation —— 否则同一次点击冒泡到 document
+   会被当成「外部点击」，刚展开的菜单立刻被关掉（表现为「点不开」）。 */
+function openNavMore() {
   const nav = el("nav");
-  const on = !nav.classList.contains("more-on");
-  if (on) placeNavMore();                // 菜单改 fixed → 每次展开前贴到 ⋯ 按钮下
-  nav.classList.toggle("more-on", on);
-};
-el("nav-more").addEventListener("click", () => el("nav").classList.remove("more-on"));
+  nav.classList.add("more-on");   // 先显示 → box.offsetWidth 才量得到（否则为 0）
+  placeNavMore();                 // 再按实测宽度摆位，右缘不出屏
+  clearTimeout(navMoreTimer);
+  navMoreTimer = setTimeout(closeNavMore, 5000);
+}
+function closeNavMore() {
+  clearTimeout(navMoreTimer);
+  navMoreTimer = null;
+  const nav = el("nav");
+  if (nav) nav.classList.remove("more-on");
+}
+el("btn-more").addEventListener("click", e => {
+  e.stopPropagation();
+  if (el("nav").classList.contains("more-on")) closeNavMore();
+  else openNavMore();
+});
+/* 菜单内点任意按钮：执行完功能后关闭（保留原行为，统一走 closeNavMore） */
+el("nav-more").addEventListener("click", () => closeNavMore());
+/* 点击其他区域关闭：只在展开时生效；菜单内与 ⋯ 自身由上面两条处理 */
+document.addEventListener("click", e => {
+  const nav = el("nav");
+  if (!nav || !nav.classList.contains("more-on")) return;
+  const box = el("nav-more"), btn = el("btn-more");
+  if (box && box.contains(e.target)) return;
+  if (btn && btn.contains(e.target)) return;
+  closeNavMore();
+});
 /* 桌面 / 移动端：功能坞左边整块让给「左家头像 + 手牌列」（2026-11-02 用户口径）。
    CSS 已按牌宽给了默认偏移，但玩家名字宽度不可控（"王昭君（B11）"会顶出面板），
    所以这里按实测的左家面板右缘 +8 再定一次位；移动端同理（原来写死 44px，
