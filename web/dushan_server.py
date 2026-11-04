@@ -2895,6 +2895,20 @@ def _lan_urls(port: int) -> list:
                     found.append(("", ip))
         except Exception:
             pass
+    if not found:       # 兜底 2：UDP connect 取「路由出口」IP（不发包、无需 psutil/DNS）。
+        # macOS 的 .local 主机名常解析不了（getaddrinfo 抛 gaierror），
+        # 且 venv 未必装 psutil；这个方法在 macOS/Linux/Windows 上都可用。
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(("8.8.8.8", 80))       # 仅选路，不发送任何数据
+                ip = s.getsockname()[0]
+                if not ip.startswith("127.") and not ip.startswith("169.254."):
+                    found.append(("", ip))
+            finally:
+                s.close()
+        except Exception:
+            pass
 
     def rank(item):     # 家庭/办公局域网常见网段排前面
         ip = item[1]
