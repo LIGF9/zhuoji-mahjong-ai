@@ -17,3 +17,12 @@ Thumbs.db
 
 # 运行时导出的 ONNX（首次启动自动生成）
 models/onnx/
+
+# Rust 构建产物
+rust_engine/target/
+
+# 实验运行日志（ctrl_*.jsonl 等）
+runs/
+
+# 破损的 ONNX 外部数据残留
+*.onnx.data

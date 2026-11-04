@@ -570,78 +570,40 @@ class SearchAgent(Bot):
 
 
 def explain_items(game, p: int, legal, q, qs, diags, k: int = 4):
-    """把 (Q 向量, 逐 determinization 的 Q, 推演诊断) 翻成可读的分层理由。
+    """把 (Q 向量, 逐 determinization 的 Q, 推演诊断) 翻成可读理由。
 
-    与 ``SearchAgent`` 实例无关：进程池在别的进程里算出的结果，回到主进程后
-    同样能用它生成「结论/依据/牌面/学习点」四层文字。
+    2026-11-03 用户口径：**只保留必要的收益与风险说明**——
+      · 收益：这张动作的期望分差、与次优/最优的差距；
+      · 风险：打牌时的生熟张（点炮敞口）与鸡牌提示。
+    不再输出推演统计、V 值解释、牌面结构、学习点等教学层。
     """
-    n_det = max(1, len(diags))
     order = np.argsort(-q)[:max(1, min(int(k), len(legal)))]
-    hand = game.hands[p]
     items = []
     for rank_i, i in enumerate(order):
         i = int(i)
         a, qv = legal[i], float(q[i])
-        # ---- ② 聚合终局统计（跨 N 张假想世界） --------------------------
-        term = wins = losses = 0
-        delta_sum, delta_n = 0.0, 0
-        for d_list in diags:
-            d = d_list[i] if i < len(d_list) else {}
-            if d.get("terminal"):
-                term += 1
-                wins += 1 if d.get("win") else 0
-                losses += 0 if d.get("win") else 1
-                delta_sum += float(d.get("delta") or 0.0)
-                delta_n += 1
-        avg_term = delta_sum / delta_n if delta_n else qv
         lines: list[str] = []
-        # ---- ① 结论 --------------------------------------------------
+        # ---- 收益：期望分差 + 与次优/最优的差距 -------------------------
         if rank_i == 0 and len(order) > 1:
             j = int(order[1])
-            gap = qv - float(q[j])
-            lines.append(f"最优：{a.label()}，期望 {qv:+.2f} 分；"
-                         f"比次优「{legal[j].label()}」({q[j]:+.2f}) 高 {gap:+.2f}")
-            if abs(gap) < 0.15:
-                lines.append("两手几乎等价（差 <0.15 分），按手感选也不吃亏")
+            lines.append(f"最优：{a.label()}，期望 {qv:+.2f} 分"
+                         f"（次优「{legal[j].label()}」{q[j]:+.2f}）")
         else:
             j0 = int(order[0])
             lines.append(f"第{rank_i + 1}选：{a.label()}，期望 {qv:+.2f} 分"
                          f"（比最优低 {float(q[j0]) - qv:+.2f}）")
-        # ---- ② 依据 --------------------------------------------------
-        q_rep = []
-        for arr in (qs):
-            if i < len(arr):
-                q_rep.append(float(arr[i]))
-        if term:
-            lines.append(f"推演 {n_det} 种看不见的牌型：{term} 条直通终局"
-                         f"（我胡 {wins} / 被胡 {losses}，终局均分 {avg_term:+.2f}），"
-                         f"其余 {n_det - term} 条按残局估值")
-        elif diags and any(d for d in diags):
-            lines.append(f"推演 {n_det} 种看不见的牌型：全部未终局，"
-                         f"按残局估值 {qv:+.2f}（V 预测我到牌局结束的净分差）"
-                         + (f"；各条线在 {min(q_rep):+.2f} ~ {max(q_rep):+.2f} 之间"
-                            f"（跨度 {max(q_rep) - min(q_rep):.2f}＝这手牌的运气波动）"
-                            if len(q_rep) > 1 else ""))
-        else:
-            # 多层搜索（ply≥2）的 Rust 路径不导出逐 det 终局统计 → 不编造条数
-            lines.append(f"按残局估值 {qv:+.2f}（V 预测我到牌局结束的净分差）")
-        # ---- ③ 牌面 --------------------------------------------------
+        # ---- 风险：仅打牌有——生熟张（点炮敞口）+ 鸡牌 ------------------
         tile = getattr(a, "tile", None)
         kind = str(getattr(a, "kind", ""))
         if tile is not None and tile >= 0 and kind == DISCARD:
-            struct = _tile_struct(hand, tile)
             seen = sum(1 for q2 in range(4) for t in game.discards[q2] if t == tile)
             shown = [t for q2 in range(4) for m in game.melds[q2] for t in m[:1]]
             seen += sum(1 for t in shown if t == tile)
-            safe = ("牌河已现 %d 张，相对安全" % seen if seen >= 2 else
-                    "牌河未现（生张），被胡风险偏高" if seen == 0 else
-                    "牌河现 %d 张" % seen)
-            ji = "；这是鸡牌，打出会付鸡分" if tile in getattr(game, "ji_tiles", ()) else ""
-            lines.append(f"这张牌：手牌里的{struct}，{safe}{ji}")
-        # ---- ④ 学习点 -------------------------------------------------
-        if rank_i == 0:
-            lines.append("学习点：" + SearchAgent._lesson(
-                game, p, a, i, order, q, legal, hand, wins, losses, term))
+            risk = ("已现 %d 张，较安全" % seen if seen >= 2 else
+                    "生张，点炮风险较高" if seen == 0 else "已现 1 张")
+            if tile in getattr(game, "ji_tiles", ()):
+                risk += "；鸡牌"
+            lines.append(risk)
         items.append({"action": a, "q": qv, "reason": "；".join(lines),
                       "lines": lines})
     return items

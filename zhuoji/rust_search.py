@@ -132,7 +132,9 @@ class _BatchRunner:
     缓冲全部**每次决策分配一次**、批次间复用（旧版每批 np.zeros 6.6MB）。
     """
 
-    _MAX_PAD = 4096
+    # 2026-11-04：n_det=128 × ply3 的联合批可到 ~4.3k 状态（牌型多时更多），
+    # 4096 上限会越界（duel 实测 ValueError）→ 提到 8192（缓冲 ~2×12MB/进程）
+    _MAX_PAD = 8192
 
     def __init__(self, model, device: str, v_model=None):
         self.model = model
@@ -319,7 +321,10 @@ def _deep_search_run(model, game, p: int, legal, n_det: int, ff_cap: int,
         return q, stats, [], []
     diag = [[{"terminal": bool(t), "win": bool(w), "delta": float(x)}
              for (t, w, x) in row] for row in ds.det_stats()] if ply == 1 else []
-    qs = [list(map(float, row)) for row in ds.per_det()] if ply == 1 else []
+    # 2026-11-04 V6：per_det 在 ply≥2 也导出（deep.rs 的 self.q 本就是
+    # 「逐世界最终 Q」，max 聚合发生在 absorb/merge 阶段，不在此处）。
+    # 世界投票决策规则需要逐世界的 ply3 Q。diag 仍只反映 1-ply 口径。
+    qs = [list(map(float, row)) for row in ds.per_det()]
     return q, stats, diag, qs
 
 
@@ -375,7 +380,8 @@ class RustSearchAgent:
                  ply: int = 1, topk: int = 3, n_det: int = 32, ff_cap: int = 24,
                  fair: bool = True, own_model: bool = False, p2_topk: int | None = None,
                  agg: int = 0, lam: float = 1.0, reweight: bool = False,
-                 v_ens_model=None):
+                 v_ens_model=None, prior_weight: float = 0.0,
+                 decide: str = "q"):
         # 与 SearchAgent 同口径：持有**设备就位的独立副本**。两个原因：
         # ① 不能 .to(device) 移动共享对象——同进程里的 CPU NetAgent 会挂；
         # ② 不能把 CPU 模型直接喂给 deep_q(device="mps")——前向必崩
@@ -395,6 +401,8 @@ class RustSearchAgent:
         self.lam = float(lam)            # B1：1.0=均匀现状，<1=信念化采样
         self.reweight = bool(reweight)   # B1：IS 无偏聚合开关
         self.v_ens_model = v_ens_model   # 叶子 V ensemble（None=关闭）
+        self.prior_weight = float(prior_weight)  # V5：Q + w·log π 先验混合（0=关）
+        self.decide = str(decide)        # V6："q"=均值 Q argmax（现状）| "vote"=世界投票
         self._own_model = own_model      # 仅为兼容 SearchAgent 的签名，无实际作用
         self.stats: dict = {}
         self._call = 0           # 决策计数：RNG 必须**跨决策递进**
@@ -443,11 +451,59 @@ class RustSearchAgent:
         if len(legal) <= 1:
             return legal[0]
         p = game.actor()
+        if self.decide in ("vote", "trim", "hybrid"):
+            # V6 世界投票 / V7 截尾均值 / V8 秩融合（2026-11-04）：
+            #   vote：每世界各取 argmax，得票最多者当选（平票用均值 Q 裁决）；
+            #   trim：逐动作对 32 个世界的 Q 排序取中间 50% 均值 —— 砍掉乐观/悲观
+            #         两端各 25%，对离群世界鲁棒（与 agg=max/mean 正交的聚合轴）；
+            #   hybrid：均值 Q 排名 + 得票排名 相加（秩融合，无参数）——
+            #         幅度信息与跨世界共识两种失误不相关，融合取长补短。
+            from .rust_search import _deep_search_run as _dsr  # noqa: PLC0415
+
+            q, _st, _diag, qs = _dsr(self.model, game, p, legal, self.n_det,
+                                     self.ff_cap, self.topk, self.ply,
+                                     self._next_seed(), self.device, self.stats,
+                                     self.fair, want_diag=False, agg=self.agg,
+                                     lam=self.lam, reweight=self.reweight,
+                                     v_model=self.v_ens_model)
+            n = len(legal)
+            votes = np.zeros(n)
+            for row in qs:
+                votes[int(np.argmax(row))] += 1.0
+            if self.decide == "vote":
+                vmax = votes.max()
+                tied = np.flatnonzero(votes >= vmax - 1e-9)
+                if len(tied) == 1:
+                    return legal[int(tied[0])]
+                best = tied[int(np.argmax(q[tied]))]
+                return legal[int(best)]
+            if self.decide == "hybrid":
+                # 秩融合：rank(均值Q) + rank(得票)，argmax（大者胜）
+                rq = np.argsort(np.argsort(q)).astype(np.float64)
+                rv = np.argsort(np.argsort(votes)).astype(np.float64)
+                best = int(np.argmax(rq + rv))
+                return legal[best]
+            # trim：中间 50% 截尾均值
+            arr = np.array(qs, dtype=np.float64)          # (n_det, n)
+            qt = np.empty(n)
+            for i in range(n):
+                col = np.sort(arr[:, i])
+                m = len(col)
+                lo, hi = int(m * 0.25), int(m * 0.75)
+                core = col[lo:hi] if hi > lo else col
+                qt[i] = core.mean()
+            q = qt
         q, st = deep_q(self.model, game, p, legal, n_det=self.n_det,
                        ff_cap=self.ff_cap, topk=self.topk, ply=self.ply,
                        seed=self._next_seed(), device=self.device, stats=self.stats,
                        fair=self.fair, agg=self.agg, lam=self.lam,
                        reweight=self.reweight, v_model=self.v_ens_model)
+        if getattr(self, "prior_weight", 0.0) > 0.0:
+            # 先验混合（2026-11-04 V5）：score = Q + w·log π —— 把「策略网络直觉」
+            # 按权重掺回搜索分，抑制 PIMC 少样本 Q 的极端抖动（AlphaGo prior 混合思路）。
+            # 成本：每决策 1 次策略前向（_prior），相对 n32 搜索可忽略。
+            prior = self._prior(game, p, legal)
+            q = q + self.prior_weight * np.log(np.clip(prior, 1e-9, None))
         qmax = float(q.max())
         tie = np.flatnonzero(q >= qmax - 1e-9)
         if len(tie) == 1:

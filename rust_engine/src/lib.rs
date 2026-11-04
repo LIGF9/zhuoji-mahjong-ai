@@ -24,6 +24,7 @@ pub use state::{Config, Game, Outcome};
 pub mod encode;
 pub mod rng;
 pub mod search;
+pub mod settle;
 #[cfg(feature = "python")]
 pub mod pymod;
 pub mod deep;

@@ -1,0 +1,108 @@
+//! 结算对拍入口：stdin 吃 JSON 行，stdout 吐结算 JSON 行。
+//!
+//! 输入：{"wall":[108 牌], "dealer":0, "actions":[[kind,tile],...], "cfg":{...}}
+//! 输出：{"ok":true,"deltas":[...],"result":{...}} 或 {"ok":false,"error":"..."}
+
+use dushan_engine::actions::*;
+use dushan_engine::fan::FanTable;
+use dushan_engine::state::{fanji_mask, Config, Game};
+use dushan_engine::settle;
+use serde_json::{json, Value};
+
+fn mode_code(v: Option<&Value>) -> u8 {
+    match v.and_then(|x| x.as_str()) {
+        Some("up") => 1,
+        Some("down") => 2,
+        Some("both") => 3,
+        _ => 0,
+    }
+}
+
+fn parse_cfg(d: &Value) -> Config {
+    let mut c = Config::default();
+    c.jiesuan_fanji = mode_code(d.get("jiesuan_fanji"));
+    c.kaiju_fanji = mode_code(d.get("kaiju_fanji"));
+    if let Some(x) = d.get("mantiangji").and_then(|v| v.as_bool()) {
+        c.mantiangji = x;
+    }
+    if let Some(x) = d.get("jin_mult").and_then(|v| v.as_f64()) {
+        c.jin_mult = x as f32;
+    }
+    if let Some(x) = d.get("end_baoji").and_then(|v| v.as_bool()) {
+        c.end_baoji = x;
+    }
+    if let Some(x) = d.get("end_baogang").and_then(|v| v.as_bool()) {
+        c.end_baogang = x;
+    }
+    if let Some(x) = d.get("huang_baoji").and_then(|v| v.as_bool()) {
+        c.huang_baoji = x;
+    }
+    if let Some(x) = d.get("huang_baogang").and_then(|v| v.as_bool()) {
+        c.huang_baogang = x;
+    }
+    if let Some(x) = d.get("huang_baodapai").and_then(|v| v.as_bool()) {
+        c.huang_baodapai = x;
+    }
+    c
+}
+
+fn run_one(line: &str) -> String {
+    let d: Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(e) => return format!("{{\"ok\":false,\"error\":\"parse:{}\"}}", e),
+    };
+    let cfg = parse_cfg(d.get("cfg").unwrap_or(&Value::Null));
+    let wall: Vec<u8> = d["wall"].as_array().unwrap()
+        .iter().map(|x| x.as_u64().unwrap() as u8).collect();
+    let dealer = d.get("dealer").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+    let ft = FanTable::build();
+    let mut g = Game::new_with_wall(wall, dealer, cfg, &ft);
+    for a in d["actions"].as_array().unwrap() {
+        let kind = a[0].as_u64().unwrap_or(6) as u8;
+        let tile = a[1].as_u64().unwrap_or(27) as u8;
+        let tile = if tile >= 27 { 255 } else { tile };
+        let act = if kind == PASS { Action::pass() }
+        else if kind == HU { Action::hu() }
+        else { Action::new(kind, tile) };
+        g.step(act, &ft);
+        if g.phase == PHASE_OVER {
+            break;
+        }
+    }
+    if g.phase != PHASE_OVER {
+        return "{\"ok\":false,\"error\":\"not_over\"}".to_string();
+    }
+    let out = match g.outcome {
+        Some(o) if o.n_winners > 0 => settle::settle_win(&mut g, &ft),
+        _ => settle::settle_huangzhuang(&g, &ft),
+    };
+    // 诊断字段（对拍用，前端可忽略）
+    let mut out = out;
+    if let Value::Object(m) = &mut out {
+        m.insert("diag_kaiji_mask".into(),
+                 json!(g.kaiju_flip.map(|f| fanji_mask(f, cfg.kaiju_fanji)).unwrap_or(0)));
+        m.insert("diag_melds".into(),
+                 json!(g.melds.iter().map(|ms| ms.iter()
+                     .map(|mm| [mm.0, mm.1, mm.2]).collect::<Vec<_>>())
+                     .collect::<Vec<_>>()));
+        m.insert("diag_flags".into(), json!({
+            "huang_baogang": cfg.huang_baogang, "huang_baoji": cfg.huang_baoji,
+            "huang_baodapai": cfg.huang_baodapai,
+        }));
+    }
+    format!("{{\"ok\":true,\"result\":{}}}", out)
+}
+
+fn main() {
+    use std::io::BufRead;
+    let stdin = std::io::stdin();
+    for (idx, line) in stdin.lock().lines().enumerate() {
+        let line = line.unwrap();
+        if line.trim().is_empty() {
+            continue;
+        }
+        let out = std::panic::catch_unwind(|| run_one(&line))
+            .unwrap_or_else(|_| format!("{{\"ok\":false,\"error\":\"panic@{}\"}}", idx));
+        println!("{}", out);
+    }
+}

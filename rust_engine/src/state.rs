@@ -40,6 +40,29 @@ pub struct Config {
     pub ji_chongfeng: f32,
     pub ji_heng: f32,
     pub ji_discard_plain: f32,
+    // ---- 结算口径（与 zhuoji/dushan.py DushanConfig 默认值一致） ----
+    pub baojiao_bonus: f32,      // 报叫胡牌 +10
+    pub jiesuan_fanji: u8,       // 结算翻鸡 0=off 1=up 2=down 3=both（默认 both）
+    pub kaiju_fanji: u8,         // 开局翻鸡 0=off（默认）1=up 2=down 3=both
+    pub mantiangji: bool,        // 满堂鸡
+    pub jin_mult: f32,           // 金鸡倍率（默认 2）
+    pub ji_hold: f32,            // 手中/副露鸡每张
+    pub ji_fanji: f32,           // 翻鸡每张
+    pub kong_chickens: f32,      // 杠分
+    pub zi_mo: f32,
+    pub dian_pao: f32,
+    pub gang_kai: f32,
+    pub gang_pao: f32,
+    pub da_dui_zi: f32,
+    pub qi_dui: f32,
+    pub long_qi_dui: f32,
+    pub dan_diao: f32,
+    pub qing_yi_se: f32,
+    pub end_baoji: bool,         // 胡牌局：未听牌者包鸡（默认开）
+    pub end_baogang: bool,
+    pub huang_baoji: bool,
+    pub huang_baogang: bool,
+    pub huang_baodapai: bool,    // 流局：未听牌者包大牌面（默认开）
 }
 
 impl Default for Config {
@@ -52,6 +75,28 @@ impl Default for Config {
             ji_chongfeng: 3.0,
             ji_heng: 2.0,
             ji_discard_plain: 1.0,
+            baojiao_bonus: 10.0,
+            jiesuan_fanji: 3,
+            kaiju_fanji: 0,
+            mantiangji: false,
+            jin_mult: 2.0,
+            ji_hold: 1.0,
+            ji_fanji: 1.0,
+            kong_chickens: 3.0,
+            zi_mo: 3.0,
+            dian_pao: 3.0,
+            gang_kai: 5.0,
+            gang_pao: 5.0,
+            da_dui_zi: 5.0,
+            qi_dui: 10.0,
+            long_qi_dui: 20.0,
+            dan_diao: 10.0,
+            qing_yi_se: 10.0,
+            end_baoji: true,
+            end_baogang: false,
+            huang_baoji: false,
+            huang_baogang: false,
+            huang_baodapai: true,
         }
     }
 }
@@ -103,14 +148,35 @@ pub struct Game {
     pub hengji_seats: [u8; 27],      // 每种鸡的轮内座位掩码
     pub ji_events: Vec<(u8, f32, u8)>,   // (打出者, 分值, 类型)
     pub ji_event_tiles: Vec<u8>,
+    // ---- 结算用记录（对齐 DushanGame._init_dushan_state） ----
+    pub kaiju_flip: Option<u8>,          // 开局翻出的指示牌
+    // (打出者, 碰/杠者, 类型, 是否明杠, 牌)
+    pub claimed_ji: Vec<(u8, u8, u8, bool, u8)>,
+    // (胡牌者, 分值, 类型, 牌) —— 捉炮鸡
+    pub captured_ji: Vec<(u8, f32, u8, u8)>,
+    pub ji_tag_of_last: [u8; 4],         // 各家最近一次打出的鸡类型（JI_*）
+    pub last_draw: u8,                   // 最近一次摸进的牌（255=无）
 
     pub outcome: Option<Outcome>,
     pub steps: u32,
 }
 
 #[inline]
-fn bit(t: u8) -> u32 {
+pub fn bit(t: u8) -> u32 {
     1u32 << (t as u32)
+}
+
+/// 翻鸡牌种掩码：模式 1=up(+1, 9回1) 2=down(-1, 1回9) 3=both；不含指示牌自身。
+pub fn fanji_mask(flip: u8, mode: u8) -> u32 {
+    let (s, r1) = ((flip / 9) as u32, (flip % 9 + 1) as u32); // r1 = 1..9
+    let mut m = 0u32;
+    if mode == 1 || mode == 3 {
+        m |= bit((s * 9 + r1 % 9) as u8);        // 上鸡
+    }
+    if mode == 2 || mode == 3 {
+        m |= bit((s * 9 + (r1 + 7) % 9) as u8);  // 下鸡（r1-2 mod 9）
+    }
+    m & !bit(flip)
 }
 
 impl Game {
@@ -158,6 +224,11 @@ impl Game {
             hengji_seats: [0; 27],
             ji_events: Vec::new(),
             ji_event_tiles: Vec::new(),
+            kaiju_flip: None,
+            claimed_ji: Vec::new(),
+            captured_ji: Vec::new(),
+            ji_tag_of_last: [JI_PLAIN; 4],
+            last_draw: 255,
             outcome: None,
             steps: 0,
         };
@@ -170,6 +241,13 @@ impl Game {
         let t = g.draw_from_wall();
         g.hands[dealer as usize][t as usize] += 1;
         g.drawn = true;
+        g.last_draw = t;
+        // 开局翻鸡：牌墙尾翻一张指示牌（只查看不移出，对齐 Python _start）
+        if g.cfg.kaiju_fanji != 0 {
+            let flip = g.wall[g.wall.len() - 1];
+            g.kaiju_flip = Some(flip);
+            g.ji_tiles |= fanji_mask(flip, g.cfg.kaiju_fanji);
+        }
         g.enter_self_phase(dealer, ft);
         g
     }
@@ -492,6 +570,7 @@ impl Game {
         self.gang_discard[p] = true;
         self.pass_lock[p] = 0;
         self.after_gang_draw = true;
+        self.last_draw = tile;
         self.enter_self_phase(p as u8, t);
     }
 
@@ -533,6 +612,7 @@ impl Game {
             };
             self.ji_events.push((p as u8, val, tag));
             self.ji_event_tiles.push(tile);
+            self.ji_tag_of_last[p] = tag;
         }
 
         if !self.first_discard_done[p] {
@@ -597,6 +677,7 @@ impl Game {
         self.drawn = true;
         self.gang_discard[nxt] = false;
         self.pass_lock[nxt] = 0;
+        self.last_draw = tile;
         self.enter_self_phase(nxt as u8, t);
     }
 
@@ -647,6 +728,11 @@ impl Game {
             PENG => {
                 self.hands[p][tile as usize] -= 2;
                 self.melds[p].push((MELD_PONG, tile, discarder));
+                if self.ji_tiles & bit(tile) != 0 {
+                    self.claimed_ji.push((
+                        discarder, p as u8, self.ji_tag_of_last[discarder as usize],
+                        false, tile));
+                }
                 if tile == YAOJI && self.zeren_player < 0 && self.chongfeng_player >= 0 {
                     self.zeren_player = discarder as i8;
                     self.zeren_ponger = p as i8;
@@ -663,6 +749,11 @@ impl Game {
             MINGGANG => {
                 self.hands[p][tile as usize] -= 3;
                 self.melds[p].push((MELD_KONG_EXPOSED, tile, discarder));
+                if self.ji_tiles & bit(tile) != 0 {
+                    self.claimed_ji.push((
+                        discarder, p as u8, self.ji_tag_of_last[discarder as usize],
+                        true, tile));
+                }
                 self.current = p as u8;
                 self.pass_lock[p] = 0;
                 self.respond_order.clear();
@@ -709,6 +800,19 @@ impl Game {
     }
 
     fn settle_win_multi(&mut self, winners: &[u8], tile: u8, loser: u8) {
+        // 捉炮鸡转移（对齐 Python _transfer_discarded_ji）：点炮张若是鸡牌，
+        // 该张的鸡事件从打出者名下移除，分值按牌型全额记给各胡牌者。
+        if self.ji_tiles & bit(tile) != 0 {
+            if let Some(idx) = self.ji_events.iter().rposition(|ev| ev.0 == loser) {
+                let (_, val, tag) = self.ji_events.remove(idx);
+                if idx < self.ji_event_tiles.len() {
+                    self.ji_event_tiles.remove(idx);
+                }
+                for &w in winners {
+                    self.captured_ji.push((w, val, tag, tile));
+                }
+            }
+        }
         let mut w = [0u8; 3];
         for (i, &x) in winners.iter().take(3).enumerate() {
             w[i] = x;
@@ -780,6 +884,11 @@ impl Game {
             hengji_seats: [0; 27],
             ji_events: Vec::new(),
             ji_event_tiles: Vec::new(),
+            kaiju_flip: None,
+            claimed_ji: Vec::new(),
+            captured_ji: Vec::new(),
+            ji_tag_of_last: [JI_PLAIN; 4],
+            last_draw: 255,
             outcome: None,
             steps: 0,
         }

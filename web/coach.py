@@ -363,7 +363,7 @@ def situation_summary(game: DushanGame, me: int) -> dict:
 
 
 def compare_tip(game: DushanGame, me: int, items: list[dict]) -> str:
-    """首选 vs 次选的对比教学点。"""
+    """首选 vs 次选的一句话提示（2026-11-03 用户口径：只说收益/风险，一句话）。"""
     if len(items) < 2:
         return ""
     top, second = items[0], items[1]
@@ -373,16 +373,14 @@ def compare_tip(game: DushanGame, me: int, items: list[dict]) -> str:
         a, b = top["tile"], second["tile"]
         ja, jb = a in game.ji_tiles, b in game.ji_tiles
         if ja and not jb:
-            return ("模型弃鸡保鸡？不对——这里模型认为打这张鸡更优："
-                    "注意打出的首张鸡＝冲锋鸡有收入，且该牌安全度更高")
+            return "打这张鸡更优：有冲锋收入，且这张更安全"
         if jb and not ja:
-            return ("模型弃安全牌保鸡牌：鸡牌每只终局对三家各 +1，"
-                    "收益常常大于一点生张风险")
+            return "保鸡更优：鸡分收益大于生张风险"
         return ""
     if t1 == PASS and t2 == PENG:
-        return "模型选择不碰：暗手灵活度与隐蔽性有时比快一步组牌更值钱"
+        return "不碰更优：保持暗手，不暴露牌型"
     if t1 == PENG and t2 == PASS:
-        return "模型选择碰：加速组牌（或碰鸡收溢价）压过了暴露信息的代价"
+        return "碰更优：加速组牌，代价是暴露牌型"
     if t1 == HU:
-        return "能胡就胡：独山规则下平胡也有稳定鸡分，落袋为安"
+        return "能胡就胡，落袋为安"
     return ""

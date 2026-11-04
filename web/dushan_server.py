@@ -1654,8 +1654,7 @@ class Session:
                         "n_det": n_det, "ply": ply,
                         "items": items, "situation": situation, "tip": tip,
                         "note": _desc
-                                + "；理由按「结论/依据/牌面/学习点」分层，"
-                                  "其中「依据」是 N 张假想世界的真实终局统计"
+                                + "；理由只含收益（期望分差）与风险（生熟张/鸡牌）"
                                 + "；prob 是 Q 值的 softmax（仅供排序参考）"}
             # 模型策略（默认）
             want = strategy.split(":", 1)[1] if ":" in strategy else "master"
@@ -1805,6 +1804,34 @@ class Session:
                     "types": [str(x) for x in types if str(x) != "平胡"],
                 }
             return {"ok": True, "map": out}
+
+    def ting_now(self) -> dict:
+        """任意时刻可查的听牌信息（2026-11-03 右下角「听牌」按钮）。
+
+        决策点且暗手 14 张 → 与 ting_hint 同口径（逐张候选的 map）；
+        其余时刻按当前暗手直接算等待张（ting_info 不带 drop），
+        返回 ``{"ok": True, "cur": {"tiles": [...], "types": [...]}}``（未听牌 cur=None）。
+        """
+        with self.lock:
+            game = self.game
+            if game is None:
+                return {"ok": False, "error": "对局未开始"}
+            me = self.my_seat
+            n_hand = len(game.hands[me])
+            if self.state.get("pending") is not None and \
+                    n_hand == (4 - len(game.melds[me])) * 3 + 2:
+                return self.ting_hint()
+            try:
+                tiles, types = game.ting_info(me)
+            except Exception:
+                return {"ok": True, "cur": None}
+            if not tiles:
+                return {"ok": True, "cur": None}
+            return {"ok": True, "cur": {
+                "tiles": [{"t": int(w), "left": remaining_unseen(game, me, None, int(w))}
+                          for w in tiles],
+                "types": [str(x) for x in types if str(x) != "平胡"],
+            }}
 
     def update_rules(self, rules: dict) -> None:
         """「下一局生效」：用前端最新载荷替换规则（翻鸡策略 / 追加鸡牌 / 分值表 / 包赔）。
@@ -2015,6 +2042,16 @@ class Session:
             # 本局鸡牌种（幺鸡 + 开局翻鸡新增）与开局翻出的指示牌，前端显示与手牌标记
             "ji_tiles": sorted(int(t) for t in game.ji_tiles),
             "kaiju_flip": int(game.kaiju_flip) if game.kaiju_flip is not None else None,
+            # 局内已知金鸡（2026-11-04 用户口径）：开局翻鸡翻到九条时幺鸡已在
+            # 开局翻鸡种里 → 局中即以红点（金鸡色）标记幺鸡（结算后按 gold_tiles 覆盖）
+            "gold_known": sorted(
+                int(t) for t in (
+                    fanji_tiles_from(int(game.kaiju_flip),
+                                     str(getattr(game.cfg, "kaiju_fanji", "off")))
+                    if (game.kaiju_flip is not None
+                        and str(getattr(game.cfg, "kaiju_fanji", "off")) != "off")
+                    else ())
+                if t == YAOJI),
             "hand": hand,
             "last_draw": self._fresh_draw(game, me, over),
             # 记牌器：34 种牌各自剩余张数（下标=牌 id）
@@ -2074,6 +2111,8 @@ class Session:
         # 金鸡牌种（2026-10-12）：翻鸡牌 ∩ 开局定下的鸡牌。结算页据此给对应牌加
         # 「金鸡」角标、在「手中鸡」明细里标注 ×N（顶部不再写「金鸡×2」文字）。
         out["gold_tiles"] = sorted(int(t) for t in (res.get("gold_tiles") or []))
+        # 四倍金鸡牌种（2026-11-04）：开局翻鸡 + 结算翻鸡双重翻出幺鸡 → 结算页四个红点
+        out["quad_gold_tiles"] = sorted(int(t) for t in (res.get("quad_gold_tiles") or []))
         # 金鸡倍率（结算页明细里标「X2」用；与结算那一局的 cfg 同源）
         out["gold_mult"] = float(getattr(game.cfg, "jin_ji_multiplier", 2.0))
         # 总览用：本局鸡牌种 / 翻鸡策略 / 结算翻出的指示牌与对应鸡牌 / 胡牌方式
@@ -2517,6 +2556,10 @@ class Handler(BaseHTTPRequestHandler):
             s = get_session(sid)
             if not s:
                 return self._json({"ok": False, "error": "会话不存在"}, 404)
+            if self._query().get("mode") == "now":
+                # 2026-11-03 用户需求：右下角「听牌」按钮随时可点 —— 不在决策点时
+                # 按当前暗手直接算听牌（13 张口径），返回 cur；决策点仍走逐张 map
+                return self._json(s.ting_now())
             return self._json(s.ting_hint())
         if path == "/api/history":
             n = int(self._query().get("limit", "30"))

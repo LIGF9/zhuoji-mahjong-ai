@@ -114,9 +114,10 @@ body {
    2026-10-12 用户口径修订：**去掉底色与黄色描边**，只留牌图本身（悬停出
    「本局鸡牌」提示）；左右不留横向内边距，免得留下看不到的空白台阶。 */
 #kaiju-info { display: none; align-items: center; gap: 4px; margin-left: 6px;
-  padding: 3px 0; align-self: flex-start; white-space: nowrap; cursor: help; }
+  padding: 3px 0; align-self: flex-start; white-space: nowrap; }
 #kaiju-info.on { display: flex; }
-#kaiju-info img { height: 26px; border-radius: 3px; display: block; }
+/* 2026-11-03 用户口径：桌面本局鸡牌放大 1.5 倍（26 → 39） */
+#kaiju-info img { height: 39px; border-radius: 3px; display: block; }
 
 /* ============ 玩家面板 ============ */
 .player {
@@ -219,11 +220,20 @@ html.narrow #me-row .seat-me .pinfo { align-items: flex-start; }
      left = C×54/104 − W/2
      top  = C×113/118 − W/2 + W/38 − C×59/104
      height = C×118/104 */
+/* 2026-11-04 第十六轮（用户反馈「横摆的鸡牌没有了绿边，疑似被裁剪」）：
+   旧几何把牌面沿长轴放大 118/104 填满格宽，源图顶部的牌背绿带被推出格右
+   连带裁掉——横牌与相邻竖牌（都带顶部绿带）视觉不一致。现改为只裁掉
+   **旋转后落在左端的透明尾**（源图底部 6/118 行），绿带完整保留在右端：
+     图高 H = tm-h×118/112（内容行 1..112 恰好占满格宽 [0, tm-h]）
+     left = cx − W/2，cx = tm-h×53/112
+     top  = tm-h×113/118 − W×75/76（内容底边与竖牌内容底边 113/118 平齐，
+            右端 1 列透明 → 底边收 W/76）
+   记 C=tm-h、W=tm-w： */
 .mc.heng img {
-  left: calc(var(--tm-h) * 54 / 104 - var(--tm-w) * 0.5);
-  top: calc(var(--tm-h) * 113 / 118 - var(--tm-w) * 0.5 + var(--tm-w) / 38 - var(--tm-h) * 59 / 104);
+  left: calc(var(--tm-h) * 53 / 112 - var(--tm-w) * 0.5);
+  top: calc(var(--tm-h) * 113 / 118 - var(--tm-h) * 59 / 112 - var(--tm-w) * 37 / 76);
   width: var(--tm-w);
-  height: calc(var(--tm-h) * 118 / 104);
+  height: calc(var(--tm-h) * 118 / 112);
   transform: rotate(90deg); }
 /* 角标挂在「牌面」右上角：牌面纵向占 [C×113/118 − W×37/38, C×113/118] */
 .mc.heng .jitag { top: calc(var(--tm-h) * 113 / 118 - var(--tm-w) * 37 / 38);
@@ -329,8 +339,10 @@ html.mob .seat-left .mc.vz.fc img, html.mob .seat-right .mc.vz.fc img {
 html:not(.mob) { --tile-h: calc(var(--tile-w) * 104 / 68); }
 .tile-mine img { width: 100%; height: 100%; display: block; border-radius: 6px; pointer-events: none; }
 .tile-mine.sel { transform: translateY(-26px); }   /* 上浮 1/4 牌高（推荐用指示器标注，不加框） */
+/* 手牌鸡牌点（2026-11-04 第十七轮口径）：红=鸡牌；局中已知/结算金鸡 → .jin 绿 */
 .tile-mine .jimark { position: absolute; top: 3px; right: 4px; width: 8px; height: 8px;
-  border-radius: 50%; background: #e2483d; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+  border-radius: 50%; background: #e8483d; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+.tile-mine .jimark.jin { background: #43b16c; }
 /* 冲锋鸡/横鸡角标：右上角斜丝带（冲=红 / 横=蓝），叠加在任意牌面图上，全 UI 统一。
    容器（.mc/.jwrap/.jcap 等）需 position:relative；::after 的字符沿对角线旋转 45° */
 .jitag { position: absolute; top: 0; right: 0; width: 46%; height: 46%; pointer-events: none;
@@ -680,10 +692,11 @@ table.res td img.tin { height: 24px; vertical-align: middle; border-radius: 2px;
   box-shadow: 0 0 0 2px #f0c14b, 0 2px 8px rgba(0,0,0,.45); }
 .ovhand .ovwin img { width: 26px; height: 40px; border-radius: 3px; display: block; }
 .ovhand .ovwin .jimark { top: 2px; right: 2px; }
-/* 总览手牌：鸡牌（幺鸡/开局翻鸡种）右上角小红点标记 */
+/* 总览手牌：鸡牌（幺鸡/开局翻鸡种）右上角点标记（第十七轮口径：红=鸡牌） */
 .ovhand .ovtile { position: relative; display: inline-flex; }
 .ovhand .ovtile .jimark { position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
-  border-radius: 50%; background: #e2483d; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+  border-radius: 50%; background: #e8483d; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+.ovhand .ovtile .jimark.jin { background: #43b16c; }
 .ovmeta { font-size: 12px; color: #cfd8c5; line-height: 1.7; }
 /* 打出的鸡牌图与文字标签**底部平齐**：inline-flex 的基线是图片底边，
    而 inline-block 标签的底边在基线之下（下行字母区），不处理会差约 7px；
@@ -914,7 +927,7 @@ html.mob #rp-now { top: auto; bottom: calc(3px + var(--tile-h) + 30px);
    实测结算面板本身复用 #result-mask，由 openReplayResult/closeReplayResult 控制。 */
 html.replaying #nav, html.replaying #log, html.replaying #coach,
 html.replaying #actions, html.replaying #tingbar, html.replaying #counter-btn,
-html.replaying #counter-pop, html.replaying #brief-tip, html.replaying #end-stamp,
+html.replaying #counter-pop, html.replaying #corner-tools, html.replaying #brief-tip, html.replaying #end-stamp,
 /* 2026-10-13：回放里**不再**隐藏 #ji-fx —— 回放现在也要有「鸡牌打出特效」
    （冲锋鸡/横鸡打出时与实盘同一个全屏动画）。进入回放时会把实盘残留的
    特效清掉（见 enterReplayMode），所以不会把上一局的动画带进来。 */
@@ -1456,21 +1469,35 @@ html.mob .bootjirow { flex-direction: row; }
 #tingbar img { width: 26px; height: 40px; border-radius: 3px; }
 #tingbar .tt-lab { color: var(--gold); letter-spacing: 1px; }
 
-/* ---- 记牌器：手牌右侧图标 + 浮窗（各牌种剩余张数，0 张置灰） ----
-   2026-10-12 用户口径：桌面上的按钮**去掉底色与描边**，只留 🧮 本身；
-   并且归「设置 → 界面显示 → 记牌器」开关控制（默认关，关闭即整块隐藏）。 */
-#counter-btn {
-  flex: 0 0 auto; align-self: flex-end; margin-left: 6px; margin-bottom: 2px;
-  width: 34px; height: 34px; border-radius: 9px; cursor: pointer;
+/* ---- 记牌器 + 听牌按钮：右下角固定工具列（2026-11-03 用户口径）----
+   2026-10-12 用户口径：桌面按钮去掉底色与描边；归「设置 → 界面显示 → 记牌器」
+   开关控制（默认关，关闭即整块隐藏）。
+   2026-11-03：🧮 与「听」从手牌行尾搬到**视口右下角固定位置**、上下排布
+   —— 原来挂在手牌行尾会随手牌区宽度变化而移动。 */
+/* 2026-11-03 二改：原位置压在右家手牌上（右家牌列贴着屏幕右缘）→
+   改成真正贴视口右下角（底 10px / 右 30px），离右家牌列还有一整段空隙。 */
+#corner-tools { position: fixed; right: 30px; z-index: 31;
+  bottom: 10px;
+  display: flex; flex-direction: column; gap: 8px; align-items: center; }
+#corner-tools .ct-wrap { position: relative; display: flex; justify-content: center; }
+#counter-btn, #ting-btn {
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 9px; cursor: pointer;
   background: none; border: 0; color: var(--gold);
   font-size: 19px; line-height: 1; display: flex; align-items: center; justify-content: center;
   font-family: inherit;
 }
-#counter-btn:hover { color: #f3ead6; text-shadow: 0 0 8px rgba(232,184,75,.7); }
-#counter-btn.toggle-on { color: #5dcaa5; text-shadow: 0 0 8px rgba(93,202,165,.8); }
-#counter-pop { position: absolute; right: 0; bottom: calc(100% + 10px); z-index: 30;
+#ting-btn { font-size: 15px; letter-spacing: 0; }
+#counter-btn:hover, #ting-btn:hover { color: #f3ead6; text-shadow: 0 0 8px rgba(232,184,75,.7); }
+#counter-btn.toggle-on, #ting-btn.toggle-on { color: #5dcaa5; text-shadow: 0 0 8px rgba(93,202,165,.8); }
+#counter-pop, #ting-pop { position: absolute; right: 0; bottom: calc(100% + 10px); z-index: 30;
   padding: 9px 10px 8px; border-radius: 11px; background: rgba(9, 24, 15, .94);
   border: 1px solid rgba(232,184,75,.45); box-shadow: 0 10px 28px rgba(0,0,0,.6); }
+#ting-pop { max-width: 320px; font-size: 12px; color: #cfe0c4; line-height: 1.6; }
+#ting-pop .tp-tiles { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+#ting-pop .tp-tiles .tcell { position: relative; }
+#ting-pop h5 { margin: 0; font-size: 11px; font-weight: normal; color: #b9c9ae; letter-spacing: 1px; }
+#ting-pop h5 b { color: var(--gold); font-weight: normal; }
+#ting-pop .ttype { color: #e8b84b; margin-left: 6px; }
 #counter-pop h5 { margin: 0 0 6px; font-size: 11px; font-weight: normal; color: #b9c9ae;
   letter-spacing: 1px; display: flex; justify-content: space-between; gap: 10px; }
 #counter-pop h5 b { color: var(--gold); font-weight: normal; }
@@ -1481,13 +1508,12 @@ html.mob .bootjirow { flex-direction: row; }
 #counter-grid .cc.zero img { filter: grayscale(1) brightness(.45); }
 #counter-grid .cc.zero i { color: #77836f; }
 /* 浮窗必须盖过左右座位卡（用户实测：右家头像面板遮住记牌器一角） */
-#counter-pop { z-index: 46; }
-/* 窄屏：手牌行 = 头像 + 14 张牌，宽度正好 100vw，🧮 在行内必然溢出被裁掉一角
-   （用户实测）。改为绝对定位悬到「手牌右侧的上方」（#me-row 上方右端空白），
-   不再占行宽；浮窗锚定按钮展开，方向不变。 */
-html.mob #counter-btn { position: absolute; right: 0; bottom: calc(100% + 8px);
-  margin: 0; width: 30px; height: 30px; font-size: 15px; }
-html.mob #counter-pop { bottom: calc(100% + 42px); }
+#counter-pop, #ting-pop { z-index: 46; }
+/* 移动端：工具列同样固定右下（略缩小按钮），浮窗向上展开 */
+html.mob #corner-tools { right: 6px; bottom: calc(var(--tile-h, 46px) + 34px); gap: 6px; }
+html.mob #counter-btn, html.mob #ting-btn { width: 30px; height: 30px; font-size: 15px; }
+html.mob #ting-btn { font-size: 12px; }
+html.mob #counter-pop, html.mob #ting-pop { bottom: calc(100% + 8px); }
 
 /* ===================== 移动端（手机 / 小屏）适配 =====================
    桌面端（宽 > 900 且 高 > 620）完全不受影响：以下规则全部挂在 html.mob 下，
@@ -1745,7 +1771,7 @@ html.blk-nar #gate .g-nar { display: flex; }
   font-size: 12.5px; color: var(--ink-2); box-shadow: var(--hair);
 }
 #nav #round-chip b { font-size: 14px; }
-#kaiju-info img { height: 28px; border-radius: 4px; box-shadow: 0 2px 6px rgba(0, 0, 0, .5); }
+#kaiju-info img { height: 42px; border-radius: 4px; box-shadow: 0 2px 6px rgba(0, 0, 0, .5); }
 
 /* ---------- 座位卡：头像金环 + 名字/分数两行 ---------- */
 .player {
@@ -2595,11 +2621,19 @@ html.mob #me-row .seat-me {
   bottom: calc(100% + 6px);
 }
 
-/* ---- C) 结算：鸡牌红点（冲 3 / 横 2 / 其余 1）+ 信息条箭头 + 面板加高 ---- */
+/* ---- C) 结算：鸡牌红点（冲 3 / 横 2 / 其余 1）+ 信息条箭头 + 面板加高 ----
+   2026-11-04 第十七轮口径：红=鸡牌 / 绿=金鸡(.jin) / 黄=责任鸡(.zr)；
+   点径随牌宽等比缩放（--tm-w 沿容器级联，缺省按 26px 兜底）——
+   弃牌/碰杠牌此前固定 4~5px，在 ×1.2/×1.5 的牌上显得过小（用户反馈）；
+   四倍金鸡(.q4) = 2×2 四个绿点（点径再收 0.8 倍防挤） */
 .jidots { position: absolute; top: 2px; right: 2px; display: inline-flex; gap: 1.5px;
   pointer-events: none; }
-.jidots i { width: 4px; height: 4px; border-radius: 50%; background: #e8483d;
+.jidots i { --jd: clamp(4.5px, calc(var(--tm-w, 26px) * .18), 11px);
+  width: var(--jd); height: var(--jd); border-radius: 50%; background: #e8483d;
   box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+.jidots.jin i { background: #43b16c; }
+.jidots.q4 { display: grid; grid-template-columns: repeat(2, auto); gap: 1.5px; }
+.jidots.q4 i { --jd: calc(clamp(4.5px, calc(var(--tm-w, 26px) * .18), 11px) * .8); }
 .jcnt { position: relative; }
 .res-jibar .arr { color: #b9c9ae; font-size: 13px; margin: 0 2px; }
 /* 桌面端结算面板同样用满高度（底部按钮行已并入标题/视角行） */
@@ -2705,7 +2739,6 @@ html.mob .river-top { flex-flow: row-reverse wrap-reverse; }
    （用户实测：左边对、右边位置反了）。红点改成左上角定位，四家一致；
    弃牌上的红点还比结算小图的大一号（5px），牌桌上一眼可见。 */
 .river-pile .jidots { top: 3px; right: auto; left: 3px; gap: 2px; }
-.river-pile .jidots i { width: 5px; height: 5px; }
 .river-pile .mc.rot .jidots { top: 3px; left: 3px; }
 
 /* ---- E) 结算：责任鸡黄点（冲 3 / 横 2 / 其余 1）；小图不加红点 ---- */
@@ -2762,12 +2795,13 @@ html.mob .river-top {
 
 /* ---- E2) 结算里「横摆的鸡牌」（碰/杠吃进的鸡：.mc.heng 格内 img 转了 90°）----
    .mc.heng 的格子是正方形，牌面只占下半截（.meld 底对齐）：
-     牌面视觉上缘 = tm-h×113/118 − tm-w×(1−1/38) ≈ tm-h×.958 − tm-w×.974
+     牌面视觉上缘 = tm-h×113/118 − tm-w×75/76
    红点原来按默认 top:2px 挂 → 浮在牌面上方的空白里（用户截图实测）。
-   现在按上面的公式落到牌面左上角，并同样竖排。 */
+   现在按上面的公式落到牌面**右上**角，并同样竖排。
+   （2026-11-04 用户反馈：红点原先挂在左边——牌面视觉右上=格子右缘，已改右。） */
 .mc.heng .jidots {
   top: calc(var(--tm-h) * .958 - var(--tm-w) * .974 + 2px);
-  left: 2px; right: auto; flex-direction: column;
+  right: 2px; left: auto; flex-direction: column;
 }
 
 /* ==================================================================
@@ -2852,6 +2886,395 @@ html.mob #actions .actbtn .why { font-size: 10px; padding: 3px 6px; margin-top: 
   position: fixed; left: var(--rpHudL, 84px); top: var(--rpHudT, 62px); z-index: 97;
 }
 html.rp-res .rp-side.left { display: none; }
+
+/* ==================================================================
+   第八轮修订（2026-11-03，用户反馈）
+   ------------------------------------------------------------------
+   A) 左家弃牌鸡牌红点：左家牌是 +90° 旋转的（img 顶边转到格子右缘），
+      牌面**右上角 = 格子右上角**——红点从格子左上（视觉上的牌左下）挪到
+      格子右上；红点沿格子右缘竖排 = 沿牌面视觉上缘排。
+      右家（−90°）格子左上角本来就是牌面右上角，维持不变。
+   B) 侧家手牌/副露整体缩到原来的 80%（手牌短边由 fitSeatTiles 末尾 ×0.8）；
+   C) 对家手牌/副露放大到原来的 120%（24×34 → 28.8×40.8；28×44 → 33.6×52.8）；
+   D) 侧家整列（头像+信息+副露+手牌）在带子里垂直居中：此前 --seat-sh 按
+      「正好铺满带子」实算，内容永远顶满 → 居中看不出来。手牌缩到 80% 后
+      内容矮于带子，v4 已有的 justify-content:center 生效 → 高度居中不贴顶。
+   ================================================================== */
+
+/* ---- A) 左家（rot，+90°）：红点挂格子右上角；右家（rot rotr）保持左上 ---- */
+.river-pile .mc.rot:not(.rotr) .jidots { top: 3px; right: 3px; left: auto; }
+
+/* ---- B) 侧家副露 ×0.8（手牌在 fitSeatTiles 里缩，移动端各有 clamp 不受影响）---- */
+html:not(.mob) .seat-left .melds, html:not(.mob) .seat-right .melds {
+  --tm-w: calc(28px * .8);   /* 22.4px */
+  --tm-h: calc(44px * .8);   /* 35.2px */
+}
+
+/* ---- C) 对家 ×1.2（html.mob 有更高特异性的自有尺寸，移动端不受影响）---- */
+html:not(.mob) .seat-top .phand  { --tm-w: calc(24px * 1.2); --tm-h: calc(34px * 1.2); }
+html:not(.mob) .seat-top .melds  { --tm-w: calc(28px * 1.2); --tm-h: calc(44px * 1.2); }
+
+/* ==================================================================
+   第九轮修订（2026-11-03 晚，用户反馈）
+   ------------------------------------------------------------------
+   A) 侧家框宽度 = 牌宽：面板宽度此前由最宽子元素（头像/名字）决定，通常
+      比牌列宽一截。现在锁成「牌长边 + 内边距 10 + 边框 2」，牌列与带底色
+      的框左右边缘严格对齐；头像/名字超宽时收缩（名字省略号、头像限宽）。
+   B) 侧家框垂直居中：框此前 height = 整条带子（--seat-band），内容虽居中、
+      底色框仍贴顶。改 height:auto 让框随内容收缩，配合 top 50% 平移居中
+      —— 底色框不再贴顶。--seat-band 仍由 JS 计算牌尺寸用，只是不再当高度。
+   C) 对家手牌/副露放大到 130%。
+   D) 副露鸡牌角标：碰/杠吃进的鸡牌若只是普通鸡/翻鸡种（无冲/横/金丝带），
+      补 1 颗红点角标（与弃牌/结算红点同口径），见 meldCells 的 jiCell。
+   ================================================================== */
+
+/* ---- A+B) 桌面侧家框：宽度=牌宽、高度=内容、整块垂直居中 ---- */
+html:not(.mob) .seat-left, html:not(.mob) .seat-right {
+  top: 50%; transform: translateY(-50%);
+  height: auto; max-height: calc(100vh - 20px);
+  width: calc(var(--seat-sh, 34px) * 1.6 + 12px);  /* 牌长边 + padding 5×2 + 边框 1×2 */
+}
+html:not(.mob) .seat-left .avatar, html:not(.mob) .seat-right .avatar {
+  width: 100%; max-width: 52px; height: auto; aspect-ratio: 1 / 1;
+}
+html:not(.mob) .seat-left .pw, html:not(.mob) .seat-right .pw,
+html:not(.mob) .seat-left .pinfo, html:not(.mob) .seat-right .pinfo { max-width: 100%; }
+html:not(.mob) .seat-left .pname, html:not(.mob) .seat-right .pname {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---- C) 对家 ×1.3 ---- */
+html:not(.mob) .seat-top .phand  { --tm-w: calc(24px * 1.3); --tm-h: calc(34px * 1.3); }
+html:not(.mob) .seat-top .melds  { --tm-w: calc(28px * 1.3); --tm-h: calc(44px * 1.3); }
+
+/* ==================================================================
+   第十轮修订（2026-11-03 晚，用户反馈）
+   ------------------------------------------------------------------
+   A) 回放流水行默认隐藏：抽屉加「流水」开关（html.rp-flow 时才显示 #rp-now）。
+   B) 教练面板：角标换幺鸡牌面（红中名不副实）、删「拖动」提示；
+      「局面估值 +0.046（正数偏有利）· 模型：xxx」简化为 优势/劣势 徽标
+      （正=绿 优势 / 负=红 劣势），精确估值挪到悬浮 title；
+      删「来自：xxx」行（仅策略错位警告保留——那是事故提示）。
+   C) 侧家面板适当加宽（×1.6 → ×2.1）：玩家名字此前被省略号截断。
+   D) 本局鸡牌（桌面 #kaiju-info）放大 1.5 倍（28 → 42px）。
+   E) 对局记录：本局名称可点击复制。
+   ================================================================== */
+
+/* ---- A) 回放流水行：默认隐藏，抽屉「流水」按钮开 ---- */
+html:not(.rp-flow) #rp-now { display: none; }
+.rp-drawer #rp-flow.off { opacity: .45; }
+
+/* ---- B1) 教练面板角标（幺鸡牌面） ---- */
+#coach-hd .hd-ji { height: 20px; width: auto; vertical-align: -4px;
+  border-radius: 3px; margin-right: 4px; box-shadow: 0 1px 3px rgba(0,0,0,.5); }
+/* ---- B2) 优势/劣势徽标（局面估计简化） ---- */
+#coach .val .est { display: inline-block; font-size: 14px; font-weight: 600;
+  padding: 2px 12px; border-radius: 8px; letter-spacing: 2px; cursor: default; }
+#coach .val .est-good { color: #8fe6b0; background: rgba(93, 202, 165, .12);
+  border: 1px solid rgba(93, 202, 165, .5); }
+#coach .val .est-bad { color: #ff9b8f; background: rgba(226, 75, 74, .12);
+  border: 1px solid rgba(226, 75, 74, .5); }
+
+/* ---- C) 侧家面板加宽（名字显示完整优先于「框宽=牌宽」） ---- */
+html:not(.mob) .seat-left, html:not(.mob) .seat-right {
+  width: calc(var(--seat-sh, 34px) * 2.1 + 12px);
+}
+
+/* ---- E) 对局记录：本局名称（日期+时间）可点复制 ---- */
+#hist-body .hist-copy { cursor: pointer; border-bottom: 1px dashed rgba(143, 162, 132, .55); }
+#hist-body .hist-copy:hover { color: #e8b84b; border-bottom-color: rgba(232, 184, 75, .8); }
+
+/* ==================================================================
+   第十一轮修订（2026-11-03 晚二批，用户反馈）
+   ------------------------------------------------------------------
+   A) 教练面板：删除「优势/劣势」模块（#coach-val 对 model 建议整块隐藏）；
+      标题与幺鸡 logo 拉开间距。
+   B) 右下角固定工具列（#corner-tools：🧮 记牌器 + 听 上下排布）。
+   C) 结算面板：删掉标题图下的金色装饰线（.modal h2::after 在结果弹窗禁用）。
+   D) 徽标统一：报叫 / 杠·通行证 全部挂 .ava-side，贴头像靠桌面中心一侧
+      （我=上方、对家=下方、左家=右侧、右家=左侧）。
+   ================================================================== */
+
+/* ---- A) 教练面板：标题改 flex 布局，logo 与文字 gap 9px；删估值模块 ---- */
+#coach-hd { display: flex; align-items: center; gap: 9px; }
+#coach-hd .hd-ji { margin-right: 0; vertical-align: baseline; }
+#coach .val .est { display: none; }        /* 优势/劣势模块已删（兼容旧残留） */
+
+/* ---- C) 结算面板：标题是图片（对家胜/荒牌），装饰金线多余 → 隐藏 ---- */
+#result-mask .modal h2::after { display: none; }
+
+/* ---- D) 徽标：统一挂头像靠桌面中心一侧 ---- */
+.ava-side { position: absolute; z-index: 6; display: flex; gap: 4px;
+  white-space: nowrap; pointer-events: none; }
+.ava-side:empty, .ava-side > span:empty { display: none; }
+.seat-me   .ava-side { bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); }
+.seat-top  .ava-side { top: calc(100% + 3px);    left: 50%; transform: translateX(-50%); }
+.seat-left .ava-side { left: calc(100% + 5px);   top: 50%; transform: translateY(-50%); }
+.seat-right .ava-side { right: calc(100% + 5px); top: 50%; transform: translateY(-50%); }
+
+/* 听牌浮窗空态/加载态 */
+#ting-pop .tp-none { margin-top: 4px; color: #9fb8a8; }
+
+/* ==================================================================
+   第十二轮修订（2026-11-03 晚三批）
+   ------------------------------------------------------------------
+   A) 弃牌区牌面 ×1.2（32×50 → 38.4×60），并按新尺寸重算各家行/列容量；
+   B) toast 抬到 .mask 之上（对局记录里点名称复制，提示被面板吃掉）；
+   C) 右下角工具列 / 听牌浮窗文案（见 JS 与 #corner-tools 本体）。
+   ================================================================== */
+
+/* ---- A) 弃牌区：牌面 ×1.2 + 重算行列 ----
+   坐标仍是 #river 的 600×600 局部系，中央底盘恒为 x/y 150..450：
+     · 我 / 对家：牌是竖的（旋转不用，格 38.4 宽 × 60 高）→ 单排 nowrap 居中。
+       一行 15 张 = 576px ≤ 600（实测一局人均弃牌 ≤15，够用）；
+       整排只占一条 60 高的带子（我 y460..520 / 对家 y80..140），
+       而左右家的竖直列在 y150..450 —— **纵向完全不交叠**，
+       所以牌再多也只会向左右两侧延伸，不会和别家交叉。
+     · 左 / 右家：牌是横躺的（.mc.rot 旋转后格 60 宽 × 38.4 高）→
+       每列 7 张（7×38.4 = 268.8 ≤ 300），3 列 = 21 张上限（3×60 = 180 宽）；
+       列从靠桌心的一侧往外排，超出就继续向外溢出，绝不反压中央底盘。
+   （html.mob 有自己的一套尺寸/块坐标，特异性更高，移动端不受影响） */
+:root { --dis-w: 38.4px; --dis-h: 60px; }
+html:not(.mob) .river-pile { --tm-w: var(--dis-w); --tm-h: var(--dis-h); }
+html:not(.mob) .river-left,
+html:not(.mob) .river-right {
+  width: calc(var(--dis-h) * 3 + 2px);     /* 3 列横躺牌（+2px 防亚像素取整多折一列） */
+  height: calc(var(--dis-w) * 7 + 2px);    /* 每列 7 张（同上，防第 7 张被挤到下一列） */
+}
+html:not(.mob) .river-left  { right: 450px; }   /* 内缘贴 x150，向屏幕左侧展开 */
+html:not(.mob) .river-right { left: 450px; }    /* 内缘贴 x450，向屏幕右侧展开 */
+html:not(.mob) .river-me,
+html:not(.mob) .river-top { width: auto; height: auto; }
+
+/* ---- B) toast：.mask（对局记录/结算，z-index 90）盖不住它 ----
+   原来 80 → 对局记录里点「本局名称」复制，提示被半透明磨砂面板吃掉看不见。 */
+#toast { z-index: 92; }
+
+/* ---- C) 窄桌面（<1200，手牌几乎铺满整行）：工具列再往右让 22px，
+   免得正好压在 14 张手牌的右端 ---- */
+html.narrow:not(.mob) #corner-tools { right: 8px; }
+
+/* ==================================================================
+   移动端同步（2026-11-03，第十三轮）
+   ------------------------------------------------------------------
+   把桌面这几轮定下的设计要求搬到手机端（手机自己的紧凑字号 / 600 坐标 /
+   整体缩放体系全部保留，只统一「比例关系」与「规则」）：
+     A) 对家手牌 ×1.3、侧家手牌 ×0.8 —— 「对家 > 侧家」的层级与桌面一致，
+        侧家缩小后整列矮于可用带子，居中（v5 的 top:50%）才看得出效果；
+     B) 左右家面板宽度锁成「牌列宽 + 内边距」（桌面同款），名字超长省略，
+        面板不再被头像/名字撑宽、牌列与底色框左右边缘对齐；
+     C) 本局鸡牌卡 26 → 34px（桌面是 28 → 42；手机顶栏只有 26 高，
+        直接 1.5× 会顶穿顶栏并挤到对家手牌，取 1.3× 折中）；
+     D) 🧮 记牌器 / 听 工具列贴屏幕右下角（桌面口径），浮窗向上展开。
+   弃牌区**不动**：手机端本来就是 46×62 的专属加大版（比桌面 38.4×60 还大），
+   而 #river 是「按可用高度 ÷ 内容框 562」整体缩放的 —— 里面再放大只会让
+   --rs 等比变小，屏上尺寸一步不让，却白白牺牲每行每列的容量。
+   ================================================================== */
+
+/* ---- A1) 对家手牌 / 副露 ×1.3 ---- */
+html.mob .seat-top .phand { --tm-w: 34px; --tm-h: 52px; }
+html.mob .seat-top .melds { --tm-w: 21px; --tm-h: 32px; }
+@media (max-width: 820px) {
+  /* 窄机（≤820 宽、约 390 高）：一档小一号，保证顶栏 + 对家 + 牌河仍排得下 */
+  html.mob .seat-top .phand { --tm-w: 31px; --tm-h: 48px; }
+  html.mob .seat-top .melds { --tm-w: 19px; --tm-h: 29px; }
+}
+
+/* ---- A2) 侧家手牌 ×0.8（--sh 同时定义在面板与 .phand 上，B 的宽度基准取同一个值）---- */
+html.mob .seat-left, html.mob .seat-right,
+html.mob .seat-left .phand, html.mob .seat-right .phand {
+  --sh: clamp(10px, calc((100vh - 140px) / 8.68 * .8), 30px);
+}
+html.mob .seat-left .phand, html.mob .seat-right .phand {
+  --tm-w: calc(var(--sh) * .62); --tm-h: var(--sh);
+}
+
+/* ---- B) 侧家面板：宽度锁死（不再被名字长短撑开/缩回）----
+   桌面口径是「框宽 = 牌列宽」；手机上牌列只有 ~23-30px，若严格照搬，
+   头像会跟着缩到 20px 出头 —— 头像比牌更重要的识别信息，故取
+   「牌列宽 与 头像宽(36) 的较大者 + padding 14 + 边框 2」：
+   框宽稳定、头像不缩水、牌列在框内居中，长度不变的名字也不会再抖。 */
+html.mob .seat-left, html.mob .seat-right {
+  width: calc(max(var(--sh, 24px), 36px) + 16px);
+  max-height: calc(100vh - 16px);
+}
+html.mob .seat-left .pw, html.mob .seat-right .pw,
+html.mob .seat-left .pinfo, html.mob .seat-right .pinfo { max-width: 100%; }
+html.mob .seat-left .pname, html.mob .seat-right .pname {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: center;
+}
+
+/* ---- C) 本局鸡牌卡 ×1.3 ---- */
+html.mob #kaiju-info img { height: 34px; }
+
+/* ---- D) 工具列贴右下（手牌上沿再往下 8px，桌面是视口底 10px 的同口径）---- */
+html.mob #corner-tools { right: 6px; bottom: calc(var(--tile-h, 46px) + 8px); }
+
+/* ==================================================================
+   第十四轮修订（2026-11-04 凌晨，移动端牌桌 · 用户第六批反馈）
+   ------------------------------------------------------------------
+   A) 弃牌 ×1.5：46×62 → 69×93（600 局部坐标重排，562 外框与 rs 公式不动）
+      · 我/对家 = 6 列 × 2 行（416×186），锚点仍在 y395 / bottom395；
+      · 左右家 = 竖带 y205..395 内 2 行，横向越过 600 边界向外扩 5 列
+        （手机横屏侧向空间富余，rs 由高度决定 → 加宽不缩牌）；
+        牌横躺后格 93 宽 × 69 高，基础 flex-flow（column wrap-reverse /
+        column-reverse wrap）天然「从靠中心一侧向外生长」，无需改流向。
+        容量：我/对家 12+，左右家 10 —— 溢出的极长局会向外再折，不遮牌。
+   B) 记牌器 → 屏幕右上角（浮窗向下展开）；听牌 → 屏幕右下角（向上展开）。
+      悬浮提示文字删除（桌面 + 移动同源，只留点击）；浮窗 z-index 46 → 60。
+   C) ⚙ 设置 与 ⋯ 功能坞移出左上角导航框：JS 在移动端把两个按钮搬到 body
+      固定定位、贴对家面板左缘（placeTopTools），⋯ 菜单改为 fixed 跟随按钮。
+   D) 侧家手牌 ×1.2（.96 = 原 .8 基准 × 1.2）；侧家徽标（杠·通行证 / 报叫）竖排。
+   E) 牌局结束印记 ×3（112 → 336 局部宽）；弃牌指示器 ×3（18×20 → 54×60）
+      并改画在牌面内部（不再悬出牌顶压到上一行）。
+   F) 设置弹窗：width min(96vw, 520px) —— 横屏手机上 96vw≈810px 太宽是
+      「尺寸怪怪的」根因；标题/内边距同步收紧。
+   ================================================================== */
+
+/* ---- A) 弃牌 ×1.5 重排 ---- */
+html.mob #river { --dis-w: 69px; --dis-h: 93px; }
+html.mob .river-me   { left: 92px;  top: 395px;    width: 416px; height: 186px; transform: none; }
+html.mob .river-top  { left: 92px;  bottom: 395px; width: 416px; height: 186px; transform: none; }
+html.mob .river-left { right: 398px; top: 205px;   width: 467px; height: 190px; transform: none; }
+html.mob .river-right{ left: 398px; top: 205px;    width: 467px; height: 190px; transform: none; }
+/* 牌局结束印记 ×3（#river 的子节点，随 --rs 缩放 → 局部 336 ≈ 屏上 ~157px） */
+html.mob #end-stamp { bottom: 44%; width: 336px; }
+
+/* ---- B) 记牌器/听牌：右上 + 右下，去悬浮文字，浮窗层级 ---- */
+#counter-pop, #ting-pop { z-index: 60; }        /* 盖过座位卡/牌河，防「被记牌器遮住」 */
+html.mob #corner-tools { position: static; display: contents; }
+html.mob #corner-tools .ct-wrap { position: fixed; right: 6px; z-index: 34; }
+html.mob .ct-counter { top: 6px; }              /* 记牌器：右上角 */
+html.mob .ct-ting    { bottom: 6px; }           /* 听牌计算：右下角 */
+html.mob #counter-btn, html.mob #ting-btn {
+  width: 30px; height: 30px; font-size: 15px;
+  background: rgba(6, 20, 13, .78); border: 1px solid rgba(243, 202, 108, .30); border-radius: 9px;
+}
+html.mob #counter-pop { top: calc(100% + 8px); bottom: auto; }   /* 右上角向下展开 */
+html.mob #counter-grid { grid-template-columns: repeat(9, 30px); gap: 4px 3px; }
+html.mob #counter-grid .cc img { width: 22px; height: 34px; }
+
+/* ---- C) ⚙ / ⋯ 移出导航框（按钮位置由 placeTopTools 按 p2 实测摆放）---- */
+html.mob body > #btn-settings, html.mob body > #btn-more {
+  position: fixed; z-index: 40; margin: 0; width: 30px; height: 30px;
+  border-radius: 9px; font-size: 14px;
+  background: rgba(6, 20, 13, .78); border: 1px solid rgba(243, 202, 108, .30);
+  box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+html.mob #nav-more { position: fixed; }         /* ⋯ 菜单改跟随按钮（JS 摆位） */
+html.replaying body > #btn-settings, html.replaying body > #btn-more { display: none !important; }
+
+/* ---- D) 侧家手牌 ×1.2 + 徽标竖排 + 边缘对齐 ---- */
+html.mob .seat-left, html.mob .seat-right,
+html.mob .seat-left .phand, html.mob .seat-right .phand {
+  --sh: clamp(12px, calc((100vh - 140px) / 8.68 * .96), 36px);
+}
+html.mob .seat-left .ava-side, html.mob .seat-right .ava-side {
+  flex-direction: column; top: 0; transform: none; gap: 3px;
+}
+html.mob .seat-left .ava-side .badge, html.mob .seat-right .ava-side .badge {
+  writing-mode: vertical-rl; text-orientation: mixed;
+  letter-spacing: 2px; padding: 6px 2px; max-width: none;
+}
+
+/* ---- E) 弃牌指示器 ×3（画进牌面内部：18×20 → 54×60，不悬出牌顶）---- */
+html.mob .river-pile .mc .ind { --ind-w: 54px; --ind-h: 60px; top: 6px; bottom: auto; }
+
+/* ---- F) 设置弹窗宽度 ---- */
+html.mob .setmodal { width: min(96vw, 520px) !important; }
+html.mob .modal.setmodal { padding: 12px 14px 0; }
+html.mob .sethead h2 { font-size: 16px; }
+
+/* ==================================================================
+   第十五轮修订（2026-11-04 凌晨，用户第七批反馈）
+   ------------------------------------------------------------------
+   A) 移动端设置页重排（布局仅移动端；文字/删除类改动两端同步，见 HTML）
+   B) 移动端弃牌 ×0.9（69×93 → 62×84）重排：我/对家一行 9 张、
+      左右家一列 5 张，各家弃牌区与中央功能区分界留 20px
+   C) 弃牌指示器改悬在牌上缘（底部与牌上缘重合 10px，不再画进牌面遮挡）
+   D) ⚙/⋯ 浮动按钮配色（金字+深底金边）；空导航坞黑框清除
+   E) 记牌器 → 左下角（与右下角「听」左右对称），浮窗向上展开
+   F) 副露鸡牌角标移动端统一红点（JS meldHTML，冲3/横2/普通1）
+   ================================================================== */
+
+/* ---- A) 设置页（移动端）---- */
+/* 标题行两段式：第一行 = 「设置」+ 保存/关闭（两端对齐、垂直居中），
+   第二行 = 分类胶囊条整行 —— 三者视觉上各自对齐 */
+html.mob .setmodal .sethead { flex-wrap: wrap; row-gap: 8px; }
+html.mob .setmodal .sethead .setnav { order: 3; flex: 1 1 100%; }
+/* 玩家行头像放大：与「名字 + 模型下拉」两行同高 */
+html.mob .pickent .pickthumb { width: 48px; height: 48px; }
+/* 次级参数（推荐理由 / 指示器颜色）整体换到下一行 */
+html.mob .setgroup .gbody .setrow .lbl.sub2 { flex-basis: 100%; }
+/* 超时自动操作：开关放到文字后面；「超时时间」（标签+输入框）整块换到下一行 */
+html.mob .chkline { flex-direction: row-reverse; justify-content: flex-end; }
+html.mob .setgroup .ghead .chkline { flex-basis: 100%; }
+/* 出牌与显示 / 规则开关：每行一项；下拉紧跟名称（不再两栏分散到两端） */
+html.mob .setgrid { grid-template-columns: 1fr; }
+html.mob .setgrid .setrow { grid-template-columns: max-content minmax(0, auto); }
+/* 音效行：滑杆条紧跟开关（行内已无「音量」文字标签） */
+html.mob .sndrow { gap: 10px; }
+
+/* ---- B) 弃牌 ×0.9 重排（62×84，与中央功能区分界 20px）---- */
+html.mob #river { --dis-w: 62px; --dis-h: 84px; }
+/* 我：一行 9 张（560px），首行上缘 = 底盘下沿(局部 y450) + 20 → y470 */
+html.mob .river-me  { left: 20px; top: 470px; width: 560px; height: 84px; }
+/* 对家：一行 9 张，行下缘 = 底盘上沿(y150) − 20 → y130（容器 y46..130） */
+html.mob .river-top { left: 20px; bottom: 470px; width: 560px; height: 84px; }
+/* 左右家：一列 5 张（5×62=310，带子 y145..455 居中；+4px 防亚像素折列），
+   横向最多 3 列向外生长 */
+html.mob .river-left { right: 470px; top: 143px; width: 256px; height: 314px; }
+html.mob .river-right{ left: 470px; top: 143px; width: 256px; height: 314px; }
+
+/* ---- C) 指示器悬回牌上缘（底部与牌上缘重合 10px + 原浮动动画）---- */
+html.mob .river-pile .mc .ind { top: auto; bottom: calc(100% - 10px); }
+
+/* ---- D) ⚙/⋯ 浮动按钮：金色图标 + 深底金边；空导航坞不再露黑框 ---- */
+html.mob #nav {
+  background: none; border-color: transparent; box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none; padding: 0;
+}
+html.mob body > #btn-settings, html.mob body > #btn-more {
+  width: 34px; height: 34px; font-size: 17px; color: var(--gold, #f3ca6c);
+  background: rgba(10, 30, 20, .88); border: 1px solid rgba(243, 202, 108, .55);
+}
+
+/* ---- E) 记牌器 → 左下角（与右下角「听」对称），浮窗向右上展开 ----
+   注意：#corner-tools .ct-wrap（带 id）的 right:6px 特异性更高，必须用
+   同带 id 的选择器才能把 right 归零；否则 left+right 双约束把定宽按钮
+   拉伸后居中 → 记牌器跑到屏幕正中（用户实测 bug）。width:max-content 兜底。 */
+html.mob #corner-tools .ct-counter { top: auto; bottom: 6px; left: 6px; right: auto; width: max-content; }
+html.mob #counter-pop { top: auto; bottom: calc(100% + 8px); left: 0; right: auto; }
+html.mob #counter-btn, html.mob #ting-btn {
+  color: var(--gold, #f3ca6c);
+  background: rgba(10, 30, 20, .88); border: 1px solid rgba(243, 202, 108, .55);
+}
+
+/* ==================================================================
+   第十六轮修订（2026-11-04，用户第八批反馈）
+   ------------------------------------------------------------------
+   A) 鸡牌点色统一：绿=鸡牌 / 黄=责任鸡 / 红=金鸡（基础样式已上移到
+      第十轮 C 段的 .jidots 定义处，含点径随牌宽等比 + 四倍金鸡 .q4 2×2）；
+   B) 横摆鸡牌（.mc.heng）绿带恢复 + 红点改挂牌面右上（见第十九~二十轮间注释）；
+   C) 结算页金鸡取消「金」丝带角标 → 改红点（JS resJibarHTML / chip）；
+   D) 听牌按钮浮窗废弃独立设计 → 复用「选牌上浮」同款听牌 toast（JS）；
+   E) 本局鸡牌卡（#kaiju-info）牌图右上加同口径点标（局中已知金鸡=红）。
+   ================================================================== */
+
+/* ---- E) 本局鸡牌卡：牌图容器（点标挂在右上） ---- */
+#kaiju-info .kj-tile { position: relative; display: inline-flex; }
+
+/* ==================================================================
+   第十七轮修订（2026-11-04，用户第九批反馈）
+   ------------------------------------------------------------------
+   A) 点色互换：红=普通鸡牌 / 绿=金鸡（.jin，四倍 .q4 同绿）/
+      黄=责任鸡（.zr 不变）——基础样式已上移到第十轮 C 段 .jidots 处；
+   B) 移动端记牌器跑屏幕正中的 bug：#corner-tools .ct-wrap 的 id 选择器
+      right:6px 压过 .ct-counter 的 right:auto → 改同带 id 选择器归零；
+   C) 我的徽标与信息牌错位：删除 avatar-wrap 内重复的 id="me-abadges"，
+      杠·通行证 / 报叫 统一走 .ava-side（整卡居中）。
+   ================================================================== */
 </style>
 </head>
 <body>
@@ -2879,7 +3302,7 @@ html.rp-res .rp-side.left { display: none; }
     <!-- 移动端：「⋯」收纳除设置外的全部功能按钮，点开纵向展开（桌面隐藏，按钮留在原位） -->
     <button id="btn-more" class="icon" title="更多功能">⋯</button>
     <div id="nav-more"></div>
-    <div id="kaiju-info" title="本局鸡牌"></div>
+    <div id="kaiju-info" data-tip="本局鸡牌，牌局中以右上角红点提示"></div>
   </nav>
 
   <!-- 牌桌中央：底盘 + 计时盘 + 方位灯 + 局数/余牌 -->
@@ -2918,7 +3341,6 @@ html.rp-res .rp-side.left { display: none; }
   <div id="me-row">
     <div class="player seat-me" id="me">
       <span class="avatar-wrap">
-        <span class="ava-badges" id="me-abadges"></span>
         <img class="avatar" id="me-avatar" src="/assets/avatar/boy/云天明.jpg" alt="我">
         <span class="wind-corner" id="me-wind" style="display:none"><img src="/assets/table/east.png" alt="庄"></span>
       </span>
@@ -2926,15 +3348,29 @@ html.rp-res .rp-side.left { display: none; }
         <div class="pname" id="me-name">你</div>
         <div class="pscore"><span id="me-score">0</span></div>
       </div>
-      <div class="corner-badges" id="me-badges"></div>
+      <!-- 徽标唯一出口（2026-11-04 第十七轮）：杠·通行证 / 报叫 全部走 .ava-side
+           —— 以「头像+名字」整卡为锚居中，修掉此前重复 id="me-abadges" 导致
+           标签只对齐头像、与信息牌错位的 bug -->
+      <span class="ava-side" id="me-side">
+        <span id="me-abadges"></span><span id="me-badges"></span>
+      </span>
     </div>
     <div id="me-melds"></div>
     <div id="hand"></div>
-    <!-- 记牌器：点开浮窗显示各牌种还剩几张（0 张置灰） -->
-    <button id="counter-btn" title="记牌器：各牌种剩余张数">🧮</button>
-    <div id="counter-pop" class="hidden">
-      <h5><b>记牌器</b><span>还剩几张（含我手牌已见）</span></h5>
-      <div id="counter-grid"></div>
+  </div>
+  <!-- 右下角固定工具列（2026-11-03 用户口径：不随手牌长度变化位置）：
+       🧮 记牌器 与 听牌 上下排布，浮窗各自向上展开 -->
+  <div id="corner-tools">
+    <div class="ct-wrap ct-counter">
+      <button id="counter-btn">🧮</button>
+      <div id="counter-pop" class="hidden">
+        <h5><b>记牌器</b><span>还剩几张（含我手牌已见）</span></h5>
+        <div id="counter-grid"></div>
+      </div>
+    </div>
+    <div class="ct-wrap ct-ting">
+      <button id="ting-btn">听</button>
+      <!-- 2026-11-04：独立听牌浮窗已废弃 → 点击复用「选牌上浮」同款听牌 toast -->
     </div>
   </div>
   <div id="tingbar"></div>
@@ -2942,7 +3378,7 @@ html.rp-res .rp-side.left { display: none; }
   <div id="actions"></div>
 
   <div id="coach">
-    <h3 id="coach-hd" title="点住面板任意空白处拖动；拖右下角可调整大小">🀄 大师建议 · 牌技讲解<span class="drag-hint">⠿ 拖动 · 右下角调大小</span></h3>
+    <h3 id="coach-hd" title="点住面板任意空白处拖动；拖右下角可调整大小"><img class="hd-ji" src="/assets/tiles/1条.png" alt="幺鸡">大师建议 · 牌技讲解</h3>
     <div class="val" id="coach-val"></div>
     <div class="src" id="coach-src" style="display:none"></div>
     <div class="situation" id="coach-sit" style="display:none"></div>
@@ -3019,7 +3455,7 @@ html.rp-res .rp-side.left { display: none; }
     <!-- 2026-10-12 三次改版：原「玩家身份 + 对手模型」两个板块合并成一个——
          每个玩家行 = 头像 + 名字 + 该家模型下拉（名字后面的空白区），
          「我」的下拉即大师推荐用的模型（同一份真源 SET.strategy）。 -->
-    <h4 class="setsec">玩家与模型<span class="sechint">名字与头像绑定：选哪个头像，就叫什么名字（对手名后附模型版本缩写）；模型下拉在名字下方第二行，与开局页同源</span></h4>
+    <h4 class="setsec">玩家与模型<span class="sechint">点击可更改头像或更换模型</span></h4>
     <div class="picklist" id="set-players"></div>
 
     <h4 class="setsec">大师推荐<span class="sechint">轮到你时按上面「我」选的模型计算推荐出牌与操作建议</span></h4>
@@ -3243,9 +3679,9 @@ html.rp-res .rp-side.left { display: none; }
       <h4 class="setsec">音效与音量<span class="sechint">立即生效；总开关与桌面左上角 🔊 图标联动</span></h4>
       <div class="sndgrid">
         <div class="sndrow">
-          <div class="lbl">声音总开关<span class="q" data-q="关掉后背景音乐与所有音效一起停；与桌面左上角的声音图标是同一个开关">?</span></div>
+          <div class="lbl">声音开关<span class="q" data-q="关掉后背景音乐与所有音效一起停；与桌面左上角的声音图标是同一个开关">?</span></div>
           <input type="checkbox" id="set-soundon" class="switch">
-          <span class="volrow"><b class="vlb">总音量</b>
+          <span class="volrow">
             <input type="range" id="set-vol-master" min="0" max="1" step="0.05" value="0.8">
             <b class="volval" id="set-vol-master-val">80%</b>
           </span>
@@ -3253,7 +3689,7 @@ html.rp-res .rp-side.left { display: none; }
         <div class="sndrow">
           <div class="lbl">背景音乐<span class="q" data-q="对局中循环播放的背景音乐总开关；关掉后背景音乐停，读牌与操作音效不受影响">?</span></div>
           <input type="checkbox" id="set-bgm-on" class="switch">
-          <span class="volrow"><b class="vlb">音量</b>
+          <span class="volrow">
             <input type="range" id="set-vol-bgm" min="0" max="1" step="0.05" value="0.35">
             <b class="volval" id="set-vol-bgm-val">35%</b>
           </span>
@@ -3269,7 +3705,7 @@ html.rp-res .rp-side.left { display: none; }
         <div class="sndrow">
           <div class="lbl">读牌声音<span class="q" data-q="有人打出牌时报出牌名；按**该玩家头像的性别**选男声 / 女声（男孩头像=男声，女孩头像=女声）">?</span></div>
           <input type="checkbox" id="set-voice-on" class="switch">
-          <span class="volrow"><b class="vlb">音量</b>
+          <span class="volrow">
             <input type="range" id="set-vol-voice" min="0" max="1" step="0.05" value="1">
             <b class="volval" id="set-vol-voice-val">100%</b>
           </span>
@@ -3277,15 +3713,11 @@ html.rp-res .rp-side.left { display: none; }
         <div class="sndrow">
           <div class="lbl">操作音效<span class="q" data-q="摸牌 / 打牌 / 碰 / 杠 / 胡 / 自摸 / 荒牌 / 点击等动作音效；碰杠胡自摸按**该玩家头像的性别**选男声 / 女声">?</span></div>
           <input type="checkbox" id="set-sfx-on" class="switch">
-          <span class="volrow"><b class="vlb">音量</b>
+          <span class="volrow">
             <input type="range" id="set-vol-sfx" min="0" max="1" step="0.05" value="0.9">
             <b class="volval" id="set-vol-sfx-val">90%</b>
           </span>
         </div>
-      </div>
-      <div class="setnote">
-        声音资产：读牌与碰杠胡自摸在 <b>sound_boy / sound_girl</b> 两套目录（按玩家性别自动选），
-        背景音乐在 <b>bgmusic/</b>。回放使用同一套声音设置，并带开局鸡牌提醒与鸡牌打出特效。
       </div>
     </section>
 
@@ -3383,10 +3815,6 @@ html.rp-res .rp-side.left { display: none; }
       <label><span class="sname">翻鸡牌</span><input id="sc-jifanji" type="number" min="0" step="1"></label>
       <label><span class="sname">金鸡倍率</span><input id="sc-jinji" type="number" min="0" step="1"></label>
       <label><span class="sname">每个杠</span><input id="sc-kong" type="number" min="0" step="1"></label>
-    </div>
-    <div class="setnote">
-      被碰/杠走的鸡：那张牌转移给碰/杠者，打出者另付溢价 = 该张打出的分值 − 手中鸡分值
-      （默认：冲锋 <b>3−1=2</b>、横 <b>2−1=1</b>、普通 <b>1−1=0</b>）。
     </div>
         </section>
       </div>
@@ -3520,6 +3948,8 @@ html.rp-res .rp-side.left { display: none; }
         <option value="5">5 秒/步</option>
       </select>
       <span class="rp-spacer"></span>
+      <!-- 流水行开关（2026-11-03 用户需求）：默认不显示当前事件文案行 -->
+      <button id="rp-flow" title="流水行：关（点击显示）">流水</button>
       <!-- 回放声音开关（2026-10-13）：只管回放里的读牌/音效，不碰正常对局的声音设置 -->
       <button id="rp-snd" title="回放声音：开 / 关（只影响回放，不影响正常对局音效）">🔊</button>
       <button id="rp-res" title="显示 / 隐藏本局结算（与实盘结算页完全一致）">结算</button>
@@ -3906,12 +4336,38 @@ function jiTagHTML(tag) {
   if (tag === "金鸡") return '<span class="jitag jin" data-t="金"></span>';
   return "";
 }
-/* 结算页小牌的红点标记（2026-11-02 用户口径）：结算手牌/明细里的牌太小，
-   冲/横 丝带角标不协调 → 改成局中鸡牌顶部同款红点：冲锋鸡 3 点、横鸡 2 点、
-   普通鸡/翻鸡/手中鸡 1 点。牌桌上的牌大，仍保留丝带（本函数只在结算区使用）。 */
+/* 结算页小牌的鸡牌点标记（2026-11-02 用户口径）：结算手牌/明细里的牌太小，
+   冲/横 丝带角标不协调 → 改成局中鸡牌顶部同款点标：冲锋鸡 3 点、横鸡 2 点、
+   普通/翻鸡/手中鸡 1 点；四倍金鸡(cls 含 q4) 固定 4 点（2×2，见 CSS 第十六轮）。
+   点色（2026-11-04 第十六轮统一）：绿=鸡牌 / 红=金鸡(.jin) / 黄=责任鸡(.zr)。 */
 function jiDotsHTML(tag, cls) {
-  const n = tag === "冲锋鸡" ? 3 : tag === "横鸡" ? 2 : 1;
-  return `<span class="jidots${cls ? " " + cls : ""}">${"<i></i>".repeat(n)}</span>`;
+  const c = cls || "";
+  const n = c.includes("q4") ? 4 : tag === "冲锋鸡" ? 3 : tag === "横鸡" ? 2 : 1;
+  return `<span class="jidots${c ? " " + c : ""}">${"<i></i>".repeat(n)}</span>`;
+}
+/* 点色上下文（2026-11-04 第十七轮口径）：
+   GOLD_KNOWN = 局中**已知**金鸡牌种（开局翻鸡翻到九条 → 幺鸡已在开局翻鸡种里，
+                服务端 state.gold_known 下发；结算后由 result 覆盖）；
+   GOLD_CTX   = 当前帧应显示的金鸡(.jin → 绿点)/四倍金鸡(.quad → 4 绿点)牌种。
+   render() 每帧开头刷新；结算后（result.type=win）以服务端 gold/quad 为准。 */
+let GOLD_KNOWN = new Set();
+const GOLD_CTX = { gold: new Set(), quad: new Set() };
+function updateGoldCtx(st) {
+  const res = st && st.result;
+  if (res && res.type === "win") {
+    GOLD_CTX.gold = new Set((res.gold_tiles || []).map(Number));
+    GOLD_CTX.quad = new Set((res.quad_gold_tiles || []).map(Number));
+  } else {
+    GOLD_CTX.gold = new Set(GOLD_KNOWN);
+    GOLD_CTX.quad = new Set();
+  }
+}
+/* 带点色的鸡牌点：四倍金鸡 → 4 绿点；金鸡 → 绿点；普通鸡牌 → 红点；
+   zr=true（责任鸡）→ 黄点（点数仍按 冲3/横2/其余1）。 */
+function jiDotsFor(t, tag, zr) {
+  if (zr) return jiDotsHTML(tag, "zr");
+  const cls = GOLD_CTX.quad.has(+t) ? "jin q4" : (GOLD_CTX.gold.has(+t) ? "jin" : "");
+  return jiDotsHTML(tag, cls);
 }
 
 const SUIT_FILE = ["万", "条", "筒"];
@@ -4064,6 +4520,27 @@ function _rawPlay(src, vol) {
    换 src 不回源，只有首次听到的牌名走一次网络。 */
 const VOICE_ELS = { boy: [], girl: [] };
 let VOICE_IDX = 0;
+/* 读牌元素工厂：带「出声确认」监听 —— playing 事件 = 浏览器真的开始出声了。
+   四修（2026-11-03 用户反馈「读牌过一会儿失效」）：Chrome 对同一 Audio 元素
+   高频换 src + play() 时，偶发 play() 永久悬挂（无 error、无声音，元素从此
+   哑掉）—— 2 个轮转元素挨个僵死，读牌就整体失声。看门狗：play 后 1.6s 仍
+   没确认出声 → 判定僵死，当场换新元素，无需用户干预。 */
+function _newVoiceEl() {
+  const a = new Audio();
+  a.preload = "auto";
+  a._until = 0;
+  a._ok = false;                     // 本次 play() 是否已确认出声
+  a.addEventListener("error", () => { a._until = 0; });
+  a.addEventListener("playing", () => { a._ok = true; });
+  return a;
+}
+function _rebuildVoiceEl(arr, a) {
+  const i = arr.indexOf(a);
+  if (i < 0) return;
+  try { a.pause(); } catch (e) {}
+  try { a.removeAttribute("src"); a.load(); } catch (e) {}
+  arr[i] = _newVoiceEl();
+}
 /* 读牌 blob 预取（2026-11-01 三修「一段时间后读牌哑掉只剩 BGM」）：
    手机浏览器对 HTTP/1.1 单主机连接数有限制，Audio 元素每次换到没听过的
    src 都要现连现拉；长局 + 缓存回收后，读牌请求挤在连接池里超时变哑，
@@ -4095,21 +4572,22 @@ async function preloadVoices() {
 function voicePlay(src, vol) {
   const arr = VOICE_ELS[src.indexOf("sound_boy") >= 0 ? "boy" : "girl"];
   if (!arr.length) {
-    for (let k = 0; k < 2; k++) {
-      const a = new Audio();
-      a.preload = "auto";
-      a._until = 0;
-      a.addEventListener("error", () => { a._until = 0; });
-      arr.push(a);
-    }
+    for (let k = 0; k < 2; k++) arr.push(_newVoiceEl());
   }
   const a = arr[VOICE_IDX++ % arr.length];
+  if (a._wd) { clearTimeout(a._wd); a._wd = null; }
   const real = VOICE_BLOB[src] || src;     // 已预取 → blob（不回源）
   if (a.getAttribute("src") !== real) a.src = real;
+  a._ok = false;                           // 出声确认位：本次 play 后由 playing 事件置真
   _playOn(a, vol);
+  a._wd = setTimeout(() => {
+    if (a._ok || !arr.includes(a)) return; // 正常出声 / 已被重建
+    _rebuildVoiceEl(arr, a);               // 僵死元素：换新（下一句读牌即恢复）
+  }, 1600);
 }
 /* iOS/手机浏览器：切后台、来电、锁屏会吊销媒体的播放授权——回到前台时
-   把读牌元素整个重建、播放锁复位，下一次触摸即重新解锁（pointerdown 已挂）。 */
+   把读牌元素整个重建、播放锁复位，下一次触摸即重新解锁（pointerdown 已挂）；
+   回前台当场先试一次自动解锁（桌面切回无新手势也能恢复）。 */
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   AUDIO_UNLOCKED = false;
@@ -4117,6 +4595,7 @@ document.addEventListener("visibilitychange", () => {
     for (const a of VOICE_ELS[k]) { try { a.pause(); } catch (e) {} }
     VOICE_ELS[k] = [];
   }
+  unlockAudio();
 });
 /* 单条音效：name=文件名（不含 .mp3）；gender 仅对非根目录音效生效；
    channel = "voice"（读牌）| "sfx"（操作音效，默认）。 */
@@ -4714,8 +5193,10 @@ function updateCenterTop(st) {
   const kj = el("kaiju-info");
   const jis = jiTilesOrdered(st.ji_tiles);   // 幺鸡恒第一张（2026-10-13 用户口径）
   if (jis.length) {
+    // 2026-11-04 第十六轮：牌图右上加同口径点标（绿=鸡牌；局中已知金鸡/结算金鸡=红，
+    // 四倍金鸡=4 红点），与手牌/弃牌/结算完全一致
     setHTML(kj, jis.map(t =>
-      `<img src="${tileImg(t)}" alt="${TILES[t] ? TILES[t].cn : t}" title="${TILES[t] ? TILES[t].cn : "牌" + t}（本局鸡牌）">`).join(""));
+      `<span class="kj-tile"><img src="${tileImg(t)}" alt="${TILES[t] ? TILES[t].cn : t}" title="${TILES[t] ? TILES[t].cn : "牌" + t}（本局鸡牌）">${jiDotsFor(t)}</span>`).join(""));
     kj.classList.add("on");
   } else kj.classList.remove("on");
 }
@@ -4801,7 +5282,12 @@ function floatRecommended() {
   if (SELECTED_IDX >= 0 || !st || !recommendLegalIn(st) || RECOMMEND.kind !== "discard") return;
   const hand = st.hand.slice().sort((a, b) => a - b);
   const idx = hand.indexOf(RECOMMEND.tile);
-  if (idx >= 0) { SELECTED_IDX = idx; SELECTED = RECOMMEND.tile; renderHand(st); }
+  // 2026-11-03 用户口径：模型推荐上浮与手动点上浮同权 —— 打出这张若听牌，
+  // 同样弹「听什么 / 各剩几张」浮窗（复用 tingTip）
+  if (idx >= 0) {
+    SELECTED_IDX = idx; SELECTED = RECOMMEND.tile; renderHand(st);
+    tingTip(RECOMMEND.tile, idx);
+  }
 }
 /* 推荐动作是否与「当前决策点」匹配：防止过期/非法推荐被提交（会被服务端拒绝） */
 function recommendLegalIn(st) {
@@ -4948,14 +5434,17 @@ async function tingTip(tile, idx) {
     `<span class="tcell"><img class="tin" src="${tileImg(x.t)}" alt="${TILES[x.t].cn}">` +
     `<span class="tcnt${x.left <= 0 ? " z" : ""}">剩${x.left}</span></span>`).join("");
   const types = (hit.types || []).length ? `<span class="ttype">${hit.types.join("/")}</span>` : "";
-  toast(`<span class="tt">打 <b>${TILES[tile].cn}</b> 后听牌：</span>` +
-    `<span class="trow">${cells}${types}</span>`, 2800, true);
+  // 2026-11-03 用户口径：不再显示「打 X 后听牌」——上浮哪张就按哪张算，直接给听牌结果
+  toast(`<span class="tt">听</span><span class="trow">${cells}${types}</span>`, 2800, true);
 }
 
 /* ================= 渲染 ================= */
 function render(st) {
   if (maybeKaijuFx(st)) return;   // 新局鸡牌特效播放中：本帧跳过（牌桌已铺开新一局，见 maybeKaijuFx）
   LAST_STATE = st;                // 扣牌期间不更新（计时/推荐与画面保持一致）
+  // 鸡牌点色上下文（绿=鸡牌/红=金鸡/四倍金鸡 4 红点）：结算前=局中已知金鸡
+  GOLD_KNOWN = new Set((st.gold_known || []).map(Number));
+  updateGoldCtx(st);
   updateCenter(st);
   // 结算页优先渲染：即使后续某个子渲染出错，也不会连带吞掉结算弹窗
   renderResult(st);
@@ -4977,7 +5466,7 @@ function render(st) {
   const mav = el("me-avatar");
   if (mav) { const s = avatarSrc(0); if (mav.getAttribute("src") !== s) mav.src = s; }
   const mnm = el("me-name");
-  if (mnm) setText(mnm, playerName(0, me.name || "你"));
+  if (mnm) setText(mnm, tableDisplayName(0, me.name || "你"));
   renderCounter(st);
   el("me").classList.toggle("active", st.turn === st.my_seat && !st.over);
   renderMyMelds(me.melds, st.my_seat);
@@ -5038,6 +5527,11 @@ function playerName(rel, fallback) {
 function seatDisplayName(rel, fallback) {
   if (RP_NAMES) return RP_NAMES[rel] || fallback || "";
   return playerName(rel, fallback);
+}
+/* 牌桌上的名字去掉模型简称（2026-11-03 用户口径）：派生名「大乔(B11)」「妲己(深算)」
+   在牌桌上只显示「大乔 / 妲己」；结算页与总览继续用全名 seatDisplayName。 */
+function tableDisplayName(rel, fallback) {
+  return String(seatDisplayName(rel, fallback)).replace(/[（(][^（）()]*[)）]\s*$/, "").trim();
 }
 /* ---- 默认玩家名 = 头像名 + (策略缩写)，如 大乔(B11) / 妲己(深算) ---- */
 const TEACHER_ABBR = { balanced: "均衡", aggressive: "激进", defensive: "保守",
@@ -5117,10 +5611,13 @@ function meldCells(m, rc, ownerSeat, mirror, dots) {
   // 副露吃进冲锋鸡/横鸡：真实牌面 + 统一角标（冲=红/横=蓝）；普通幺鸡/翻鸡鸡牌用普通牌面
   const isJi = !!m.ji;                 // 该副露吃进的是鸡牌（冲锋鸡/横鸡/幺鸡/翻鸡）
   // dots = true（结算页）：牌小，丝带看不清 → 与结算手牌同款红点（2026-11-02 v4 口径）
-  const jiCell = (extra = "") =>       // 鸡牌格（冲锋鸡/横鸡带角标/红点，其余纯牌面）
+  const jiCell = (extra = "") =>       // 鸡牌格：冲/横/金=丝带；普通鸡/翻鸡种=1 点标
     // 注意：横置指示格不带座位旋转类 rc（左右家组内横置牌=竖立的牌，见 .mc.vz）
+    // 2026-11-03 用户反馈：碰了开局翻的鸡种在副露区没有任何角标（jiTagHTML 对
+    // 普通鸡返回空串）→ 兜底补点标，与弃牌/结算点标同口径
+    // 2026-11-04 第十六轮：点色 绿=鸡牌 / 红=金鸡 / 四倍金鸡 4 红点
     `<span class="mc fc${extra}"><img src="${normal}" alt="">${
-      dots ? jiDotsHTML(m.ji) : jiTagHTML(m.ji)}</span>`;
+      dots ? jiDotsFor(m.tile, m.ji) : (jiTagHTML(m.ji) || jiDotsFor(m.tile, m.ji))}</span>`;
   // 横置牌位置 = 来源玩家（src）相对 owner 的方位：上家→组首、对家→居中、下家→组尾；
   // 镜像座位（右家/对家的对局面板）组首尾在屏幕上对调 → 反转，让横牌指向来源玩家。
   const srcPos = (n) => {
@@ -5142,10 +5639,12 @@ function meldCells(m, rc, ownerSeat, mirror, dots) {
     return cells.join("");
   }
   if (m.type === 2) {
-    // 明杠：横置一张指向放杠者（点杠那张，可能是鸡牌面）
+    // 明杠：横置一张指向放杠者（点杠那张）。2026-11-03 修复：此前不分鸡牌与否
+    // 一律走 jiCell → jiDotsHTML("") 兜底返回 1 红点（用户实测「杠二筒显示了红点」，
+    // 但本局鸡牌是五条/幺鸡）→ 非鸡牌杠改走普通牌面格，红点只属于鸡牌。
     const hengCls = rc ? " vz" : " heng";
     const cells = [c(normal), c(normal), c(normal), c(normal)];
-    cells[srcPos(4)] = jiCell(hengCls);
+    cells[srcPos(4)] = isJi ? jiCell(hengCls) : c(normal, hengCls);
     return cells.join("");
   }
   if (m.type === 3) {
@@ -5163,7 +5662,10 @@ function meldCells(m, rc, ownerSeat, mirror, dots) {
 function meldHTML(m, rc, ownerSeat, mirror, dots) {
   // 不加「点碰者」小标：横置牌的垂直方向 + 组内位置（指向来源玩家的一端）已能指示来源；
   // 总览另有文字说明（结算页副露说明列）
-  return `<div class="meld">${meldCells(m, rc, ownerSeat, mirror, dots)}</div>`;
+  // 2026-11-04 用户口径：移动端副露牌只有 17×26，丝带角标看不清 →
+  // 与结算小牌同款红点（冲锋鸡 3 点 / 横鸡 2 点 / 普通鸡·翻鸡 1 点）
+  const useDots = dots || document.documentElement.classList.contains("mob");
+  return `<div class="meld">${meldCells(m, rc, ownerSeat, mirror, useDots)}</div>`;
 }
 function renderOpp(rel, p, st) {
   const box = seatEl(rel);
@@ -5191,17 +5693,18 @@ function renderOpp(rel, p, st) {
   const cls = "player seat-" + ["", "right", "top", "left"][rel] +
     (st.turn === p.seat && !st.over ? " active" : "");
   if (box.className !== cls) box.className = cls;
-  // 信息区只有名字+分数两行（高度不超过头像）；庄家标浮在头像角，报叫徽章浮在面板角
-  // 杠·通行证徽章放到头像正上方（所有玩家统一，不再贴着面板/手牌区右上角）
+  // 信息区只有名字+分数两行（高度不超过头像）；庄家标浮在头像角
+  // 徽标统一（2026-11-03 用户口径）：报叫 / 杠·通行证 全挂 .ava-side —— 贴头像
+  // 靠桌面中心一侧（左家=右、右家=左、对家=下；方向见 CSS 第十一轮 D）
+  const badges = gang + bao;
   const pw = `
     <div class="pw">
-      <span class="avatar-wrap"><span class="ava-badges">${gang}</span><img class="avatar" src="${avatarSrc(rel)}" alt="">${dealerImg}</span>
+      <span class="avatar-wrap"><span class="ava-side">${badges}</span><img class="avatar" src="${avatarSrc(rel)}" alt="">${dealerImg}</span>
       <div class="pinfo">
-        <div class="pname">${seatDisplayName(rel, p.name)}</div>
+        <div class="pname">${tableDisplayName(rel, p.name)}</div>
         <div class="pscore">${p.score}</div>
       </div>
-    </div>
-    <div class="corner-badges">${bao}</div>`;
+    </div>`;
   // 对家：头像+名字在最左，之后副露、手牌（与我的布局同向）；左右家：头像+副露+手牌同列
   setHTML(box, pw + `<div class="melds">${melds}</div><div class="phand">${fan}</div>`);
   if (side) {
@@ -5270,6 +5773,12 @@ function fitSeatTiles() {
       }
     }
   }
+  // 2026-11-03 用户口径：侧家手牌缩到自动铺满值的 80% —— 缩放在二阶修正**之后**
+  // 做，避免修正把 sh 又推回铺满值。缩小后整列（头像+副露+手牌）矮于带子，
+  // v4 的 justify-content:center 随之生效 → 高度上居中而非贴顶。
+  // （副露的 ×0.8 在 CSS 第八轮段里；这里只管手牌短边 --seat-sh。）
+  sh = Math.max(14, sh * 0.8);
+  html.style.setProperty("--seat-sh", sh.toFixed(2) + "px");
   COACH_GEO = "";   // 座位（含牌宽）变了 → 大师建议的默认位「贴座位右缘」要重摆
 }
 
@@ -5384,7 +5893,7 @@ function renderHand(st) {
       (drawn && winHu ? ' title="胡牌张"' : "") + ">" +
       (i === recIdx ? indHTML(SET.recColor) : "") +
       `<img src="${tileImg(t)}" alt="${TILES[t].cn}">` +
-      (jiSet.has(t) ? '<span class="jimark"></span>' : "") + `</div>`;
+      (jiSet.has(t) ? `<span class="jimark${GOLD_CTX.gold.has(t) ? " jin" : ""}"></span>` : "") + `</div>`;
   }).join("") + '<span class="tile-mine ghost"></span>'.
     repeat(Math.max(0, slots - hand.length - extra));
   setHTML(el("hand"), html);
@@ -5425,10 +5934,11 @@ function renderRivers(st) {
         i === p.discards.length - 1 && t === st.last[1];
       const cl = !!claimed[i];
       // 2026-11-02 v4 用户口径：弃牌上的「冲/横」丝带角标看不清（牌小、丝带更小），
-      // 一律换成顶部红点（冲锋鸡 3 点 / 横鸡 2 点），位置见 CSS（左上角）。
-      // 2026-11-03 用户口径：普通幺鸡（1 分）同样要红点 → 1 点，与手牌/总览口径统一。
+      // 一律换成顶部点标（冲锋鸡 3 点 / 横鸡 2 点），位置见 CSS（左上角）。
+      // 2026-11-03 用户口径：普通幺鸡（1 分）同样要点 → 1 点，与手牌/总览口径统一。
+      // 2026-11-04 第十六轮：点色 绿=鸡牌 / 红=金鸡（局中已知或结算后）。
       const tg = tags[i];
-      const dg = tg ? jiDotsHTML(tg) : (jiSet.has(t) ? jiDotsHTML("幺鸡") : "");
+      const dg = tg ? jiDotsFor(t, tg) : (jiSet.has(t) ? jiDotsFor(t, "幺鸡") : "");
       return `<span class="mc${rc}${isLast && !cl ? " last-discard" : ""}${cl ? " claimed" : ""}"` +
         (cl ? ' title="这张已被碰/杠走（打出者的弃牌历史，牌已归碰/杠者）"' : "") + `>` +
         (isLast && !cl ? indHTML(SET.indColor) : "") +
@@ -5664,7 +6174,9 @@ function syncCoachPanel(idleMsg) {
 }
 /* 无建议时的占位内容 */
 function coachIdle(msg) {
-  el("coach-val").textContent = msg || "";
+  const vEl = el("coach-val");
+  vEl.style.display = "block";
+  vEl.textContent = msg || "";
   const srcEl = el("coach-src");
   if (srcEl) srcEl.style.display = "none";
   el("coach-sit").style.display = "none";
@@ -5707,16 +6219,27 @@ function hintSourceNote(r) {
 }
 /* 渲染一次建议结果（按钮开启与每回合自动刷新共用） */
 function paintCoach(r) {
-  el("coach-val").textContent = r.head === "teacher" || r.head === "random"
-    ? `策略：${r.model}`
-    : `局面估值 ${r.value > 0 ? "+" : ""}${r.value}（正数偏有利）· 模型：${r.model}`;
-  // 策略来源行：让用户能确认「是不是我选的策略在决策」
+  const vEl = el("coach-val");
+  // 2026-11-03 晚二批用户口径：删除「优势/劣势」与估值显示模块
+  // （model 建议整块不显示；教师/随机这类旧策略文案保留）
+  if (r.head === "teacher" || r.head === "random") {
+    vEl.style.display = "block";
+    vEl.textContent = `策略：${r.model}`;
+  } else {
+    vEl.style.display = "none";
+    vEl.textContent = "";
+  }
+  // 策略来源行（2026-11-03 用户口径）：「来自 xxx」整体删除；
+  // 仅当建议真来自错档位（事故）时才亮警告
   const srcEl = el("coach-src");
   if (r.model) {
     const note = hintSourceNote(r);
-    srcEl.style.display = "block";
-    srcEl.className = "src " + (note.ok ? "ok" : "bad");
-    srcEl.textContent = note.html;
+    if (note.ok) srcEl.style.display = "none";
+    else {
+      srcEl.style.display = "block";
+      srcEl.className = "src bad";
+      srcEl.textContent = note.html;
+    }
   } else srcEl.style.display = "none";
   // 局面速览
   const sit = r.situation || {};
@@ -5953,7 +6476,7 @@ async function openHistory() {
       + (can ? ` title="点击回放这一局"` : "")
       + `><tr>
       <td class="hist-ck"><input type="checkbox" class="hist-pick" data-ln="${rec._ln}" data-rid="${rec.rid || ""}" title="选中这一局（可批量删除）"></td>
-      <td style="width:112px;color:#8fa284;font-size:12px">${rec.time || ""}</td>
+      <td style="width:112px;color:#8fa284;font-size:12px"><span class="hist-copy" data-copy="${rec.time || ""}" title="点击复制本局名称（${rec.time || ""}）">${rec.time || ""}</span></td>
       <td class="hist-name"><span class="hn-in">${histLabel(rec)}${tag}</span></td>
       <td style="width:70px" class="${d >= 0 ? "delta-pos" : "delta-neg"}">${d >= 0 ? "+" : ""}${d}</td>
       <td style="width:34px;padding-left:0"><button type="button" class="hist-del"
@@ -6063,6 +6586,28 @@ el("hist-body").addEventListener("click", (ev) => {
   // 🗑 删除按钮 / 勾选框自己处理，别把它当成「点这一行 → 回放」
   if (ev.target.closest && (ev.target.closest("button.hist-del") ||
       ev.target.closest("input.hist-pick"))) return;
+  // 本局名称（日期+时间）点击 → 复制，不触发回放（2026-11-03 用户需求）
+  // 成功/失败都有 toast；clipboard API 不可用时兜底 execCommand
+  const cp = ev.target.closest && ev.target.closest(".hist-copy");
+  if (cp) {
+    const txt = cp.dataset.copy || cp.textContent || "";
+    const copyFallback = () => {
+      const ta = document.createElement("textarea");
+      ta.value = txt; ta.style.cssText = "position:fixed;opacity:0";
+      document.body.appendChild(ta); ta.select();
+      let ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) {}
+      ta.remove();
+      return ok;
+    };
+    const done = () => toast(`✅ 已复制本局名称：${txt}`, 1800);
+    const fail = () => toast("❌ 复制失败（浏览器未授权剪贴板）", 2200);
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(txt).then(done).catch(() =>
+        copyFallback() ? done() : fail());
+    } else copyFallback() ? done() : fail();
+    return;
+  }
   const t = ev.target.closest && ev.target.closest("table.res[data-rid]");
   if (!t) return;
   RP_FROM_HIST = true;
@@ -6292,11 +6837,12 @@ function placeReplayHud() {
     html.style.removeProperty("--rpHudT");
     return;
   }
-  const sp = el("p3"), tp = el("p2");
+  const sp = el("p3");
   const rL = sp ? sp.getBoundingClientRect() : null;
-  const rT = tp ? tp.getBoundingClientRect() : null;
   const L = Math.round(Math.max(6, (rL && rL.width ? rL.right : 0) + 8));
-  const T = Math.round(Math.max(6, (rT && rT.height ? rT.bottom : 0) + 6));
+  // 2026-11-03 用户口径：红点角标 + 本局鸡牌向上挪到**牌桌顶缘**（留 10px 呼吸位，
+  // 不贴边）。对家面板居中、左右家垂直居中后，左上角是空的，不再需要让位。
+  const T = 10;
   if (html.style.getPropertyValue("--rpHudL") !== L + "px") html.style.setProperty("--rpHudL", L + "px");
   if (html.style.getPropertyValue("--rpHudT") !== T + "px") html.style.setProperty("--rpHudT", T + "px");
 }
@@ -6314,7 +6860,7 @@ function renderReplayFrame() {
   const mav = el("me-avatar");
   if (mav) { const s = avatarSrc(0); if (mav.getAttribute("src") !== s) mav.src = s; }
   const mnm = el("me-name");
-  if (mnm) setText(mnm, seatDisplayName(0, me.name));
+  if (mnm) setText(mnm, tableDisplayName(0, me.name));
   el("me").classList.toggle("active", st.turn === st.my_seat);
   renderMyMelds(me.melds, st.my_seat);
   renderHand(st);
@@ -6462,8 +7008,10 @@ async function openReplay(rid) {
   setupReplayIdent();
   const rec = HIST_RECS.find(x => x && x.rid === rid) || null;
   // 2026-10-12 用户口径：本局名称不再带「回放 ·」前缀（角标已表达回放态）
-  el("rp-title").textContent =
-    ((rec && rec.time) ? rec.time + " · " : "") + (rec ? histLabel(rec) : `第 ${RP.hand} 局`);
+  // 2026-11-03 修复：histLabel 含 <b class="fan-gold"> 牌型标记，textContent 会把
+  // 标签当文字直出（用户截图实测）→ 改走 setHTML（与对局记录列表同口径）
+  setHTML(el("rp-title"),
+    ((rec && rec.time) ? rec.time + " · " : "") + (rec ? histLabel(rec) : `第 ${RP.hand} 局`));
   const rg = el("rp-range");
   rg.min = "0"; rg.max = String(RP.ev.length); rg.value = "0";
   renderReplayFrame();
@@ -6570,6 +7118,24 @@ function syncReplaySpeedSel() {
   if (s) s.value = String(RP_SPEED);
 }
 
+/* ---- 流水行开关（2026-11-03 用户需求）：默认不显示当前事件文案行 ----
+   状态持久化到 localStorage（dushan_rp_flow），与回放声音开关同一套路。 */
+let RP_FLOW = localStorage.getItem("dushan_rp_flow") === "1";
+function syncRpFlow() {
+  document.documentElement.classList.toggle("rp-flow", RP_FLOW);
+  const b = el("rp-flow");
+  if (b) {
+    b.classList.toggle("off", !RP_FLOW);
+    b.title = RP_FLOW ? "流水行：开（点击隐藏）" : "流水行：关（点击显示）";
+  }
+}
+if (el("rp-flow")) el("rp-flow").onclick = () => {
+  RP_FLOW = !RP_FLOW;
+  localStorage.setItem("dushan_rp_flow", RP_FLOW ? "1" : "0");
+  syncRpFlow();
+};
+syncRpFlow();
+
 /* 自动播放：进入回放即调用；到最后一帧停下并自动弹出结算页 */
 function startReplayPlay() {
   if (!RP || RP_TIMER) return;
@@ -6670,10 +7236,14 @@ function renderResult(st) {
 /* 结算顶部信息条（原本挂在「视角选择」下方，现上移到顶部图片下） */
 function resJibarHTML(st) {
   const res = st.result || {};
-  // 金鸡牌种（2026-10-12）：结算翻出的鸡 ∩ 开局定下的鸡牌 → 该牌图加金色角标
+  // 金鸡牌种（2026-10-12）：结算翻出的鸡 ∩ 开局定下的鸡牌。
+  // 2026-11-04 第十六轮：取消「金」丝带角标 → 改点色口径（金鸡=红点、
+  // 四倍金鸡=2×2 四红点）；普通鸡牌不加（信息条只列鸡牌种本身）。
   const gold = new Set((res.gold_tiles || []).map(Number));
+  const quad = new Set((res.quad_gold_tiles || []).map(Number));
   const gimg = t => `<span class="goldwrap"><img src="${tileImg(t)}" alt="">` +
-    (gold.has(+t) ? jiTagHTML("金鸡") : "") + `</span>`;
+    (quad.has(+t) ? jiDotsHTML("金鸡", "jin q4")
+      : gold.has(+t) ? jiDotsHTML("金鸡", "jin") : "") + `</span>`;
   const jiImgs = jiTilesOrdered(st.ji_tiles && st.ji_tiles.length ? st.ji_tiles : [YAOJI])
     .map(t => `<span class="jt">${gimg(t)}</span>`).join("");
   const bar = [];
@@ -6681,7 +7251,7 @@ function resJibarHTML(st) {
   // 「胡牌方式 / 翻鸡策略 / 开局翻鸡 / 鸡牌明细」等文字项全部删除
   bar.push(`<span class="jt">开局鸡牌 ${jiImgs}</span>`);
   if (res.type === "win" && res.fanji_flip != null) {
-    // 「金鸡」不再写文字说明（2026-10-12 用户口径）：牌图上的金色角标已表达。
+    // 「金鸡」不再写文字说明（2026-10-12 用户口径）：牌图上的点色已表达。
     // 2026-11-02 用户口径：指示牌之后再显示**按翻鸡规则算出的翻鸡牌种**
     // （优先用服务端下发的 res.fanji_tiles；缺省时按 fanji_flip + 结算翻鸡模式推一遍）。
     let flips = [...new Set((res.fanji_tiles || []).map(Number))].sort((a, b) => a - b);
@@ -6693,8 +7263,7 @@ function resJibarHTML(st) {
     }
     bar.push(`<span class="jt">结算翻鸡 <img src="${tileImg(res.fanji_flip)}" alt="">` +
       (flips.length ? `<span class="arr">→</span>` : "") +
-      flips.map(t => `<span class="goldwrap"><img src="${tileImg(t)}" alt="">` +
-        (gold.has(+t) ? jiTagHTML("金鸡") : "") + `</span>`).join("") +
+      flips.map(gimg).join("") +
       `</span>`);
   } else if (res.type === "win") {
     bar.push(`<span class="jt">未翻出鸡牌</span>`);
@@ -6841,12 +7410,13 @@ function playerHandBlock(st, rel, ctx) {
     if (k >= 0) hand.splice(k, 1);
   }
   // 副露组（左，组内无间距） + 手牌组（右，组内无间距）——与结算赢家牌同式样；
-  // 手牌中的鸡牌（幺鸡/开局翻鸡种/结算翻鸡种，2026-11-02 用户口径）加红点：
-  // 翻鸡之后翻出的牌种也是鸡牌，一并标记 → 一眼看出结算时手里有多少鸡
+  // 手牌中的鸡牌（幺鸡/开局翻鸡种/结算翻鸡种，2026-11-02 用户口径）加点标：
+  // 翻鸡之后翻出的牌种也是鸡牌，一并标记 → 一眼看出结算时手里有多少鸡；
+  // 2026-11-04 第十六轮：点色 绿=鸡牌 / 红=金鸡 / 四倍金鸡 4 红点
   const meldsHtml = (p.melds && p.melds.length)
     ? `<span class="ovmelds">${p.melds.map(m => meldHTML(m, "", p.seat, false, true)).join("")}</span>` : "";
   const tileCell = t => (jiSet.has(t) || ctx.fanjiSet.has(t))
-    ? `<span class="ovtile"><img src="${tileImg(t)}" alt=""><span class="jidots"><i></i></span></span>`
+    ? `<span class="ovtile"><img src="${tileImg(t)}" alt="">${jiDotsFor(t)}</span>`
     : `<img src="${tileImg(t)}" alt="">`;
   const winHtml = winTile == null ? "" :
     `<span class="ovwingap"></span><span class="ovwin" title="胡牌张（${
@@ -7021,34 +7591,37 @@ function renderPairs(st) {
   });
   const cnOf = t => (TILES[+t] ? TILES[+t].cn : "牌" + t);
   const esc = s => String(s == null ? "" : s).replace(/"/g, "&quot;");
-  /* 一张牌的小片：[牌图（责任鸡带黄点 + 金鸡角标）]×N（可跟 X 倍率）
+  /* 一张牌的小片：[牌图（金鸡红点 / 四倍金鸡四红点 / 责任鸡黄点）]×N（可跟 X 倍率）
      2026-11-02 v4 用户口径：明细小图只有 24px 高，冲/横红点已看不清 →
-     普通/打出鸡牌不再加红点（旁边的文字与 ×N 已说明）；责任鸡改**黄点**，
-     点数看它是冲锋鸡责任鸡（3）还是横鸡责任鸡（2）。 */
+     普通/打出鸡牌不加点标（旁边的文字与 ×N 已说明）；责任鸡用**黄点**，
+     点数看它是冲锋鸡责任鸡（3）还是横鸡责任鸡（2）。
+     2026-11-04 第十六轮：金鸡取消「金」丝带 → 改**红点**（四倍金鸡 4 红点）。 */
+  const gmOf = t => GOLD_CTX.quad.has(+t) ? GM * 2 : (GOLD_CTX.gold.has(+t) ? GM : 0);
   const chip = (t, n, tags, x, title, kind) => {
-    const goldTags = (tags || []).filter(x2 => x2 === "金鸡").map(jiTagHTML).join("");
+    const quad = GOLD_CTX.quad.has(+t), gold = GOLD_CTX.gold.has(+t);
     const dots = kind === "zr"
-      ? jiDotsHTML((tags || []).find(g => g === "冲锋鸡" || g === "横鸡"), "zr") : "";
+      ? jiDotsHTML((tags || []).find(g => g === "冲锋鸡" || g === "横鸡"), "zr")
+      : quad ? jiDotsHTML("金鸡", "jin q4") : gold ? jiDotsHTML("金鸡", "jin") : "";
     const x2 = (x && x !== 1) ? ` <b class="x2">X${x}</b>` : "";
     return `<span class="jcnt" title="${esc(title)}"><span class="goldwrap">` +
-      `<img src="${tileImg(t)}" alt="">${dots}${goldTags}</span>×${n}${x2}</span>`;
+      `<img src="${tileImg(t)}" alt="">${dots}</span>×${n}${x2}</span>`;
   };
-  /* 手中鸡牌：逐牌种「牌图 × 张数」，金鸡牌种再加 ×倍率 + 金鸡角标 */
+  /* 手中鸡牌：逐牌种「牌图 × 张数」，金鸡牌种再加 ×倍率（四倍金鸡 ×2 倍率） */
   const holdChips = seat => {
     const out = [];
     for (const it of (holdBd[String(seat)] || [])) {
-      const t = +it[0], n = +it[1], g = goldSet.has(t);
-      out.push(chip(t, n, g ? ["金鸡"] : [], g ? GM : 0,
-        `${cnOf(t)} 手中 ${n} 张` + (g ? `（金鸡 ×${GM}）` : "")));
+      const t = +it[0], n = +it[1], gm = gmOf(t);
+      out.push(chip(t, n, gm ? ["金鸡"] : [], gm,
+        `${cnOf(t)} 手中 ${n} 张` + (gm ? `（金鸡 ×${gm}）` : "")));
     }
     for (const it of (fanjiBd[String(seat)] || [])) {
-      const t = +it[0], n = +it[1], g = goldSet.has(t);
-      out.push(chip(t, n, g ? ["金鸡"] : [], g ? GM : 0,
-        `${cnOf(t)} 翻鸡 ${n} 张` + (g ? `（金鸡 ×${GM}）` : "")));
+      const t = +it[0], n = +it[1], gm = gmOf(t);
+      out.push(chip(t, n, gm ? ["金鸡"] : [], gm,
+        `${cnOf(t)} 翻鸡 ${n} 张` + (gm ? `（金鸡 ×${gm}）` : "")));
     }
     for (const c of (capBd[String(seat)] || [])) {
-      const t = +c.tile, g = goldSet.has(t);
-      out.push(chip(t, 1, g ? ["金鸡"] : [], 0, `${cnOf(t)} 捉炮鸡（${c.tag}）`));
+      const t = +c.tile, gm = gmOf(t);
+      out.push(chip(t, 1, gm ? ["金鸡"] : [], 0, `${cnOf(t)} 捉炮鸡（${c.tag}）`));
     }
     return out.join("");
   };
@@ -7360,7 +7933,8 @@ function renderCounter(st) {
   el("counter-grid")._c = sig;
   const rows = [0, 1, 2].map(s => st.counter.slice(s * 9, s * 9 + 9).map((n, i) => {
     const t = s * 9 + i;
-    return `<span class="cc${n <= 0 ? " zero" : ""}" title="${TILES[t] ? TILES[t].cn : ""}">` +
+    // data-tip：自定义悬浮提示（内嵌浏览器不弹原生 title，2026-11-03 用户口径）
+    return `<span class="cc${n <= 0 ? " zero" : ""}" data-tip="${TILES[t] ? TILES[t].cn : ""}：还剩 ${n} 张（含我手牌已见）">` +
       `<img src="${tileImg(t)}" alt=""><i>${n}</i></span>`;
   }).join("")).join("");
   setHTML(el("counter-grid"), rows);
@@ -7386,13 +7960,37 @@ el("counter-btn").onclick = () => {
 };
 applyCounterShow();
 
+/* ================= 听牌按钮（右下角工具列，2026-11-03 用户需求） =================
+   随时可点（不要求是自己的决策点）：按**当前手牌**算听什么 / 各剩几张。
+   决策点（暗手 14 张）服务端回落到逐张候选口径；其余时刻直接算等待张。
+   2026-11-04 用户口径：点击后的浮窗**不再单独设计**——直接复用「选牌上浮」
+   的听牌浮窗（tingTip 同款 toast：听 + 牌面×剩几张）；未听牌给一句话提示。 */
+async function refreshTingPop() {
+  if (!SID) { toast("当前未听牌", 1600); return; }
+  toast('<span class="tt">听</span><span class="trow">计算中…</span>', 900, true);
+  let r;
+  try { r = await api(`/api/ting?sid=${SID}&mode=now`); }
+  catch (e) { r = { ok: false, error: "请求失败" }; }
+  if (!r || !r.ok) { toast((r && r.error) || "不可用", 1600); return; }
+  // 决策点（暗手 14 张）服务端回落成逐张候选 map：上浮了哪张就看那张打出去听什么
+  let hit = r.cur;
+  if (!hit && r.map && SELECTED != null) hit = r.map[String(SELECTED)];
+  if (!hit || !hit.tiles || !hit.tiles.length) { toast("当前未听牌", 1600); return; }
+  const cells = hit.tiles.map(x =>
+    `<span class="tcell"><img class="tin" src="${tileImg(x.t)}" alt="${TILES[x.t].cn}">` +
+    `<span class="tcnt${x.left <= 0 ? " z" : ""}">剩${x.left}</span></span>`).join("");
+  const types = (hit.types || []).length ? `<span class="ttype">${hit.types.join("/")}</span>` : "";
+  toast(`<span class="tt">听</span><span class="trow">${cells}${types}</span>`, 2800, true);
+}
+el("ting-btn").onclick = () => refreshTingPop();
+
 /* ================= 设置项说明气泡（? 图标 → #qpop） =================
    悬浮显示；点击钉住（触屏没有 hover），点面板外或再点一次取消钉住。
    fixed 定位挂在 body 上：设置面板是滚动容器，内联气泡会被裁掉。 */
 const qpopEl = el("qpop");
 let QPOP_PIN = null;
-function showQpop(icon) {
-  const txt = icon.getAttribute("data-q") || "";
+function showQpop(icon, attr) {
+  const txt = icon.getAttribute(attr || "data-q") || "";
   if (!txt) return;
   qpopEl.textContent = txt;
   qpopEl.classList.add("on");
@@ -7407,9 +8005,14 @@ function showQpop(icon) {
 function hideQpop() { qpopEl.classList.remove("on"); }
 /* 说明气泡的事件委托：既支持设置项的 ? 圆标（.q），
    也支持任意挂了 data-q 的元素（如统计卡 .stat）——统计项本身没有问号图标，
-   但同样需要悬浮看口径。 */
+   但同样需要悬浮看口径。
+   2026-11-03 新增 [data-tip]：**纯悬浮**提示（无点击钉住、不吞点击事件），
+   给桌面按钮/鸡牌条用 —— 内嵌浏览器不弹原生 title，得自己画。 */
 const QPOP_SEL = ".q,[data-q]";
+const TIP_SEL = "[data-tip]";
 document.addEventListener("mouseover", (ev) => {
+  const t = ev.target.closest && ev.target.closest(TIP_SEL);
+  if (t) { showQpop(t, "data-tip"); return; }
   const q = ev.target.closest && ev.target.closest(QPOP_SEL);
   if (!q) return;
   if (QPOP_PIN && QPOP_PIN !== q) { QPOP_PIN.classList.remove("open"); QPOP_PIN = null; }
@@ -7417,6 +8020,12 @@ document.addEventListener("mouseover", (ev) => {
   showQpop(q);
 });
 document.addEventListener("mouseout", (ev) => {
+  const t = ev.target.closest && ev.target.closest(TIP_SEL);
+  if (t) {
+    if (ev.relatedTarget && t.contains(ev.relatedTarget)) return;
+    hideQpop();
+    return;
+  }
   const q = ev.target.closest && ev.target.closest(QPOP_SEL);
   if (!q || QPOP_PIN) return;
   if (ev.relatedTarget && q.contains(ev.relatedTarget)) return;
@@ -8252,6 +8861,9 @@ gateEl.addEventListener("cancel", e => e.preventDefault());   // Esc 不放行�
 /* 顶栏重组（2026-11-02 用户口径）：移动端把除设置外的功能按钮搬进「⋯」的纵向
    菜单；桌面保持原两列布局（按钮搬回原位）。纯 DOM 挪动，不改任何按钮逻辑。 */
 const NAV_MORE_IDS = ["btn-stats", "btn-history", "btn-peek", "btn-sound", "round-chip"];
+/* 第十四轮：⚙ 设置 与 ⋯ 功能坞在移动端脱离导航框，搬到 body 固定定位
+   （贴对家面板左缘，位置由 placeTopTools 按实测摆放；桌面原位归还） */
+const MOB_FLOAT_IDS = ["btn-settings", "btn-more"];
 const NAV_HOME = {};
 function navMoreReflow(mob) {
   const box = el("nav-more");
@@ -8266,8 +8878,24 @@ function navMoreReflow(mob) {
       NAV_HOME[id].appendChild(n);       // 按原顺序追加 → 恢复原两列
     }
   });
+  MOB_FLOAT_IDS.forEach(id => {
+    const n = el(id);
+    if (!n) return;
+    if (mob) {
+      if (!NAV_HOME[id]) NAV_HOME[id] = n.parentElement;
+      if (n.parentElement !== document.body) document.body.appendChild(n);
+    } else if (NAV_HOME[id] && n.parentElement !== NAV_HOME[id]) {
+      n.style.left = n.style.top = "";   // 清掉 fixed 坐标再回家
+      NAV_HOME[id].insertBefore(n, NAV_HOME[id].firstChild);  // ⚙/⋯ 回到原列首
+    }
+  });
 }
-el("btn-more").onclick = () => el("nav").classList.toggle("more-on");
+el("btn-more").onclick = () => {
+  const nav = el("nav");
+  const on = !nav.classList.contains("more-on");
+  if (on) placeNavMore();                // 菜单改 fixed → 每次展开前贴到 ⋯ 按钮下
+  nav.classList.toggle("more-on", on);
+};
 el("nav-more").addEventListener("click", () => el("nav").classList.remove("more-on"));
 /* 桌面 / 移动端：功能坞左边整块让给「左家头像 + 手牌列」（2026-11-02 用户口径）。
    CSS 已按牌宽给了默认偏移，但玩家名字宽度不可控（"王昭君（B11）"会顶出面板），
@@ -8295,8 +8923,38 @@ function placeNavDesktop(mob) {
   }
   nav.style.top = navTop ? navTop + "px" : "";
   if (kj) kj.style.top = navTop ? (4 - navTop) + "px" : "";
+  placeTopTools(mob);
   // 坞位置变了 → 大师建议面板的默认位要重摆（它会躲坞）；TDZ 安全起见包一层
   try { COACH_GEO = ""; tryPlaceCoach(); } catch (e) {}
+}
+
+/* 第十四轮：移动端 ⚙ / ⋯ 固定到「对家面板左缘 − 8px」处，垂直居中对见面板；
+   桌面（或按钮尚未搬走时）清空内联坐标交还文档流。 */
+function placeTopTools(mob) {
+  const s = el("btn-settings"), m = el("btn-more"), tp = el("p2");
+  if (!s || !m) return;
+  if (!mob || s.parentElement !== document.body || !tp) {
+    s.style.left = s.style.top = m.style.left = m.style.top = "";
+    return;
+  }
+  const t = tp.getBoundingClientRect();
+  if (!(t.width > 0)) return;
+  const y = Math.round(t.top + (t.height - s.offsetHeight) / 2);
+  const mx = Math.round(t.left - 8 - m.offsetWidth);
+  const sx = Math.round(mx - 6 - s.offsetWidth);
+  m.style.left = mx + "px";
+  s.style.left = sx + "px";
+  s.style.top = m.style.top = y + "px";
+  if (el("nav").classList.contains("more-on")) placeNavMore();
+}
+/* ⋯ 菜单（#nav-more）移动端改 fixed：展开位置贴在 ⋯ 按钮正下方，右缘不出屏 */
+function placeNavMore() {
+  const m = el("btn-more"), box = el("nav-more");
+  if (!m || !box || m.parentElement !== document.body) return;
+  const r = m.getBoundingClientRect();
+  const x = Math.max(6, Math.min(r.left, window.innerWidth - box.offsetWidth - 6));
+  box.style.left = x + "px";
+  box.style.top = (r.bottom + 6) + "px";
 }
 
 function fitStage() {
@@ -8331,7 +8989,9 @@ function fitStage() {
      内孔 190 + 我/对家块 186×2）。这里只做两件事：
        · 缩放比 = 「对家一行下沿 ~ 我的手牌上沿」之间的可用高度 / 562；
        · 环心对到这段高度的中点（--ring-dy），避免 390 高的小屏上环压住手牌。 */
-  const TOP_EDGE = 52;                        // 对家「信息牌 + 手牌」这一行的下沿
+  const TOP_EDGE = 66;                        // 对家「信息牌 + 手牌」这一行的下沿
+                                              // （2026-11-03 对家手牌同步桌面 ×1.3：40→52 高，
+                                              //   面板整体约 60 高，原 52 会让牌河顶块压上来 → 66）
   const handEl = document.getElementById("hand");
   // 手牌高度优先取 fitMyRow 写死的 --tile-w（牌高恒为宽的 104/68），
   // 退而测量 #hand，最后才用视口估算（开局页时手牌还没渲染）

@@ -4,5 +4,5 @@
 torch>=2.6          # Apple Silicon 自动用 MPS；纯 CPU 也能跑，只是慢些
 numpy>=2.0
 
-# 可选：推理加速（CoreML / CPU EP）。不装也能玩，自动回落 MPS/CPU。
-# onnxruntime>=1.18
+# 推理加速（CoreML / CPU EP）：Apple Silicon 上必装，比 MPS 快 2~4 倍（见 zhuoji/forward.py 实测）
+onnxruntime>=1.18

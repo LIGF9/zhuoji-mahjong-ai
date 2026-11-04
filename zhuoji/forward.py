@@ -52,11 +52,16 @@ def export_onnx(net, path: str | Path, batch: int = 8, opset: int = 17) -> Path:
 
     tiles = torch.zeros(batch, net_cpu.in_channels, 27)
     glob = torch.zeros(batch, net_cpu.global_dim)
-    torch.onnx.export(_Wrap(net_cpu), (tiles, glob), str(path),
+    # dynamo=False：走传统 TorchScript 导出器。torch>=2.15 默认 dynamo=True，
+    # 只支持 opset>=18 且会把 dynamic_axes 降级转换（实测 opset 17 转换直接失败），
+    # 还会牵出一串 torchvision 未安装的注册警告；旧导出器对 opset 17 + 动态批稳定。
+    wrapper = _Wrap(net_cpu).eval()   # 包装器本身也要 eval，否则报 training mode 警告
+    torch.onnx.export(wrapper, (tiles, glob), str(path),
                       input_names=["tiles", "glob"], output_names=list(HEAD_NAMES),
                       dynamic_axes={k: {0: "B"} for k in
                                     ("tiles", "glob", *HEAD_NAMES)},
-                      opset_version=opset, do_constant_folding=True)
+                      opset_version=opset, do_constant_folding=True,
+                      dynamo=False)
     return path
 
 
@@ -134,6 +139,7 @@ class OrtForward:
         import onnxruntime as ort
 
         so = ort.SessionOptions()
+        so.log_severity_level = 3        # 静音 CoreML GetCapability 的信息级输出（仅 ERROR 以上）
         so.intra_op_num_threads = self.threads
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         provs = (["CoreMLExecutionProvider", "CPUExecutionProvider"]
