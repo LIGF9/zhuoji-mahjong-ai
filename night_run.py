@@ -187,11 +187,12 @@ def annotate_round(r: int) -> None:
            "--student-device", "cpu",    # M1 CoreML 切 65 分区 → 吞吐崩 5 倍
            "--targets", "100000", "--threads", "4",
            "--out", str(out_dir), "--seed0", str(seed0)]
-    rc, text = run(cmd, f"annotate_r{r:02d}", timeout_s=9000)
+    # 4 线程聚合实测 4~5 万/h → 100k 需 2~2.5h；给 3.5h 余量，避免超时丢数据
+    rc, text = run(cmd, f"annotate_r{r:02d}", timeout_s=12600)
     if rc != 0:                          # 瞬时故障重试一次
         log(f"R{r} 标注失败（rc={rc}），清理残留后重试一次")
         shutil.rmtree(out_dir, ignore_errors=True)
-        rc, text = run(cmd, f"annotate_r{r:02d}_retry", timeout_s=9000)
+        rc, text = run(cmd, f"annotate_r{r:02d}_retry", timeout_s=12600)
     assert rc == 0 and data_ready(r), text[-2000:]
     log(f"R{r} 标注完成 student={stu.name} seed0={seed0} → 4×25k")
 
