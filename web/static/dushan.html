@@ -343,22 +343,37 @@ html:not(.mob) { --tile-h: calc(var(--tile-w) * 104 / 68); }
 .tile-mine .jimark { position: absolute; top: 3px; right: 4px; width: 8px; height: 8px;
   border-radius: 50%; background: #e8483d; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
 .tile-mine .jimark.jin { background: #43b16c; }
-/* 前三推荐牌「头顶排名」徽章（2026-11-04 用户需求）：
+/* 前三推荐牌「头顶排名」徽章（2026-11-04 用户需求 / 11-05 对齐修正）：
    开启大师推荐且处于出牌决策点时，按 COACH_HINTS.items 的推荐指数(prob)顺序，
    在前三张推荐打出的牌头顶显示 1 / 2 / 3；同种牌只标一张。
-   位置偏左上，避开居中悬浮指示器(.ind)与右上角鸡牌点(.jimark)；
+   位置：牌面**正上方居中**，气泡底部的尖角朝正下方指向该牌；
    挂在 .tile-mine 内，最推荐牌上浮(.sel)时徽章随牌一起上浮。 */
 .tile-mine .recrank {
-  position: absolute; left: -3px; bottom: calc(100% + 2px); z-index: 6;
+  --rank-tail: #d9a032;
+  position: absolute; left: 50%; bottom: calc(100% + 7px); z-index: 6;
+  transform: translateX(-50%);
   min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box;
   display: flex; align-items: center; justify-content: center;
   font-size: 11.5px; font-weight: 700; line-height: 1; color: #17321f;
-  background: linear-gradient(180deg, #f6d27a, #d9a032);
-  border: 1px solid rgba(255,255,255,.55); border-radius: 9px 9px 9px 2px;
+  white-space: nowrap;
+  background: linear-gradient(180deg, #f6d27a, var(--rank-tail));
+  border: 1px solid rgba(255,255,255,.55); border-radius: 9px;
   box-shadow: 0 2px 6px rgba(0,0,0,.5); pointer-events: none;
 }
-.tile-mine .recrank.r2 { background: linear-gradient(180deg, #cfe4cf, #96b79a); }
-.tile-mine .recrank.r3 { background: linear-gradient(180deg, #ddd3c1, #a99c86); color: #2b241a; }
+/* 尖角：正下方等腰三角，颜色与气泡底部渐变一致 */
+.tile-mine .recrank::after {
+  content: ""; position: absolute; left: 50%; top: 100%;
+  transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid var(--rank-tail);
+}
+.tile-mine .recrank.r2 { --rank-tail: #96b79a; background: linear-gradient(180deg, #cfe4cf, var(--rank-tail)); }
+.tile-mine .recrank.r3 { --rank-tail: #a99c86; background: linear-gradient(180deg, #ddd3c1, var(--rank-tail)); color: #2b241a; }
+/* 带排名徽章的牌抬高一层：徽章不被左侧头像信息卡（.player z-index:15）
+   与相邻手牌盖住；窄屏时头像卡移到手牌上方（html.narrow）同样不被盖 */
+.tile-mine.rec { z-index: 20; }
 /* 冲锋鸡/横鸡角标：右上角斜丝带（冲=红 / 横=蓝），叠加在任意牌面图上，全 UI 统一。
    容器（.mc/.jwrap/.jcap 等）需 position:relative；::after 的字符沿对角线旋转 45° */
 .jitag { position: absolute; top: 0; right: 0; width: 46%; height: 46%; pointer-events: none;
@@ -6030,15 +6045,17 @@ function renderHand(st) {
   if (drawIdx >= 0) order.push({ t: hand[drawIdx], i: drawIdx, drawn: true });
   if (winExtra >= 0) order.push({ t: winExtra, i: -1, drawn: true });
   const html = order.map(({ t, i, drawn }) => {
-    const cls = "tile-mine" + (i === SELECTED_IDX ? " sel" : "") +
-      (pend && pend.mode === "discard" && !pend.discardables.includes(t) ? " dim" : "") +
-      (drawn ? " newdraw" : "") + (drawn && winHu ? " winhu" : "");
     let rankHTML = "";
+    let recCls = "";
     if (rankByTile.has(t) && !rankShown.has(t)) {
       rankShown.add(t);
       const rk = rankByTile.get(t);
       rankHTML = `<span class="recrank r${rk.rank}" title="大师推荐第 ${rk.rank} 选 · 推荐指数 ${(rk.prob * 100).toFixed(1)}%">${rk.rank}</span>`;
+      recCls = " rec";   // 抬高带徽章的牌（见 .tile-mine.rec 的 z-index 说明）
     }
+    const cls = "tile-mine" + (i === SELECTED_IDX ? " sel" : "") +
+      (pend && pend.mode === "discard" && !pend.discardables.includes(t) ? " dim" : "") +
+      (drawn ? " newdraw" : "") + (drawn && winHu ? " winhu" : "") + recCls;
     return (drawn ? `<span class="drawsep${winHu ? " winsep" : ""}"></span>` : "") +
       `<div class="${cls}" data-t="${t}" data-i="${i}"` +
       (drawn && winHu ? ' title="胡牌张"' : "") + ">" +
