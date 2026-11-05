@@ -15,7 +15,9 @@ import random
 import sys
 import time
 
-sys.path.insert(0, "/Users/ligf9/WorkBuddy/2026-11-03-18-40-11/zhuoji-mahjong-ai")
+from pathlib import Path
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
 
 import numpy as np
 
@@ -23,7 +25,7 @@ import numpy as np
 def load_net(dev):
     import torch
     from zhuoji.net import ZhuojiNet
-    ck = torch.load("/Users/ligf9/WorkBuddy/2026-11-03-18-40-11/zhuoji-mahjong-ai/models/dushan_master.pt",
+    ck = torch.load(str(ROOT) + "/models/dushan_master.pt",
                     map_location="cpu", weights_only=False)
     net = ZhuojiNet(channels=64, blocks=8, hidden=320)
     net.load_state_dict(ck["state_dict"])

@@ -26,3 +26,6 @@ runs/
 
 # 破损的 ONNX 外部数据残留
 *.onnx.data
+
+# 冒烟测试产物
+models/*_smoke.pt

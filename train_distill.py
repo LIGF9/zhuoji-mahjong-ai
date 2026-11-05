@@ -9,7 +9,9 @@ from __future__ import annotations
 import glob as _glob
 import sys
 
-sys.path.insert(0, "/Users/ligf9/WorkBuddy/2026-11-03-18-40-11/zhuoji-mahjong-ai")
+from pathlib import Path
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
 
 import numpy as np
 import torch
@@ -18,7 +20,7 @@ import torch.nn as nn
 
 def main():
     # ---- 汇总各 shard ----
-    files = sorted(_glob.glob("/Users/ligf9/WorkBuddy/2026-11-03-18-40-11/zhuoji-mahjong-ai/runs/distill_w*.npz"))
+    files = sorted(_glob.glob(str(ROOT) + "/runs/distill_w*.npz"))
     assert files, "no distill shards"
     T, G, H, M, QX, QM = [], [], [], [], [], []
     for f in files:
@@ -33,7 +35,7 @@ def main():
 
     # ---- 构建模型、冻结 trunk ----
     from zhuoji.net import ZhuojiNet
-    ck = torch.load("/Users/ligf9/WorkBuddy/2026-11-03-18-40-11/zhuoji-mahjong-ai/models/dushan_master.pt",
+    ck = torch.load(str(ROOT) + "/models/dushan_master.pt",
                     map_location="cpu", weights_only=False)
     net = ZhuojiNet(channels=64, blocks=8, hidden=320)
     net.load_state_dict(ck["state_dict"])
@@ -104,7 +106,7 @@ def main():
     out["distill"] = {"targets": int(n), "target": "0.75*qmax+0.25*qmean (n32-ply3 teacher)",
                       "val_mse_before": base_mse,
                       "val_mse_after": vm, "trained": "head_value only, 30 epochs"}
-    torch.save(out, "/Users/ligf9/WorkBuddy/2026-11-03-18-40-11/zhuoji-mahjong-ai/models/dushan_distill_v1.pt")
+    torch.save(out, str(ROOT) + "/models/dushan_distill_v1.pt")
     print("saved models/dushan_distill_v1.pt")
 
 
