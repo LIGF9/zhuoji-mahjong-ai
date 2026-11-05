@@ -362,25 +362,16 @@ def situation_summary(game: DushanGame, me: int) -> dict:
     return d
 
 
-def compare_tip(game: DushanGame, me: int, items: list[dict]) -> str:
-    """首选 vs 次选的一句话提示（2026-11-03 用户口径：只说收益/风险，一句话）。"""
-    if len(items) < 2:
+def compare_tip(view, items: list[dict]) -> str:
+    """首选 vs 次选的一句话推荐（2026-11-04 用户口径：突出「为什么」+ 对比）。
+
+    薄封装：真正的生成在 :mod:`zhuoji.reason`，``view`` 必须是
+    :class:`~zhuoji.public_view.PublicView`（公开信息物理隔离）。旧版这里
+    是硬编码断言（如「且这张更安全」），既不用 Q / prob 也无公开归因，
+    已改为从公开指标 + Q 差值推导，不说无依据的话。
+    """
+    from zhuoji import reason as _reason  # noqa: PLC0415
+    try:
+        return _reason.one_line(view, items)
+    except Exception:
         return ""
-    top, second = items[0], items[1]
-    t1 = top.get("kind")
-    t2 = second.get("kind")
-    if t1 == DISCARD and t2 == DISCARD:
-        a, b = top["tile"], second["tile"]
-        ja, jb = a in game.ji_tiles, b in game.ji_tiles
-        if ja and not jb:
-            return "打这张鸡更优：有冲锋收入，且这张更安全"
-        if jb and not ja:
-            return "保鸡更优：鸡分收益大于生张风险"
-        return ""
-    if t1 == PASS and t2 == PENG:
-        return "不碰更优：保持暗手，不暴露牌型"
-    if t1 == PENG and t2 == PASS:
-        return "碰更优：加速组牌，代价是暴露牌型"
-    if t1 == HU:
-        return "能胡就胡，落袋为安"
-    return ""

@@ -198,6 +198,7 @@ fn chicken_counts(
     g: &Game,
     tenpai: &[bool; 4],
     fanji: u32,
+    gold: u32,          // 2026-11-04：金鸡牌种由 settle 统一算好（含开局已知金鸡）
     jin: f64,
     void: Option<u8>,
     quad: u32,
@@ -224,7 +225,6 @@ fn chicken_counts(
         items[p].push((label.to_string(), info.to_string(), val));
     };
 
-    let gold = fanji & g.ji_tiles;
     let quad = quad & gold;
     // 「翻鸡」项只保留非金鸡种
     let fanji_only = fanji & !g.ji_tiles;
@@ -447,18 +447,22 @@ pub fn settle_win(g: &mut Game, ft: &FanTable) -> Value {
     } else {
         0
     };
-    let gold = fanji & g.ji_tiles;
-    let quad = if fanji != 0 && cfg.kaiju_fanji != 0 {
-        if let Some(kf) = g.kaiju_flip {
-            let kaiji = fanji_mask(kf, cfg.kaiju_fanji);
-            if gold & bit(YAOJI) != 0 && kaiji & bit(YAOJI) != 0 {
-                bit(YAOJI)
-            } else {
-                0
-            }
-        } else {
-            0
+    // 2026-11-04 用户口径：开局翻鸡翻到幺鸡（九条）时，幺鸡在**开局**就已是
+    // 本局金鸡，结算必须按金鸡计。旧口径只在结算翻鸡再次翻出幺鸡时认金鸡，
+    // 用户实测「开局翻到金鸡、结算却没按金鸡算」为 bug。与 Python
+    // DushanGame::kaiju_gold_tiles() 同源。
+    let kaiju_gold: u32 = if cfg.kaiju_fanji != 0 {
+        match g.kaiju_flip {
+            Some(kf) if fanji_mask(kf, cfg.kaiju_fanji) & bit(YAOJI) != 0 => bit(YAOJI),
+            _ => 0,
         }
+    } else {
+        0
+    };
+    let gold = (fanji & g.ji_tiles) | kaiju_gold;
+    // 四倍金鸡：开局已知金鸡 + 结算翻鸡再次翻出幺鸡 → 幺鸡在金鸡基础上再 ×2
+    let quad = if kaiju_gold != 0 && fanji & bit(YAOJI) != 0 {
+        bit(YAOJI)
     } else {
         0
     };
@@ -511,7 +515,7 @@ pub fn settle_win(g: &mut Game, ft: &FanTable) -> Value {
 
     // ---- 鸡数统计 ----
     let (c, items, _own_vals, _own_tags, hold_bd, fanji_bd) =
-        chicken_counts(g, &tenpai, fanji, jin, void_player, quad);
+        chicken_counts(g, &tenpai, fanji, gold, jin, void_player, quad);
     for p in 0..4usize {
         for (label, info, val) in &items[p] {
             detail.push((p as i64, label.clone(), info.clone(), *val));

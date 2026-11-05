@@ -343,6 +343,22 @@ html:not(.mob) { --tile-h: calc(var(--tile-w) * 104 / 68); }
 .tile-mine .jimark { position: absolute; top: 3px; right: 4px; width: 8px; height: 8px;
   border-radius: 50%; background: #e8483d; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
 .tile-mine .jimark.jin { background: #43b16c; }
+/* 前三推荐牌「头顶排名」徽章（2026-11-04 用户需求）：
+   开启大师推荐且处于出牌决策点时，按 COACH_HINTS.items 的推荐指数(prob)顺序，
+   在前三张推荐打出的牌头顶显示 1 / 2 / 3；同种牌只标一张。
+   位置偏左上，避开居中悬浮指示器(.ind)与右上角鸡牌点(.jimark)；
+   挂在 .tile-mine 内，最推荐牌上浮(.sel)时徽章随牌一起上浮。 */
+.tile-mine .recrank {
+  position: absolute; left: -3px; bottom: calc(100% + 2px); z-index: 6;
+  min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11.5px; font-weight: 700; line-height: 1; color: #17321f;
+  background: linear-gradient(180deg, #f6d27a, #d9a032);
+  border: 1px solid rgba(255,255,255,.55); border-radius: 9px 9px 9px 2px;
+  box-shadow: 0 2px 6px rgba(0,0,0,.5); pointer-events: none;
+}
+.tile-mine .recrank.r2 { background: linear-gradient(180deg, #cfe4cf, #96b79a); }
+.tile-mine .recrank.r3 { background: linear-gradient(180deg, #ddd3c1, #a99c86); color: #2b241a; }
 /* 冲锋鸡/横鸡角标：右上角斜丝带（冲=红 / 横=蓝），叠加在任意牌面图上，全 UI 统一。
    容器（.mc/.jwrap/.jcap 等）需 position:relative；::after 的字符沿对角线旋转 45° */
 .jitag { position: absolute; top: 0; right: 0; width: 46%; height: 46%; pointer-events: none;
@@ -984,6 +1000,17 @@ html.replaying #timer::after {
   background: rgba(226,75,74,.85); border-color: #ff8b8a; color: #fff;
 }
 #histdel-mask .btnrow #histdel-ok:hover { filter: brightness(1.1); }
+/* 清空全部记录确认窗：同为破坏性操作，与删除确认窗同式样 */
+#histclear-mask .modal { width: min(430px, 88vw); }
+#histclear-mask .btnrow #histclear-ok {
+  background: rgba(226,75,74,.85); border-color: #ff8b8a; color: #fff;
+}
+#histclear-mask .btnrow #histclear-ok:hover { filter: brightness(1.1); }
+/* 「历史累计」标题行：标题 + 清除按钮同处一行 */
+.stats-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 8px; }
+.stats-head h3 { margin: 0 !important; }
+.stats-head .histbtn { padding: 3px 10px; font-size: 12px; }
 
 /* ============ 设置面板 ============
    设置行统一成「名字 + 控件」同处一行、控件紧跟名字（2026-10-12）：
@@ -3910,6 +3937,7 @@ html.mob #nav #nav-more { position: fixed; }
       <span class="hist-selinfo" id="hist-selinfo">未选择</span>
       <span class="hist-flex"></span>
       <button type="button" id="hist-del-batch" class="histbtn danger" disabled>删除所选</button>
+      <button type="button" id="hist-clear" class="histbtn danger" title="清空全部对局记录与回放，「数据统计·历史累计」同步归零">清除全部记录</button>
       <button type="button" id="hist-export-json" class="histbtn" title="导出全部对局记录（JSON）">导出 JSON</button>
       <button type="button" id="hist-export-csv" class="histbtn" title="导出全部对局记录（CSV，可直接用 Excel 打开）">导出 CSV</button>
     </div>
@@ -3927,6 +3955,20 @@ html.mob #nav #nav-more { position: fixed; }
     <div class="btnrow">
       <button id="histdel-cancel">取消</button>
       <button id="histdel-ok">确认删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 清空全部对局记录确认弹窗（2026-11-04 用户需求：历史累计旁「清除」按钮）。
+     两个入口共用：数据统计页「历史累计」标题后的按钮、对局记录页工具条
+     「清除全部记录」。确认后 POST /api/history_clear → 记录/回放/统计一并归零。 -->
+<div class="mask" id="histclear-mask">
+  <div class="modal">
+    <h2>清除全部对局记录？</h2>
+    <div class="sub" id="histclear-sub">将清空全部对局记录与回放，「数据统计·历史累计」会一并归零。此操作无法撤销。</div>
+    <div class="btnrow">
+      <button id="histclear-cancel">取消</button>
+      <button id="histclear-ok">确认清除</button>
     </div>
   </div>
 </div>
@@ -4413,17 +4455,21 @@ function jiDotsHTML(tag, cls) {
   const n = c.includes("q4") ? 4 : tag === "冲锋鸡" ? 3 : tag === "横鸡" ? 2 : 1;
   return `<span class="jidots${c ? " " + c : ""}">${"<i></i>".repeat(n)}</span>`;
 }
-/* 点色上下文（2026-11-04 第十七轮口径）：
-   GOLD_KNOWN = 局中**已知**金鸡牌种（开局翻鸡翻到九条 → 幺鸡已在开局翻鸡种里，
-                服务端 state.gold_known 下发；结算后由 result 覆盖）；
+/* 点色上下文（2026-11-04 第十七轮口径 + 开局金鸡结算修订）：
+   GOLD_KNOWN = 局中**已知**金鸡牌种（开局翻鸡翻到九条 → 幺鸡在开局翻鸡种里，
+                服务端 state.gold_known 下发；与规则引擎结算口径同源）；
    GOLD_CTX   = 当前帧应显示的金鸡(.jin → 绿点)/四倍金鸡(.quad → 4 绿点)牌种。
-   render() 每帧开头刷新；结算后（result.type=win）以服务端 gold/quad 为准。 */
+   render() 每帧开头刷新；结算后**并入** GOLD_KNOWN —— 用户口径「开局翻到金鸡，
+   局内的手牌还是用角标金来表示」，不能因为结算帧换了数据源就把局内标记抹掉。 */
 let GOLD_KNOWN = new Set();
 const GOLD_CTX = { gold: new Set(), quad: new Set() };
 function updateGoldCtx(st) {
   const res = st && st.result;
   if (res && res.type === "win") {
-    GOLD_CTX.gold = new Set((res.gold_tiles || []).map(Number));
+    GOLD_CTX.gold = new Set([
+      ...(res.gold_tiles || []).map(Number),   // 结算金鸡（已含开局已知金鸡）
+      ...GOLD_KNOWN,                          // 旧回放 / 结算帧也保证局内标记不丢
+    ]);
     GOLD_CTX.quad = new Set((res.quad_gold_tiles || []).map(Number));
   } else {
     GOLD_CTX.gold = new Set(GOLD_KNOWN);
@@ -5959,6 +6005,25 @@ function renderHand(st) {
     RECOMMEND.kind === "discard" && pend && pend.mode === "discard")
     ? hand.indexOf(RECOMMEND.tile) : -1;
   const jiSet = st.ji_tiles && st.ji_tiles.length ? new Set(st.ji_tiles) : new Set([YAOJI]);
+  /* 前三推荐牌头顶排名（2026-11-04 用户需求）：
+     开启大师推荐、且正处在自己的出牌决策点时，把推荐指数(prob)排名前三的
+     「打出候选」依次编号 1/2/3，标在手牌对应牌的头顶；同种牌只标一张。
+     items 已由服务端按 Q / prob 降序下发，这里按原顺序筛出前三个 discard。
+     最推荐牌仍由 floatRecommended() 正常上浮；徽章挂在牌内，会随牌一起上浮。 */
+  const rankByTile = new Map();
+  if (SET.hintOn && pend && pend.mode === "discard" && COACH_HINTS &&
+      COACH_HINTS.items && COACH_HINTS.items.length) {
+    let rank = 0;
+    for (const it of COACH_HINTS.items) {
+      if (!it || it.kind !== "discard") continue;
+      const t = Number(it.tile);
+      if (!Number.isInteger(t) || t < 0 || rankByTile.has(t)) continue;
+      rank += 1;
+      if (rank > 3) break;
+      rankByTile.set(t, { rank, prob: Number(it.prob) || 0 });
+    }
+  }
+  const rankShown = new Set();   // 同种牌（例如两张五万）只在第一张上标
   // 按「渲染顺序」输出：先手牌（去掉新摸的那张），再间隔，最后把新摸的牌摆在最右
   const order = [];
   hand.forEach((t, i) => { if (i !== drawIdx) order.push({ t, i, drawn: false }); });
@@ -5968,9 +6033,16 @@ function renderHand(st) {
     const cls = "tile-mine" + (i === SELECTED_IDX ? " sel" : "") +
       (pend && pend.mode === "discard" && !pend.discardables.includes(t) ? " dim" : "") +
       (drawn ? " newdraw" : "") + (drawn && winHu ? " winhu" : "");
+    let rankHTML = "";
+    if (rankByTile.has(t) && !rankShown.has(t)) {
+      rankShown.add(t);
+      const rk = rankByTile.get(t);
+      rankHTML = `<span class="recrank r${rk.rank}" title="大师推荐第 ${rk.rank} 选 · 推荐指数 ${(rk.prob * 100).toFixed(1)}%">${rk.rank}</span>`;
+    }
     return (drawn ? `<span class="drawsep${winHu ? " winsep" : ""}"></span>` : "") +
       `<div class="${cls}" data-t="${t}" data-i="${i}"` +
       (drawn && winHu ? ' title="胡牌张"' : "") + ">" +
+      rankHTML +
       (i === recIdx ? indHTML(SET.recColor) : "") +
       `<img src="${tileImg(t)}" alt="${TILES[t].cn}">` +
       (jiSet.has(t) ? `<span class="jimark${GOLD_CTX.gold.has(t) ? " jin" : ""}"></span>` : "") + `</div>`;
@@ -6387,7 +6459,10 @@ async function openStats() {
     `<div class="stat"${tip ? ` data-q="${tip}"` : ""}>` +
     `<div class="num">${v}</div><div class="lbl">${l}</div></div>`).join("")}</div>`;
   el("stats-body").innerHTML = `
-    <h3 style="color:var(--gold);font-size:15px;font-weight:normal;margin-bottom:8px">历史累计（全部会话）</h3>
+    <div class="stats-head">
+      <h3 style="color:var(--gold);font-size:15px;font-weight:normal">历史累计（全部会话）</h3>
+      <button type="button" id="stats-clear" class="histbtn danger" title="清空全部对局记录与回放，历史累计归零">清除记录</button>
+    </div>
     ${mk([
       ["对局", all.games, "本服务器累计打完的对局数（「结束本局」提前终止的局不计分、不计入）"],
       ["自摸", pct(all.zimo, all.games), "你自摸胡牌的局数占全部对局的比值"],
@@ -6480,7 +6555,7 @@ for (const id of ["stats-mask", "hist-mask"]) {
 }
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Escape") return;
-  for (const id of ["stats-mask", "hist-mask", "ava-mask", "ji-mask"])
+  for (const id of ["stats-mask", "hist-mask", "histclear-mask", "ava-mask", "ji-mask"])
     el(id).classList.remove("on");
   // 结束本局确认窗走 closeEndhandConfirm：从设置面板点开的还要把设置面板放回来
   closeEndhandConfirm();
@@ -6662,6 +6737,47 @@ function histExport(fmt) {
 }
 el("hist-export-json").onclick = () => histExport("json");
 el("hist-export-csv").onclick = () => histExport("csv");
+
+/* ---- 清空全部对局记录（2026-11-04 用户需求：历史累计旁「清除」按钮）----
+   两个入口共用同一个二次确认弹窗：
+     ① 数据统计页「历史累计（全部会话）」标题后的「清除记录」；
+     ② 对局记录页工具条「清除全部记录」。
+   确认后 POST /api/history_clear。服务端 /api/stats 是逐行扫 records.jsonl
+   现算的，没有独立账本，清空文件即让「历史累计」与「对局记录」同时归零。 */
+async function openHistClear() {
+  let games = null;
+  try {
+    const st = await api("/api/stats?sid=" + SID);
+    if (st && st.all_time) games = st.all_time.games;
+  } catch (e) {}
+  const sub = el("histclear-sub");
+  if (sub) sub.textContent = (Number.isFinite(games) ? `当前共 ${games} 局记录。` : "")
+    + "将清空全部对局记录与回放，「数据统计·历史累计」会一并归零。此操作无法撤销。";
+  el("histclear-mask").classList.add("on");
+}
+function closeHistClear() {
+  const m = el("histclear-mask"); if (m) m.classList.remove("on");
+}
+el("hist-clear").onclick = openHistClear;
+/* #stats-clear 是 openStats() 每次重建 innerHTML 时生成的 → 用事件委托绑定到容器 */
+el("stats-body").addEventListener("click", (ev) => {
+  if (ev.target.closest && ev.target.closest("#stats-clear")) openHistClear();
+});
+el("histclear-cancel").onclick = closeHistClear;
+el("histclear-mask").addEventListener("click", (ev) => {
+  if (ev.target === el("histclear-mask")) closeHistClear();
+});
+el("histclear-ok").onclick = async () => {
+  closeHistClear();
+  const r = await histApi("/api/history_clear", {});
+  if (r && r.ok) {
+    toast(`已清除全部记录（${r.removed_rec} 局）`);
+    if (el("hist-mask").classList.contains("on")) await openHistory();
+    if (el("stats-mask").classList.contains("on")) await openStats();
+  } else {
+    toast((r && r.error) || "清除失败");
+  }
+};
 /* 对局记录里点可回放的行 → 打开回放
    2026-10-12：记录页要**主动隐藏**（否则浮在回放之上挡牌桌），
    退出回放时再回到记录页（RP_FROM_HIST 记住来路）。 */

@@ -109,6 +109,12 @@ fn game_from_py(d: &Bound<'_, PyDict>) -> PyResult<Game> {
     g.respond_hu_votes = g_vec(d, "respond_hu_votes").iter().map(|&x| x as u8).collect();
     g.n_hu = g_i64(d, "n_hu", 0).max(0) as usize;
     g.ji_tiles = g_i64(d, "ji_tiles", 1 << 9) as u32;
+    // 2026-11-04：Python 快照补齐了开局指示牌与两种翻鸡模式，Rust 搜索模拟的
+    // 结算必须与真实 Python 结算同源（否则开局金鸡局会漏掉金鸡倍率）。
+    g.cfg.jiesuan_fanji = g_i64(d, "jiesuan_fanji", 3) as u8;   // 默认 both
+    g.cfg.kaiju_fanji = g_i64(d, "kaiju_fanji", 0) as u8;       // 默认 off
+    let kf = g_i64(d, "kaiju_flip", -1);
+    g.kaiju_flip = if kf >= 0 { Some(kf as u8) } else { None };
     Ok(g)
 }
 

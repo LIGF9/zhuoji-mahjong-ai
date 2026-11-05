@@ -528,18 +528,17 @@ class SearchAgent(Bot):
 
     # ---- 推荐理由（算法可解释性） ----------------------------------------
     def rank_explain(self, game, k: int = 4):
-        """与 ``rank`` 同源，但为每个候选附**分层推演理由**（面向学牌）。
+        """与 ``rank`` 同源，但为每个候选附**对比型公开信息理由**。
 
-        理由只用推演事实 + 数值比较，不编造：每行回答一个问题——
-          ① 结论：这张牌值多少、比次优高多少；
-          ② 依据：N 种假想世界里胡了几次、被胡几次、其余按残局估值；
-          ③ 牌面：这张牌在手里是什么结构（孤张/搭子/对子）、牌河现了几张；
-          ④ 学习点：一句话把上面的数字翻成可迁移的打法原则。
+        2026-11-04：理由层改用 ``PublicView`` 物理隔离——只在构造 view 时
+        短暂读一次完整 game，之后 ``explain_items`` 只拿到公开字段，结构上
+        不可能使用别家手牌 / 真实牌墙。理由围绕「为什么是它（对比次选）」
+        组织，落到向听 / 进张 / 听牌 / 已现张数 / 鸡分 / Q 差值。
         """
+        from .public_view import PublicView  # noqa: PLC0415
         legal, q, _prior_p, _base_best, v0 = self._evaluate(game)
-        items = explain_items(game, game.actor(), legal, q,
-                              getattr(self, "_last_qs", None) or [],
-                              getattr(self, "_last_diags", None) or [], k)
+        view = PublicView.from_game(game, game.actor())
+        items = explain_items(view, legal, q, k=k)
         return items, float(v0)
 
 
@@ -569,41 +568,18 @@ class SearchAgent(Bot):
         return "按期望分差最大的走，长期下来每一分都会累积"
 
 
-def explain_items(game, p: int, legal, q, qs, diags, k: int = 4):
-    """把 (Q 向量, 逐 determinization 的 Q, 推演诊断) 翻成可读理由。
+def explain_items(view, legal, q, qs=None, diags=None, k: int = 4):
+    """把 Q 向量翻成**对比型公开信息理由**（兼容旧调用的薄封装）。
 
-    2026-11-03 用户口径：**只保留必要的收益与风险说明**——
-      · 收益：这张动作的期望分差、与次优/最优的差距；
-      · 风险：打牌时的生熟张（点炮敞口）与鸡牌提示。
-    不再输出推演统计、V 值解释、牌面结构、学习点等教学层。
+    2026-11-04 用户口径：理由不得使用全局信息、必须突出「为什么是这张牌 /
+    这个操作（与其他牌或操作的对比）」。真正的实现在 :mod:`zhuoji.reason`，
+    而 ``view`` 必须是 :class:`~zhuoji.public_view.PublicView`——理由层物理上
+    只拿得到：自己暗手、四家弃牌 / 副露、鸡牌种、开局已知金鸡、已现张数、
+    公开计分常量、牌墙剩余**张数**。别家手牌与真实牌墙内容根本不在对象里。
+
+    ``qs`` / ``diags`` 仅为兼容旧签名保留，不参与理由计算：逐 determinization
+    的 Q 与终局诊断来自公平采样，不属于「为什么」所需的公开归因；且旧代码
+    把副露 ``m[:1]``（其实是 meld 类型码）误当牌张计已现张数，已一并废弃。
     """
-    order = np.argsort(-q)[:max(1, min(int(k), len(legal)))]
-    items = []
-    for rank_i, i in enumerate(order):
-        i = int(i)
-        a, qv = legal[i], float(q[i])
-        lines: list[str] = []
-        # ---- 收益：期望分差 + 与次优/最优的差距 -------------------------
-        if rank_i == 0 and len(order) > 1:
-            j = int(order[1])
-            lines.append(f"最优：{a.label()}，期望 {qv:+.2f} 分"
-                         f"（次优「{legal[j].label()}」{q[j]:+.2f}）")
-        else:
-            j0 = int(order[0])
-            lines.append(f"第{rank_i + 1}选：{a.label()}，期望 {qv:+.2f} 分"
-                         f"（比最优低 {float(q[j0]) - qv:+.2f}）")
-        # ---- 风险：仅打牌有——生熟张（点炮敞口）+ 鸡牌 ------------------
-        tile = getattr(a, "tile", None)
-        kind = str(getattr(a, "kind", ""))
-        if tile is not None and tile >= 0 and kind == DISCARD:
-            seen = sum(1 for q2 in range(4) for t in game.discards[q2] if t == tile)
-            shown = [t for q2 in range(4) for m in game.melds[q2] for t in m[:1]]
-            seen += sum(1 for t in shown if t == tile)
-            risk = ("已现 %d 张，较安全" % seen if seen >= 2 else
-                    "生张，点炮风险较高" if seen == 0 else "已现 1 张")
-            if tile in getattr(game, "ji_tiles", ()):
-                risk += "；鸡牌"
-            lines.append(risk)
-        items.append({"action": a, "q": qv, "reason": "；".join(lines),
-                      "lines": lines})
-    return items
+    from . import reason as _reason  # noqa: PLC0415
+    return _reason.build_items(view, legal, q, k)

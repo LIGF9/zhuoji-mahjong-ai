@@ -20,6 +20,9 @@ from .rules import Action
 KIND_DISCARD, KIND_HU, KIND_ANGANG, KIND_BUGANG, KIND_PENG, KIND_MINGGANG, KIND_PASS = range(7)
 _KIND_NAME = ["discard", "hu", "angang", "bugang", "peng", "minggang", "pass"]
 _HEAD_NAME = {0: "discard", 1: "self_kong", 2: "respond"}
+# 翻鸡模式字符串 → Rust Config 里的 u8 编码（与 rust_engine/src/bin/settle_parity.rs
+# 的 mode_code 同口径）：off=0 / up=1 / down=2 / both=3
+_FANJI_CODE = {"off": 0, "up": 1, "down": 2, "both": 3}
 
 
 def _code(a) -> tuple[int, int]:
@@ -85,6 +88,13 @@ def snapshot_of(game, p: int) -> dict:
         "respond_hu_votes": [int(x) for x in game._respond_hu_votes],
         "n_hu": int(game._n_hu),
         "ji_tiles": sum(1 << t for t in game.ji_tiles),
+        # 2026-11-04：开局指示牌 + 两种翻鸡模式必须一起传给 Rust。旧快照没传，
+        # Rust 搜索模拟的结算用的是 Config::default()（kaiju_fanji=off、无
+        # kaiju_flip），与真实 Python 结算口径不一致 —— 开局金鸡局的搜索 Q 值
+        # 会漏掉金鸡倍率。这里补齐，保证「公平推演」与实盘结算同源。
+        "kaiju_flip": -1 if game.kaiju_flip is None else int(game.kaiju_flip),
+        "kaiju_fanji": _FANJI_CODE.get(str(cfg.kaiju_fanji), 0),
+        "jiesuan_fanji": _FANJI_CODE.get(str(cfg.jiesuan_fanji), 3),
         "pass_lock_cfg": bool(cfg.enable_pass_lock),
         "qiang_gang": bool(cfg.enable_qiang_gang),
         "baojiao_auto": bool(cfg.baojiao_auto),
@@ -356,9 +366,10 @@ def deep_q_detail(model, game, p: int, legal, n_det: int = 32, ff_cap: int = 24,
                   lam: float = 1.0, reweight: bool = False):
     """`deep_q` + 逐 determinization 诊断：返回 `(q, stats, diag, qs)`。
 
-    供推荐理由层复用 Python 版 `explain_items` 的「N 张假想世界终局统计」
-    （直通终局几条 / 我胡几次 / 被胡几次 / 终局均分）。ply≥2 时 diag/qs 为空
-    （第二/三层的 max 语义不回写第一层 task，diag 只反映 1-ply 口径，不导出）。
+    ``diag`` / ``qs`` 是公平采样的推演诊断（2026-11-03 曾用于理由层的
+    「N 张假想世界终局统计」）。2026-11-04 起推荐理由改为只依据
+    ``PublicView`` 公开信息 + Q 差值生成，不再使用这些推演诊断；字段仍
+    保留在返回值里供 PIMC 冲突率等离线分析。ply≥2 时 diag/qs 为空。
     """
     return _deep_search_run(model, game, p, legal, n_det, ff_cap, topk, ply,
                             seed, device, stats, fair, want_diag=True, agg=agg,
@@ -529,7 +540,8 @@ class RustSearchAgent:
         - ``q``：逐动作平均 Q；
         - ``qs[d][i]``：第 d 个假想世界里动作 i 的 Q；
         - ``diag[d][i] = {"terminal","win","delta"}``：终局诊断（仅 ply=1）。
-        供推荐理由层 `explain_items` 的「N 张假想世界终局统计」。
+        ``diag``/``qs`` 现仅供离线诊断；线上推荐理由由 ``PublicView``
+        公开信息层生成（见 ``zhuoji.reason``），不使用这些推演诊断。
         """
         legal = game.legal_actions()
         if not legal:

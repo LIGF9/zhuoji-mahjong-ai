@@ -7,8 +7,12 @@ import json
 import random
 import subprocess
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "/Users/ligf9/WorkBuddy/2026-11-03-18-40-11/zhuoji-mahjong-ai")
+# 旧脚本把仓库路径写死在 2026-11-03 的 WorkBuddy 临时目录里，项目迁移后
+# 直接跑会 ModuleNotFoundError / 找不到二进制。改成相对本文件定位仓库根目录。
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from zhuoji.dushan import DushanConfig, DushanGame  # noqa: E402
 from zhuoji.rules import HU, ANGANG, BUGANG, MINGGANG, PENG  # noqa: E402
@@ -68,8 +72,7 @@ def main():
         made += 1
 
     inp = "\n".join(json.dumps(c) for c in cases) + "\n"
-    bin_path = ("/Users/ligf9/WorkBuddy/2026-11-03-18-40-11/zhuoji-mahjong-ai/"
-                "rust_engine/target/release/settle_parity")
+    bin_path = str(ROOT / "rust_engine" / "target" / "release" / "settle_parity")
     proc = subprocess.run([bin_path], input=inp, capture_output=True, text=True,
                           timeout=600)
     if proc.returncode != 0:

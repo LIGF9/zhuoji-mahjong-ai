@@ -652,11 +652,13 @@ class DushanGame(ZhuojiGame):
 
         模式见 ``cfg.jiesuan_fanji``：up=仅上鸡(+1)、down=仅下鸡(-1)、both=上下鸡、
         off=关闭（2026-10-11 新增：胡牌后不翻鸡，翻鸡牌集合为空）。
-        金鸡（2026-10-12 用户口径修订）：结算翻出的**翻鸡牌种**与本局
+        金鸡（2026-11-04 用户口径修订）：**开局翻鸡翻到幺鸡（九条）时本局即
+        已确定金鸡**，结算必须按金鸡计；此外结算翻出的**翻鸡牌种**与本局
         **开局时定下来的鸡牌**（``ji_tiles`` = 幺鸡 ＋ 开局翻鸡新增种 ＋ 手动追加种）
-        有重合即算金鸡；重合的那几张牌就是「金鸡」，其一切相关分（手中鸡 / 打出的鸡 /
-        捉炮鸡 / 责任鸡溢价）一律乘 ``cfg.jin_ji_multiplier``。
-        （旧实现只看「翻鸡牌里有没有幺鸡」，漏掉了手动追加种与开局翻鸡种重合的情形。）
+        有重合也各算金鸡。重合的那几张牌就是「金鸡」，其一切相关分（手中鸡 /
+        打出的鸡 / 捉炮鸡 / 责任鸡溢价）一律乘 ``cfg.jin_ji_multiplier``。
+        （旧实现只看结算翻鸡 ∩ ji_tiles，漏掉了「开局翻到金鸡但结算没再翻出
+        幺鸡」的情形，用户实测这是一局没按金鸡结算的 bug。）
         """
         if self.cfg.jiesuan_fanji == FANJI_OFF:
             return False, set()
@@ -668,33 +670,44 @@ class DushanGame(ZhuojiGame):
         gold = bool(self._gold_tiles_of(fanji))
         return gold, fanji
 
+    def kaiju_gold_tiles(self) -> set[int]:
+        """开局已知金鸡牌种（2026-11-04 用户口径；服务端 ``state.gold_known`` 同源）。
+
+        开局翻鸡翻到**九条**时，幺鸡已经因开局翻鸡成为本局翻鸡种，局内所有人
+        都已知它「是金鸡」。这种情况下本局结算就必须按金鸡计 —— 旧口径只在
+        结算翻鸡再次翻出幺鸡时才认金鸡，导致「开局翻到金鸡、结算却不按金鸡
+        算」的 bug。服务端也用这个集合派生局内 ``gold_known``，两边口径统一。
+        """
+        if self.kaiju_flip is None or \
+                getattr(self.cfg, "kaiju_fanji", FANJI_OFF) == FANJI_OFF:
+            return set()
+        kaiji = fanji_tiles_from(int(self.kaiju_flip), self.cfg.kaiju_fanji)
+        return {YAOJI} if YAOJI in kaiji else set()
+
     def _gold_tiles_of(self, fanji) -> set[int]:
-        """金鸡牌种 = 结算翻出的翻鸡牌 ∩ 开局定下的本局鸡牌（``ji_tiles``）。
+        """金鸡牌种 = (结算翻出的翻鸡牌 ∩ 本局鸡牌) ∪ 开局已知金鸡。
 
         与 ``_dushan_chicken_state`` 共用同一口径；单独抽出来是因为计分各处
         （手中鸡 / 打出鸡 / 捉炮鸡 / 责任溢价 / 包鸡副露）都要按牌种乘倍率。
+        2026-11-04 修订：开局已知金鸡在**开局**就已确定，不必等结算翻鸡再次
+        翻出，必须并入这里，否则相关分都不会乘金鸡倍率。
         """
-        if not fanji:
-            return set()
-        return {int(t) for t in fanji if int(t) in self.ji_tiles}
+        out = {int(t) for t in (fanji or ()) if int(t) in self.ji_tiles}
+        out |= self.kaiju_gold_tiles()
+        return out
 
     def _quad_gold_tiles_of(self, fanji) -> set[int]:
         """四倍金鸡牌种（2026-11-04 用户口径）。
 
-        开局翻鸡翻到**九条**时，幺鸡已经因开局翻鸡成为本局翻鸡种
-        （局内所有人都已知它"是金鸡"）；若结算翻鸡按结算翻鸡模式算出的翻鸡牌
-        **再次**包含幺鸡（翻到九条或二条，视 up/down/both 而定），幺鸡即
-        「再次金鸡」→ 升级为**四倍金鸡**：相关分在金鸡 ×``jin_ji_multiplier``
-        的基础上**再乘 2**（默认档 2×2=4 倍），结算页以四红点特殊标记。
-        一般化口径：四倍金鸡牌种 = 金鸡牌种 ∩ 开局翻鸡牌种，且限定幺鸡
-        （金鸡概念本身即围绕幺鸡，翻鸡种里的其他牌不升级）。
+        开局翻鸡与结算翻鸡**双重**翻出幺鸡：开局已知金鸡（开局翻九条）＋
+        结算翻鸡按结算翻鸡模式算出的翻鸡牌**再次**包含幺鸡（翻到九条或二条），
+        幺鸡即「再次金鸡」→ 升级为**四倍金鸡**：相关分在金鸡
+        ×``jin_ji_multiplier`` 的基础上**再乘 2**（默认档 2×2=4 倍），结算页
+        以四点特殊标记。只升级幺鸡（金鸡概念本身即围绕幺鸡）。
         """
-        if not fanji or self.kaiju_flip is None \
-                or getattr(self.cfg, "kaiju_fanji", FANJI_OFF) == FANJI_OFF:
+        if not fanji or not self.kaiju_gold_tiles():
             return set()
-        kaiji = fanji_tiles_from(int(self.kaiju_flip), self.cfg.kaiju_fanji)
-        gold = self._gold_tiles_of(fanji)
-        return {YAOJI} if (YAOJI in gold and YAOJI in kaiji) else set()
+        return {YAOJI} if any(int(t) == YAOJI for t in fanji) else set()
 
     # -- 结算（教程口径） ------------------------------------------------------
     def _own_ji_after_claims(self, gold=None, quad=None
@@ -1073,7 +1086,7 @@ class DushanGame(ZhuojiGame):
 
 
         _gold_bool, fanji = self._dushan_chicken_state()
-        # 金鸡牌种（2026-10-12 用户口径）= 翻鸡牌 ∩ 开局定下的本局鸡牌；
+        # 金鸡牌种（2026-11-04 修订）= (结算翻鸡牌 ∩ 本局鸡牌) ∪ 开局已知金鸡；
         # 一切相关分 ×jin（手中鸡/打出鸡/捉炮鸡在 _chicken_counts，责任溢价在
         # _claimed_ji_rows，包鸡副露在下方 end_baoji 分支）。
         gold_tiles = self._gold_tiles_of(fanji)

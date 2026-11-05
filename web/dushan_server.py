@@ -53,6 +53,7 @@ from zhuoji.dushan import (  # noqa: E402
     norm_fanji,
 )
 from zhuoji.encoder import index_to_action  # noqa: E402
+from zhuoji.public_view import PublicView  # noqa: E402  # 推荐理由的公开信息隔离层
 from zhuoji.search_agent import explain_items  # noqa: E402
 from zhuoji.fan import (  # noqa: E402
     MELD_KONG_ADDED,
@@ -299,6 +300,39 @@ def delete_history_records(rec_file: Path, replay_file: Path, items: list) -> di
             if w not in whys:
                 whys.append(w)
         out["error"] = "；".join(whys) if whys else (out["error"] or "记录已被删除")
+    return out
+
+
+def clear_history_records(rec_file: Path, replay_file: Path) -> dict:
+    """清空**全部**对局记录与回放（2026-11-04 用户需求：主动清除历史累计）。
+
+    ``/api/stats`` 的历史累计是逐行扫 ``records.jsonl`` 现算的，没有独立账本，
+    所以清空文件即让「历史累计」与「对局记录」同时归零。这里写空文件而不是
+    ``unlink``：文件保持存在，后续 append 不会因为路径 / 权限重新建文件而出岔子。
+    回放除了落盘文件还有内存缓存，必须一并清掉并冻结磁盘回读。
+    """
+    global _REPLAY_READY
+    out = {"ok": False, "removed_rec": 0, "removed_replay": 0, "error": ""}
+
+    def _count(p: Path) -> int:
+        if not p.exists():
+            return 0
+        try:
+            return sum(1 for ln in p.read_text(encoding="utf-8").splitlines()
+                       if ln.strip())
+        except Exception:
+            return 0
+
+    rec_n, rep_n = _count(rec_file), _count(replay_file)
+    try:
+        rec_file.write_text("", encoding="utf-8")
+        replay_file.write_text("", encoding="utf-8")
+    except Exception as e:
+        out["error"] = f"清空失败：{e}"
+        return out
+    _REPLAY_CACHE.clear()
+    _REPLAY_READY = True        # 文件已空，禁止再从磁盘尾部把旧回放读回来
+    out.update(ok=True, removed_rec=rec_n, removed_replay=rep_n)
     return out
 
 
@@ -1578,6 +1612,14 @@ class Session:
         if snap is None:
             return {"ok": False, "error": "现在不是你的决策点"}
         game, my = snap
+        # 推荐理由的公开信息视图：这是唯一会短暂接触完整 game 的构造点。
+        # 之后 explain_items / compare_tip 只拿得到 view（自己手牌、四家弃牌
+        # 副露、鸡种、已现张数、公开计分常量、牌墙剩余张数），结构上拿不到
+        # 别家暗手与真实牌墙内容 —— 满足「不使用全局信息编写推荐理由」。
+        try:
+            view = PublicView.from_game(game, my)
+        except Exception:
+            view = None
         try:
             # 教师策略：启发式，返回单一推荐
             if strategy.startswith("teacher:"):
@@ -1623,7 +1665,8 @@ class Session:
                 # 2026-11-02：三档全部走 Rust 内核（模拟/编码/克隆在 Rust，
                 # 前向走 ORT-CoreML）。Python 进程池退为异常兜底。
                 exp_items, v_now = self._search_explain(
-                    game, my, stem, ply=ply, n_det=n_det, engine="rust")
+                    game, my, stem, ply=ply, n_det=n_det, engine="rust",
+                    view=view)
                 ranked = [(it["action"], it["q"]) for it in exp_items]
                 if not ranked:
                     return {"ok": False, "error": "当前没有可行动作"}
@@ -1631,17 +1674,25 @@ class Session:
                 temp = max(1.0, float(q_t.std()))
                 w = torch.softmax((q_t - q_t.max()) / temp, dim=-1).tolist()
                 items = []
+                # 2026-11-04：搜索档的 reason / lines / tags 全部来自
+                # PublicView 隔离层（exp_items），不再调用 _hint_item →
+                # explain_action_full(完整 game)。整条理由链路物理上无全局信息。
                 for it, pw in zip(exp_items, w):
-                    h = self._hint_item(game, it["action"], float(pw), my)
-                    h["reason"] = it.get("reason", "")
-                    h["lines"] = it.get("lines") or [it.get("reason", "")]
-                    items.append(h)
+                    a = it["action"]
+                    items.append({
+                        "label": a.label(), "kind": a.kind,
+                        "tile": int(a.tile), "q": float(it.get("q", 0.0)),
+                        "prob": round(float(pw), 4),
+                        "reason": it.get("reason", ""),
+                        "lines": it.get("lines") or [it.get("reason", "")],
+                        "tags": it.get("tags", []),
+                    })
                 try:
                     situation = coach.situation_summary(game, my)
                 except Exception:
                     situation = {}
                 try:
-                    tip = coach.compare_tip(game, my, items)
+                    tip = coach.compare_tip(view, items)
                 except Exception:
                     tip = ""
                 _desc = ("极算·128 路推演（Rust 内核·公平采样 128 张假想牌局；"
@@ -1654,7 +1705,8 @@ class Session:
                         "n_det": n_det, "ply": ply,
                         "items": items, "situation": situation, "tip": tip,
                         "note": _desc
-                                + "；理由只含收益（期望分差）与风险（生熟张/鸡牌）"
+                                + "；理由只依据公开信息（自己手牌/四家弃牌副露/已现张数/鸡种），"
+                                + "突出「为什么是这张牌（与次选的向听·进张·风险·鸡分对比）」"
                                 + "；prob 是 Q 值的 softmax（仅供排序参考）"}
             # 模型策略（默认）
             want = strategy.split(":", 1)[1] if ":" in strategy else "master"
@@ -1675,7 +1727,7 @@ class Session:
             except Exception:
                 situation = {}
             try:
-                tip = coach.compare_tip(game, my, items)
+                tip = coach.compare_tip(view, items)
             except Exception:
                 tip = ""
             return {"ok": True, "model": stem, "head": head,
@@ -1693,14 +1745,13 @@ class Session:
         return float(value)
 
     def _search_explain_rust(self, game: DushanGame, my: int, stem: str,
-                             ply: int, n_det: int, topk: int):
+                             ply: int, n_det: int, topk: int, view=None):
         """search128 档的 Rust 路径（由 _search_explain 调用，异常由其捕获回落）。
 
-        2026-11-02：Rust 内核新增 ``det_stats`` 导出——ply=1 时逐 determinization
-        × 动作的终局诊断 (terminal, win, delta)，与 Python 版 `_note_terminal`
-        同口径（win = 本座位是胡家之一，含一炮多响）。因此理由层与 Python 路径
-        **共用同一份** `explain_items`：「N 张假想世界直通终局 x 条（我胡 a /
-        被胡 b，终局均分 c）」。
+        Q 值由 Rust 内核用**公平 determinization** 算出（重排不可见池、只看
+        公开信息）。理由层 ``explain_items`` 只接收 ``PublicView``——搜索内核
+        传进来的完整 game 仅用于推进模拟，理由文字物理上拿不到别家手牌 /
+        真实牌墙内容。
         """
         from zhuoji.rust_search import RustSearchAgent
 
@@ -1727,26 +1778,33 @@ class Session:
             cache[key] = ag
         with self.search_lock:
             q, qs, diag = ag.rank_detail(game)
-        items = explain_items(game, my, legal, q, qs, diag, 4)
+        items = explain_items(view, legal, q, qs, diag, 4)
         return items, self._value_now(game, stem)
 
     def _search_explain(self, game: DushanGame, my: int, stem: str,
-                        ply: int = 3, n_det: int = 32, engine: str = "py"):
-        """一次搜索 → (分层理由 items, V(当前局面))。
+                        ply: int = 3, n_det: int = 32, engine: str = "py",
+                        view=None):
+        """一次搜索 → (对比型公开信息理由 items, V(当前局面))。
 
         优先进程池（主进程不被占用）；池子不可用/结果对不上时回落到进程内
-        批量搜索。两条路径的搜索口径完全一致：公平 n_det 路采样 + 逐动作平均。
+        批量搜索。两条路径的搜索口径完全一致：公平 n_det 路采样 + 逐动作平均，
+        Q 值不使用隐藏信息（determinization 重排不可见池）。
 
-        ``engine="rust"``（search128 档）：走 Rust 内核，主进程内、
-        search_lock 串行（~0.25s/步，不必进池子）。2026-11-02 起 Rust 导出
-        ``det_stats``，理由层与 Python 路径共用 `explain_items` 的四层文字
-        （结论 / N 张假想世界终局统计 / 牌面 / 学习点），不再有取舍。
+        ``view`` 是 ``PublicView`` 公开信息隔离层：Rust / 进程池 / 进程内三条
+        路径的理由文字都由它生成，物理上只含自己手牌、四家弃牌副露、鸡种、
+        已现张数、公开计分常量与牌墙剩余张数，不含别家手牌与真实牌墙内容。
         """
+        if view is None:  # hint() 构造失败时再给一次机会；仍失败则理由层降级为纯 Q 排名
+            try:
+                view = PublicView.from_game(game, my)
+            except Exception:
+                view = None
         legal = game.legal_actions()
         topk = 3
         if engine == "rust" and legal:
             try:
-                return self._search_explain_rust(game, my, stem, ply, n_det, topk)
+                return self._search_explain_rust(game, my, stem, ply, n_det,
+                                                 topk, view=view)
             except Exception as exc:  # noqa: BLE001 - Rust 不可用回落 Python 池
                 sys.stderr.write(f"[hint] rust 搜索失败，回落 Python：{exc!r}\n")
         pool = get_search_pool()
@@ -1755,11 +1813,11 @@ class Session:
                     + 13 * int(getattr(game, "wall_pos", 0)) + int(my))
             res = pool.search(game, stem, ply=ply, topk=topk, n_det=int(n_det), seed=seed)
             if res is not None and res.get("labels") == [a.label() for a in legal]:
-                items = explain_items(game, my, legal, res["q"], res["qs"],
+                items = explain_items(view, legal, res["q"], res["qs"],
                                       res["diags"], 4)
                 return items, self._value_now(game, stem)
         ag = self._search_agent(stem, ply=ply, topk=topk, n_det=n_det)
-        # 进程内兜底：SearchAgent 持有 rng 状态，同一实例不能并发用 → 串行
+        # 进程内兜底：rank_explain 内部会自行构造 PublicView，口径一致
         with self.search_lock:
             return ag.rank_explain(game, 4)
 
@@ -2043,15 +2101,9 @@ class Session:
             "ji_tiles": sorted(int(t) for t in game.ji_tiles),
             "kaiju_flip": int(game.kaiju_flip) if game.kaiju_flip is not None else None,
             # 局内已知金鸡（2026-11-04 用户口径）：开局翻鸡翻到九条时幺鸡已在
-            # 开局翻鸡种里 → 局中即以红点（金鸡色）标记幺鸡（结算后按 gold_tiles 覆盖）
-            "gold_known": sorted(
-                int(t) for t in (
-                    fanji_tiles_from(int(game.kaiju_flip),
-                                     str(getattr(game.cfg, "kaiju_fanji", "off")))
-                    if (game.kaiju_flip is not None
-                        and str(getattr(game.cfg, "kaiju_fanji", "off")) != "off")
-                    else ())
-                if t == YAOJI),
+            # 开局翻鸡种里 → 局中即以红点（金鸡色）标记幺鸡；口径与规则引擎
+            # 结算用的 kaiju_gold_tiles() **同源**，避免「局内标金、结算不算金」。
+            "gold_known": sorted(int(t) for t in game.kaiju_gold_tiles()),
             "hand": hand,
             "last_draw": self._fresh_draw(game, me, over),
             # 记牌器：34 种牌各自剩余张数（下标=牌 id）
@@ -2765,6 +2817,17 @@ class Handler(BaseHTTPRequestHandler):
                       f"（记录 {r['removed_rec']} 行 / 回放 {r['removed_replay']} 行"
                       + (f" / 跳过 {len(r['skipped'])} 项" if r.get("skipped") else "")
                       + "）", flush=True)
+            return self._json(r, 200 if r.get("ok") else 400)
+
+        if path == "/api/history_clear":
+            # 清空全部对局记录（2026-11-04 用户需求：对局记录页「历史累计」旁
+            # 加清除按钮 + 二次确认）。/api/stats 是逐行扫 records.jsonl 现算，
+            # 清空记录 + 回放文件即让历史累计归零；内存回放缓存同步清掉。
+            r = clear_history_records(Session.HISTORY_FILE, Session.REPLAY_FILE)
+            if r.get("ok"):
+                print(f"[history] 清空全部记录 "
+                      f"（记录 {r['removed_rec']} 行 / 回放 {r['removed_replay']} 行）",
+                      flush=True)
             return self._json(r, 200 if r.get("ok") else 400)
 
         if path == "/api/act":
