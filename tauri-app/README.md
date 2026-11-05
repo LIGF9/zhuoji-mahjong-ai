@@ -40,17 +40,28 @@ node src-tauri/tauri android build --apk --target aarch64
 ## 测试
 
 ```bash
-cd taur-app/src-tauri && cargo test   # 6 项：地址归一化 + 连接探测（需本机 8770 服务在跑）
+cd tauri-app/src-tauri && cargo test   # 7 项：地址归一化 + touch 参数 + 连接探测（需本机 8770 服务在跑）
 ```
 
 已验证（2026-11-05）：
-- Rust 后端 6/6 通过（含对真实服务端的连通探测）。
+- Rust 后端 7/7 通过：`normalize_adds_scheme_and_trims_slash`、`normalize_rejects_bad_input`、
+  `normalize_rejects_non_http_scheme`、`touch_param_is_appended_once`、
+  `check_server_rejects_garbage`、`check_server_unreachable_port_fails_fast`、
+  `check_server_hits_real_backend`（最后一项打真实服务端）。
 - 启动页 6 种安卓横屏视口（800×360@3x … 960×540）无溢出、按钮全部可见可点。
 - 游戏 API 端到端 13/13（meta/new/state/hint/act/speed/history/stats，不结束一手、历史零污染）。
 - 视觉一致性：`http://127.0.0.1:8770` 与 `http://<LAN-IP>:8770` 开局静态页像素差 **0.0000%**
   （同 URL 两次加载的动画噪声基线 0.51%）。
 - APK 校验：`com.zhuoji.mahjong`，minSdk 24 / targetSdk 36，INTERNET + 横屏 +
   release usesCleartextTraffic=true，arm64-v8a 原生库，V2 签名验证通过。
+- **安卓模拟器实机流程**（Pixel 4 / API 34 / arm64，HVF 加速）：安装 → 启动页渲染正确 →
+  自动探测 `GET /api/meta` 200 OK 433ms → 进入真实牌局（开局卡片、桌面、大师建议面板、
+  推荐牌头顶 1/2/3 徽章均正常）→ 硬件返回键回启动页且地址保留。
+  期间发现并修复一个真实集成 bug：Tauri Android WebView 不命中
+  `(hover:none)+(pointer:coarse)`，游戏误判为窄桌面窗口而弹「窗口宽度不足」门禁；
+  修复方式是 `enter_game` 导航时自动补 `?touch=1`（游戏自带口径，未改游戏一行代码，
+  保存的地址保持干净）。
+- 未覆盖：实体安卓真机（本机无设备），模拟器已验证同一份 APK（sha256 `1558f4aa…`）。
 
 ## 架构说明（为什么不做"离线版"）
 
