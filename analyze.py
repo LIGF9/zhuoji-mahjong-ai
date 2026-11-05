@@ -1,11 +1,13 @@
-"""配对赛显著性分析：重复牌墙两场（候选坐 0 / 坐 2）合成配对样本。
+"""配对赛显著性分析：固定牌墙 + 座位旋转合成配对样本（兼容 2 座位旧口径与 4 座位新口径）。
 
 指标
 ----
-* 逐 seed 配对差：diff_s = [(cand-base)_seat0 + (cand-base)_seat2] / 2
+* 逐 seed 配对差：diff_s = mean over seats[(cand-base)_seat]
   其中 (cand-base)_seat = deltas[cand] - mean(deltas[others])。
+  座位集从数据自动识别（每个 seed 需 ≥2 个座位才计入）。
 * 检验：配对 t 检验（正态近似）+ 符号检验 + bootstrap 95% CI。
 * 附加：候选胡牌率 / 被胡率 / 流局率对照（观感指标）。
+* 冻结基线池协议见 docs/14天训练计划.md §0；自对弈胜率不得作为决策依据。
 
 用法： .venv/bin/python analyze.py runs/v1_n128.jsonl [--min-seed-pairs 30]
 """
@@ -40,19 +42,26 @@ def load(paths):
 
 def pair_diffs(recs):
     seeds = sorted({s for (s, _c) in recs})
+    seats = sorted({c for (_s, c) in recs})
     diffs = []
+    skipped = 0
     for s in seeds:
-        r0 = recs.get((s, 0))
-        r2 = recs.get((s, 2))
-        if not r0 or not r2:
-            continue
-        def margin(r):
+        ms = []
+        for c in seats:
+            r = recs.get((s, c))
+            if not r:
+                continue
             d = r["deltas"]
-            c = r["cand_seat"]
-            others = [d[i] for i in range(4) if i != c]
-            return d[c] - sum(others) / 3.0
-        diffs.append(0.5 * (margin(r0) + margin(r2)))
-    return seeds, np.array(diffs, dtype=np.float64)
+            cc = r["cand_seat"]
+            others = [d[i] for i in range(4) if i != cc]
+            ms.append(d[cc] - sum(others) / 3.0)
+        if len(ms) != len(seats):       # 全座位覆盖才计入（与 eval_pairs.summary 同口径）
+            skipped += 1
+            continue
+        diffs.append(float(np.mean(ms)))
+    if skipped:
+        print(f"（{skipped} 个 seed 座位不全，已剔除）")
+    return seeds, np.array(diffs, dtype=np.float64), seats
 
 
 def t_test_1sample(x):
@@ -106,8 +115,8 @@ def rates(recs):
 def main():
     paths = sys.argv[1:] or ["runs/v1_n128.jsonl"]
     recs = load(paths)
-    seeds, x = pair_diffs(recs)
-    print(f"完成 seed 配对数: {len(x)}  (原始场次 {len(recs)})")
+    seeds, x, seats = pair_diffs(recs)
+    print(f"座位旋转: {seats}  完成 seed 配对数: {len(x)}  (原始场次 {len(recs)})")
     if len(x) < 5:
         print("样本不足")
         return

@@ -1,11 +1,11 @@
-"""独山麻将配对赛驱动：候选算法 vs N32 基线，重复牌墙 + 座位轮换。
+"""独山麻将配对赛驱动：候选算法 vs N32 基线，固定牌墙 + 四座旋转。
 
 用法：
     .venv/bin/python duel.py --hands 300 --workers 6 --out runs/v1.jsonl \
         [--cand-ndet 128] [--cand-ply 3] [--cand-agg 0] [--cand-lam 1.0]
 
-设计：
-  * 每个牌墙 seed 打两场：候选坐 0 号位、候选坐 2 号位（对家），其余三家用 N32。
+设计（冻结基线池协议，docs/14天训练计划.md §0）：
+  * 每个牌墙 seed 打四场：候选轮流坐 0/1/2/3 号位，其余三家用 N32。
   * 基线严格复刻线上「深算 n32」：ply=3 / n_det=32 / topk=3 / fair=True（Rust 内核）。
   * 每条记录流式追加 JSONL：{"seed","cand_seat","deltas","steps","type","winner"}。
   * 中断可续：已完成的 seed 跳过（按输出文件扫描）。
@@ -19,11 +19,14 @@ import os
 import random
 import sys
 import time
+from pathlib import Path
 
-sys.path.insert(0, "/Users/ligf9/WorkBuddy/2026-11-03-18-40-11/zhuoji-mahjong-ai")
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
 
 OUT = ""
 CAND = {}
+SEATS = (0, 1, 2, 3)
 
 
 def worker_main(wid, jobs, dev, out, cand, cand_model=""):
@@ -33,14 +36,13 @@ def worker_main(wid, jobs, dev, out, cand, cand_model=""):
     from zhuoji.net import ZhuojiNet
     from zhuoji.rust_search import RustSearchAgent
 
-    root = "/Users/ligf9/WorkBuddy/2026-11-03-18-40-11/zhuoji-mahjong-ai"
-    ck = torch.load(f"{root}/models/dushan_master.pt", map_location="cpu",
+    ck = torch.load(ROOT / "models/dushan_master.pt", map_location="cpu",
                     weights_only=False)
     net = ZhuojiNet(channels=64, blocks=8, hidden=320)
     net.load_state_dict(ck["state_dict"])
     net.eval()
     if cand_model:
-        cck = torch.load(f"{root}/{cand_model}" if not cand_model.startswith("/") else cand_model,
+        cck = torch.load(ROOT / cand_model if not cand_model.startswith("/") else cand_model,
                          map_location="cpu", weights_only=False)
         cand_net = ZhuojiNet(channels=64, blocks=8, hidden=320)
         cand_net.load_state_dict(cck["state_dict"])
@@ -123,24 +125,25 @@ def main():
             "decide": args.cand_decide, "topk": args.cand_topk, "ff": args.cand_ff}
     os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
 
-    # 断点续跑：扫描已完成 seed
+    # 断点续跑：扫描已完成 (seed, seat)
     done = set()
     for suf in ([f"{OUT}.w{i}" for i in range(args.workers)] + [OUT]):
         if os.path.exists(suf):
             for line in open(suf, encoding="utf-8"):
                 try:
-                    done.add(json.loads(line)["seed"])
+                    r = json.loads(line)
+                    done.add((r["seed"], r["cand_seat"]))
                 except Exception:
                     pass
 
     seeds = [args.seed0 + i for i in range(args.hands)]
     jobs = []
     for s in seeds:
-        if s in done:
-            continue
-        jobs.append((s, 0))
-        jobs.append((s, 2))
-    random.Random(0).shuffle(jobs)          # 打散：中断时两场不偏科
+        for c in SEATS:
+            if (s, c) in done:
+                continue
+            jobs.append((s, c))
+    random.Random(0).shuffle(jobs)          # 打散：中断时各场不偏科
     chunks = [jobs[i::args.workers] for i in range(args.workers)]
 
     import multiprocessing as mp
