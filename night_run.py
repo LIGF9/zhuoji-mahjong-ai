@@ -134,6 +134,10 @@ def annotate_round(r: int, seed0: int) -> None:
     stu = export_onnx(latest_pt())
     cmd = [ANNOTATE, "--student", str(stu), "--teacher", TEACHER_ONNX,
            "--student-enc", "3",
+           # M1(v3) 学生在 CoreML 上被切成 65 个分区，batch=1 单步争用 ANE
+           # 会把吞吐打到 R1 的 1/5（实测 2.3k/h·worker）；CPU EP 恢复
+           # 到 ~12.8k/h·worker。教师仍走 CoreML（CPU 上教师慢 18 倍）。
+           "--student-device", "cpu",
            "--targets", "100000", "--threads", "4",
            "--out", str(out_dir), "--seed0", str(seed0)]
     rc, text = run(cmd, f"annotate_r{r:02d}", timeout_s=9000)

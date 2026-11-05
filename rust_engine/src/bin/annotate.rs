@@ -271,6 +271,7 @@ fn worker(
     ply: u8,
     seed0: u64,
     out_dir: &Path,
+    student_coreml: bool,
     use_coreml: bool,
     threads_per_infer: usize,
 ) {
@@ -281,7 +282,10 @@ fn worker(
     } else {
         (15, 70)
     };
-    let mut stu = Infer::new(env, student_path, s_ch, s_gdim, threads_per_infer, use_coreml)
+    // M1(v3) 学生 ONNX 会被 CoreML 切成 65 个分区，batch=1 单步在多线程
+    // 并发下争用 ANE 可达 0.2s/步（一局上百步 → 23s/局）。CPU EP 单步仅
+    // ~5ms 且不与教师抢 ANE，故学生默认可独立走 CPU；教师必须留 CoreML。
+    let mut stu = Infer::new(env, student_path, s_ch, s_gdim, threads_per_infer, student_coreml)
         .expect("学生模型加载失败");
     let mut tea = Infer::new(env, teacher_path, 15, 70, threads_per_infer, use_coreml)
         .expect("教师模型加载失败");
@@ -533,6 +537,11 @@ fn main() {
     let topk: usize = m.get("topk").and_then(|x| x.parse().ok()).unwrap_or(3);
     let ply: u8 = m.get("ply").and_then(|x| x.parse().ok()).unwrap_or(3);
     let use_coreml = m.get("device").map(|d| d != "cpu").unwrap_or(true);
+    // 学生设备默认继承 --device；--student-device cpu 可只把学生挪到 CPU EP。
+    let student_coreml = m
+        .get("student-device")
+        .map(|d| d != "cpu")
+        .unwrap_or(use_coreml);
     let threads_per_infer: usize = m
         .get("infer-threads")
         .and_then(|x| x.parse().ok())
@@ -544,7 +553,7 @@ fn main() {
         .expect("加载 onnxruntime dylib 失败")
         .build()
         .expect("ORT 环境初始化失败");
-    eprintln!("[annotate] ORT ready (coreml={use_coreml})");
+    eprintln!("[annotate] ORT ready (teacher_coreml={use_coreml}, student_coreml={student_coreml})");
 
     let per = (targets + nthreads - 1) / nthreads;
     std::thread::scope(|scope| {
@@ -569,6 +578,7 @@ fn main() {
                     ply,
                     seed0,
                     &out_dir,
+                    student_coreml,
                     use_coreml,
                     threads_per_infer,
                 );
