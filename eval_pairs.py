@@ -37,21 +37,48 @@ from zhuoji.rules import Phase
 
 ALL_SEATS = (0, 1, 2, 3)
 
+# worker 进程内缓存：同 (path, mode, seat) 的 agent 只建一次，逐局重置 RNG。
+# 否则每局 4 次 torch.load + 会话初始化，闸门 C（200 局×搜索）会多烧半小时。
+_NET_CACHE: dict = {}
+_AG_CACHE: dict = {}
 
-def make_agent(model_path, mode, seat_seed, dev):
+
+def _load_net(model_path):
     import torch
-    from zhuoji.agent import NetAgent
     from zhuoji.net import build_from_ckpt
 
-    ck = torch.load(str(model_path), map_location="cpu", weights_only=False)
-    net, _ = build_from_ckpt(ck, map_location="cpu")
-    # ORT 后端按 stem 找 ONNX 缓存；stem=检查点文件名（2026-11-05）。
-    net.onnx_stem = Path(model_path).stem
-    if mode == "greedy":
-        return NetAgent(net, seed=seat_seed, temperature=0.0, name="greedy")
-    from zhuoji.rust_search import RustSearchAgent
-    return RustSearchAgent(net, seed=seat_seed, device=dev, name="s32",
-                           ply=3, n_det=32, topk=3, ff_cap=24, fair=True)
+    key = str(model_path)
+    net = _NET_CACHE.get(key)
+    if net is None:
+        ck = torch.load(key, map_location="cpu", weights_only=False)
+        net, _ = build_from_ckpt(ck, map_location="cpu")
+        # ORT 后端按 stem 找 ONNX 缓存；stem=检查点文件名（2026-11-05）。
+        net.onnx_stem = Path(model_path).stem
+        _NET_CACHE[key] = net
+    return net
+
+
+def get_agent(model_path, mode, seat, seat_seed, dev):
+    key = (str(model_path), mode, seat)
+    ag = _AG_CACHE.get(key)
+    if ag is None:
+        net = _load_net(model_path)
+        if mode == "greedy":
+            from zhuoji.agent import NetAgent
+            ag = NetAgent(net, seed=seat_seed, temperature=0.0, name="greedy")
+        else:
+            from zhuoji.rust_search import RustSearchAgent
+            ag = RustSearchAgent(net, seed=seat_seed, device=dev, name="s32",
+                                 ply=3, n_det=32, topk=3, ff_cap=24, fair=True)
+        _AG_CACHE[key] = ag
+    # 复用：重置 RNG 流（NetAgent 用 .rng；RustSearchAgent 用 .seed/._call）
+    if hasattr(ag, "rng"):
+        ag.rng = np.random.default_rng(seat_seed)
+    if hasattr(ag, "seed"):
+        ag.seed = int(seat_seed)
+    if hasattr(ag, "_call"):
+        ag._call = 0
+    return ag
 
 
 def play_deal(a_path, b_path, a_mode, b_mode, seed, cand_seat, dev):
@@ -59,7 +86,7 @@ def play_deal(a_path, b_path, a_mode, b_mode, seed, cand_seat, dev):
     agents = []
     for s in range(4):
         p, m = (a_path, a_mode) if s == cand_seat else (b_path, b_mode)
-        agents.append(make_agent(p, m, seed * 131 + s, dev))
+        agents.append(get_agent(p, m, s, seed * 131 + s, dev))
     g = DushanGame(DushanConfig(), seed=seed)
     steps = 0
     t0 = time.perf_counter()
