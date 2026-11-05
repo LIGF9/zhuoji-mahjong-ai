@@ -35,11 +35,14 @@ MASTER_PT = "models/dushan_master.pt"
 LOG = ROOT / "reports/exit_log.md"
 NIGHT_LOG_DIR = ROOT / "runs/night_logs"
 
-# (轮次, 标注 seed0) —— R1 数据已采好（seed0=610000）
+# (轮次, 标注 seed0) —— R1 数据+训练+闸门已完成（23:19–00:00 首跑）
+# 续跑从 R2 起；多排几轮，靠时间盒（08:00）自然截断。
 ROUNDS = [
-    (1, None),        # 已有 runs/exit_r01
     (2, 620_000),
     (3, 630_000),
+    (4, 640_000),
+    (5, 650_000),
+    (6, 660_000),
 ]
 
 
@@ -125,13 +128,19 @@ def train_round(r: int) -> Path:
 
 
 def annotate_round(r: int, seed0: int) -> None:
-    """DAgger 标注：学生 rollout + N32 教师 Q。"""
+    """DAgger 标注：学生 rollout + N32 教师 Q。学生均为 M1（v3 编码，63 通道）
+    —— 必须带 --student-enc 3，否则 Rust 默认按 v1(15 通道) 喂学生前向而炸。"""
     out_dir = ROOT / f"runs/exit_r{r:02d}"
     stu = export_onnx(latest_pt())
     cmd = [ANNOTATE, "--student", str(stu), "--teacher", TEACHER_ONNX,
+           "--student-enc", "3",
            "--targets", "100000", "--threads", "4",
            "--out", str(out_dir), "--seed0", str(seed0)]
     rc, text = run(cmd, f"annotate_r{r:02d}", timeout_s=9000)
+    if rc != 0:                      # 瞬时故障（ORT/CoreML 偶发）重试一次
+        log(f"R{r} 标注失败（rc={rc}），清理残留后重试一次")
+        shutil.rmtree(out_dir, ignore_errors=True)
+        rc, text = run(cmd, f"annotate_r{r:02d}_retry", timeout_s=9000)
     n = len(list(out_dir.glob("exit_w*.npz")))
     assert rc == 0 and n >= 1, text[-2000:]
     log(f"R{r} 标注完成 student={stu.name} → {out_dir.name} ({n} 分片)")
@@ -186,21 +195,20 @@ def promote(r: int) -> None:
 
 def main() -> int:
     log("=" * 60)
-    log("夜间 ExIt 驱动启动（R1-R3，截止 08:00）")
+    log("夜间 ExIt 驱动续跑（R2-R6，截止 08:00；R1 已完成）")
     failures = 0
     for r, seed0 in ROUNDS:
         try:
             # ---- 标注（R1 数据已就绪）----
-            if seed0 is not None:
-                if not can_start(130):
-                    break
-                annotate_round(r, seed0)
-            # ---- 训练 ----
-            if not can_start(110):
+            if not can_start(130):
+                break
+            annotate_round(r, seed0)
+            # ---- 训练（实测 ~18-30min/轮，35min 预算）----
+            if not can_start(35):
                 break
             train_round(r)
-            # ---- 闸门 ----
-            if can_start(50):
+            # ---- 闸门（A 实测 ~1min，C ~25min）----
+            if can_start(15):
                 with_c = can_start(25)
                 if gates_round(r, with_c=with_c):
                     promote(r)
