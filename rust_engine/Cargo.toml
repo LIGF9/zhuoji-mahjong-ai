@@ -21,15 +21,24 @@ path = "src/bin/replay.rs"
 name = "bench_sim"
 path = "src/bin/bench_sim.rs"
 
+[[bin]]
+name = "annotate"
+path = "src/bin/annotate.rs"
+required-features = ["annotate"]
+
 [features]
 default = []
 python = ["dep:pyo3", "dep:numpy"]
+annotate = ["dep:ort", "dep:zip", "dep:ndarray"]
 
 [dependencies]
 pyo3 = { version = "0.30", features = ["extension-module"], optional = true }
 numpy = { version = "0.30", optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+ort = { version = "2.0.0-rc.15", default-features = false, features = ["std", "ndarray", "coreml", "load-dynamic"], optional = true }
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
+ndarray = { version = "0.17", optional = true }
 
 [profile.release]
 opt-level = 3

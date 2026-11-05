@@ -203,7 +203,7 @@ def encode_glob_v2(game, me: int, g: np.ndarray) -> np.ndarray:
         for a in counts:
             for dr in (1, -1):
                 rr = rank_of(a) + dr
-                if 0 <= rr < 9 and tile_from(suit_of(a), rr) in counts:
+                if 1 <= rr <= 9 and tile_from(suit_of(a), rr) in counts:
                     adj += 1
         adj //= 2
         est = min(3, pair_kinds + adj)
@@ -257,7 +257,7 @@ def encode_glob_v2(game, me: int, g: np.ndarray) -> np.ndarray:
     # 将对：手牌+副露里 2/5/8 点数占的比重（独山将对口径的一阶近似）
     jiang = 0.0
     for t in range(NUM_TILE_TYPES):
-        if rank_of(t) in (1, 4, 7):        # rank 从 0 起：点数 2/5/8 → 1/4/7
+        if rank_of(t) in (2, 5, 8):        # rank_of 1 基（点数 1..9）：将对 = 点数 2/5/8
             jiang += float(all_counts[t])
     g[91] = jiang / total
     g[92] = 1.0 if n_melds_me == 0 else 0.0                              # 门前清

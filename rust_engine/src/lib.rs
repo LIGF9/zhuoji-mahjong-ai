@@ -22,7 +22,12 @@ pub mod state;
 pub use state::{Config, Game, Outcome};
 
 pub mod encode;
+pub mod encode_v2;
+pub mod encode_v3;
 pub mod rng;
+pub mod snap;
+#[cfg(feature = "annotate")]
+pub mod infer;
 pub mod search;
 pub mod settle;
 #[cfg(feature = "python")]

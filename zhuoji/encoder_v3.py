@@ -229,19 +229,19 @@ def encode_tiles_v3(game, me: int, tiles: np.ndarray) -> np.ndarray:
         if c <= 0:
             continue
         s, rk = suit_of(t), rank_of(t)
-        nb1 = [tile_from(s, rk + d) for d in (-1, 1) if 0 <= rk + d < 9]
-        nb2 = [tile_from(s, rk + d) for d in (-2, 2) if 0 <= rk + d < 9]
+        nb1 = [tile_from(s, rk + d) for d in (-1, 1) if 1 <= rk + d <= 9]
+        nb2 = [tile_from(s, rk + d) for d in (-2, 2) if 1 <= rk + d <= 9]
         if any(hand[u] > 0 for u in nb2):
             tiles[54, t] = 1.0                       # 隔张搭子（含嵌张）
         if any(hand[u] > 0 for u in nb1):
             tiles[55, t] = 1.0                       # 相邻搭子
         run = 1
         rr = rk - 1
-        while rr >= 0 and hand[tile_from(s, rr)] > 0:
+        while rr >= 1 and hand[tile_from(s, rr)] > 0:
             run += 1
             rr -= 1
         rr = rk + 1
-        while rr < 9 and hand[tile_from(s, rr)] > 0:
+        while rr <= 9 and hand[tile_from(s, rr)] > 0:
             run += 1
             rr += 1
         tiles[56, t] = min(run / 3.0, 1.0)           # 所在连续段长度 / 3

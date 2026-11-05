@@ -156,6 +156,12 @@ pub struct Game {
     pub captured_ji: Vec<(u8, f32, u8, u8)>,
     pub ji_tag_of_last: [u8; 4],         // 各家最近一次打出的鸡类型（JI_*）
     pub last_draw: u8,                   // 最近一次摸进的牌（255=无）
+    // ---- 2026-11-05：v3 编码器所需的横鸡事件流（encoder_v3 ch43-46 / glob108）----
+    // 语义与 DushanGame.hengji_events / hengji_starter 同源：
+    // 每个「新横鸡轮开出」事件 +1（一轮收口后同种再开算第二次）。
+    pub hengji_opens: [u8; 4],           // 各家本局开出横鸡轮的次数
+    pub hengji_starter: i8,              // 全场第一个开出横鸡轮的玩家（-1=无）
+    pub hengji_event_n: u32,             // hengji_events 总数（open+close，v3 glob128）
 
     pub outcome: Option<Outcome>,
     pub steps: u32,
@@ -229,6 +235,9 @@ impl Game {
             captured_ji: Vec::new(),
             ji_tag_of_last: [JI_PLAIN; 4],
             last_draw: 255,
+            hengji_opens: [0; 4],
+            hengji_starter: -1,
+            hengji_event_n: 0,
             outcome: None,
             steps: 0,
         };
@@ -600,6 +609,11 @@ impl Game {
                 self.hengji_done |= bit(tile);
                 self.hengji_open |= bit(tile);
                 self.hengji_seats[tile as usize] = 1u8 << p;
+                self.hengji_opens[p] = self.hengji_opens[p].saturating_add(1);
+                if self.hengji_starter < 0 {
+                    self.hengji_starter = p as i8;
+                }
+                self.hengji_event_n += 1; // open 事件
                 JI_HENG
             };
             if self.hengji_open & bit(tile) != 0 {
@@ -629,6 +643,23 @@ impl Game {
         self.begin_respond(p as u8, tile, t);
     }
 
+    /// 玩家 p 现在打出 tile 会记成什么鸡：0=非鸡(空) 1=冲锋鸡 2=横鸡 3=普通鸡(幺鸡)。
+    /// 与 DushanGame.ji_name_if_discarded / _step_discard 判定同源（不改状态）。
+    pub fn ji_name_if_discarded(&self, p: usize, tile: u8) -> u8 {
+        if self.ji_tiles & bit(tile) == 0 {
+            return 0;
+        }
+        if !self.first_discard_done[p] {
+            return JI_CHONGFENG;
+        }
+        if self.hengji_done & bit(tile) != 0 {
+            let open = self.hengji_open & bit(tile) != 0;
+            let joined = self.hengji_seats[tile as usize] & (1u8 << p) != 0;
+            return if open && !joined { JI_HENG } else { JI_PLAIN };
+        }
+        JI_HENG
+    }
+
     fn close_hengji_rounds(&mut self, p: usize) {
         let mut to_close = 0u32;
         for sp in 0..27usize {
@@ -636,6 +667,7 @@ impl Game {
                 to_close |= 1u32 << sp;
             }
         }
+        self.hengji_event_n += to_close.count_ones(); // close 事件（每轮一个）
         self.hengji_open &= !to_close;
     }
 
@@ -889,6 +921,9 @@ impl Game {
             captured_ji: Vec::new(),
             ji_tag_of_last: [JI_PLAIN; 4],
             last_draw: 255,
+            hengji_opens: [0; 4],
+            hengji_starter: -1,
+            hengji_event_n: 0,
             outcome: None,
             steps: 0,
         }

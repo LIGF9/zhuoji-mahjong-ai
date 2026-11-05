@@ -27,6 +27,15 @@ _FANJI_CODE = {"off": 0, "up": 1, "down": 2, "both": 3}
 _JI_TAG_CODE = {"冲锋鸡": 1, "横鸡": 2}
 
 
+def _hengji_opens_from_events(game) -> list:
+    """各家开出横鸡轮的次数（hengji_events 中 tag=="open" 按打出者计）。"""
+    cnt = [0, 0, 0, 0]
+    for ev in (getattr(game, "hengji_events", None) or []):
+        if len(ev) >= 3 and str(ev[2]) == "open":
+            cnt[int(ev[0]) % 4] += 1
+    return cnt
+
+
 def _ji_code(tag) -> int:
     if isinstance(tag, (int, float)):
         return int(tag)
@@ -158,6 +167,12 @@ def snapshot_of(game, p: int) -> dict:
         "hengji_done": _hengji_done,
         "hengji_open": _hengji_open,
         "hengji_seats": _hengji_seats,  # [27] 每种鸡的轮内座位掩码
+        # 2026-11-05 v3 编码器：横鸡事件流（与 DushanGame.hengji_events/​starter 同源）
+        "hengji_opens": [int(x) for x in (getattr(game, "_hengji_opens_cnt", None)
+                                         or _hengji_opens_from_events(game))],
+        "hengji_starter": -1 if getattr(game, "hengji_starter", None) is None
+                          else int(game.hengji_starter),
+        "hengji_event_n": len(getattr(game, "hengji_events", None) or []),
         "ji_tag_of_last": _tag_last,    # [4] JI_* 编码
         # ---- 结算配置（网页可调；键省略 cfg_ 前缀在 Rust 侧补）----
         "cfg_mantiangji": bool(getattr(cfg, "mantiangji", False)),

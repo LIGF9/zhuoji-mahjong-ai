@@ -37,7 +37,26 @@ fn g_f64(d: &Bound<'_, PyDict>, k: &str, default: f64) -> f64 {
 }
 
 /// Python `DushanGame` 字段 → Rust `Game`。
+///
+/// 2026-11-05：字段解析统一走 `snap::game_from_json`（JSON 单一实现），
+/// Python dict 先 `json.dumps` 再解析，保证与 Rust 标注器读同一套字段语义。
+/// 旧逐字段版本保留在 `game_from_py_legacy`（不再调用），供对照。
 fn game_from_py(d: &Bound<'_, PyDict>) -> PyResult<Game> {
+    let py = d.py();
+    let json_mod = py.import("json").map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("json 模块不可用: {e}"))
+    })?;
+    let s: String = json_mod
+        .call_method1("dumps", (d,))?
+        .extract()?;
+    let v: serde_json::Value = serde_json::from_str(&s).map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("快照 JSON 解析失败: {e}"))
+    })?;
+    Ok(crate::snap::game_from_json(&v))
+}
+
+#[allow(dead_code)]
+fn game_from_py_legacy(d: &Bound<'_, PyDict>) -> PyResult<Game> {
     let mut g = Game::blank();
     g.cfg = Config {
         enable_pass_lock: g_bool(d, "pass_lock", true),
@@ -167,6 +186,12 @@ fn game_from_py(d: &Bound<'_, PyDict>) -> PyResult<Game> {
     for (i, v) in tl.iter().enumerate().take(4) {
         g.ji_tag_of_last[i] = *v as u8;
     }
+    let ho = g_vec(d, "hengji_opens");
+    for (i, v) in ho.iter().enumerate().take(4) {
+        g.hengji_opens[i] = (*v).clamp(0, 255) as u8;
+    }
+    g.hengji_starter = g_i64(d, "hengji_starter", -1).clamp(-1, 3) as i8;
+    g.hengji_event_n = g_i64(d, "hengji_event_n", 0).max(0) as u32;
     // 结算配置（网页可调值表 + 开关）
     g.cfg.mantiangji = g_bool(d, "cfg_mantiangji", g.cfg.mantiangji);
     g.cfg.jin_mult = g_f64(d, "cfg_jin_mult", g.cfg.jin_mult as f64) as f32;
