@@ -34,6 +34,12 @@ def load_net(path, dev):
 
     ck = torch.load(str(path), map_location="cpu", weights_only=False)
     net, ver = build_from_ckpt(ck, map_location="cpu")
+    # ONNX 缓存名 = 检查点文件名（ensure_onnx 按 models/{stem}.pt 的 mtime
+    # 决定是否重导出，训练出新检查点会自动刷新 ONNX）。
+    net.onnx_stem = Path(path).stem
+    if str(dev).lower().startswith("ort"):
+        # ORT 后端不搬 torch 设备：_BatchRunner 直接喂 numpy 给 onnxruntime。
+        return net.eval(), ver
     return net.to(dev).eval(), ver
 
 
@@ -55,6 +61,11 @@ def worker(wid, student_path, teacher_path, dev, n_targets, sample_rate,
     # 教师搜索走 _BatchRunner 自己搬运设备，可以放 mps。
     stu_net, stu_ver = load_net(student_path, "cpu")
     tea_net, _ = load_net(teacher_path, dev)
+    if str(dev).lower().startswith("ort"):
+        # 预热 CoreML 会话（每个形状一次图编译 150~220ms；不预热会摊进首轮标注）。
+        from zhuoji.forward import OrtForward, build_forward
+        build_forward(tea_net, dev, stem=getattr(tea_net, "onnx_stem", None),
+                      threads=1).warm(OrtForward.LADDER)
     # 记录给训练的观测**恒为 v3**（M1 学生口径）；rollout 策略自己按模型声明的
     # 版本编码决策（master 走 v1），两者互不影响。
     rec_ver = int(enc_version) if enc_version else 3

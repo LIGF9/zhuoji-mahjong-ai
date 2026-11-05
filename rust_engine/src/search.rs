@@ -418,6 +418,41 @@ impl Search {
         self.unsettled.retain(|&x| x != i);
     }
 
+    /// Rust 内结算：直接对叶子终局跑真实结算（`settle_win` / `settle_huangzhuang`），
+    /// 不再把 (origin, trace) 回传 Python 重放。返回 [(task_idx, delta)]。
+    ///
+    /// 口径与 Python `replay_delta` 一致：取结算 `deltas[self.p]`。
+    /// 分发逻辑与 `bin/settle_parity.rs` 同源：`n_winners > 0` → 胡牌结算，
+    /// 否则流局结算。单个终局 panic 时按 0.0 计（与旧路径 replay 异常
+    /// 回落 0.0 同语义），不让一条脏状态杀掉整个 worker。
+    ///
+    /// 2026-11-05：教师标注剖析显示 Python 重放占 7.1%（0.35ms/终局），
+    /// 且每终局要跨 FFI 序列化 wall/hands/trace；内结算把这些全部消除。
+    pub fn settle_internal(&mut self) -> Vec<(usize, f64)> {
+        let mut out = Vec::with_capacity(self.unsettled.len());
+        let pending = std::mem::take(&mut self.unsettled);
+        let p = self.p as usize;
+        for &i in &pending {
+            let g0 = self.tasks[i].game.clone();
+            let ft = &self.ft;
+            let d = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut g = g0;
+                let v = match g.outcome {
+                    Some(ref o) if o.n_winners > 0 => crate::settle::settle_win(&mut g, ft),
+                    _ => crate::settle::settle_huangzhuang(&g, ft),
+                };
+                v.get("deltas")
+                    .and_then(|x| x.get(p))
+                    .and_then(|x| x.as_f64())
+                    .unwrap_or(0.0)
+            }))
+            .unwrap_or(0.0);
+            self.tasks[i].q = d;
+            out.push((i, d));
+        }
+        out
+    }
+
     #[inline]
     pub fn group_of(&self, i: usize) -> usize {
         self.groups[i]

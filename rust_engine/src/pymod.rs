@@ -27,6 +27,14 @@ fn g_vec(d: &Bound<'_, PyDict>, k: &str) -> Vec<i64> {
     d.get_item(k).ok().flatten()
         .and_then(|v| v.extract::<Vec<i64>>().ok()).unwrap_or_default()
 }
+fn g_vecf(d: &Bound<'_, PyDict>, k: &str) -> Vec<f64> {
+    d.get_item(k).ok().flatten()
+        .and_then(|v| v.extract::<Vec<f64>>().ok()).unwrap_or_default()
+}
+fn g_f64(d: &Bound<'_, PyDict>, k: &str, default: f64) -> f64 {
+    d.get_item(k).ok().flatten()
+        .and_then(|v| v.extract::<f64>().ok()).unwrap_or(default)
+}
 
 /// Python `DushanGame` 字段 → Rust `Game`。
 fn game_from_py(d: &Bound<'_, PyDict>) -> PyResult<Game> {
@@ -115,6 +123,74 @@ fn game_from_py(d: &Bound<'_, PyDict>) -> PyResult<Game> {
     g.cfg.kaiju_fanji = g_i64(d, "kaiju_fanji", 0) as u8;       // 默认 off
     let kf = g_i64(d, "kaiju_flip", -1);
     g.kaiju_flip = if kf >= 0 { Some(kf as u8) } else { None };
+
+    // ---- 2026-11-05：鸡历史 + 结算配置全量过桥（Rust 内结算的正确性前提）----
+    // 缺这些字段时，叶子终局直算会与 Python「从 determinization 起点重放」
+    // 分叉（对拍 max|ΔQ|>4）。全部带默认值，旧快照仍可用（=旧行为）。
+    g.last_draw = g_i64(d, "last_draw", 255).clamp(0, 255) as u8;
+    g.last_discard_was_gang = g_bool(d, "last_discard_was_gang", false);
+    let je = g_vec(d, "ji_events");                 // [p, tag] × n
+    let jev = g_vecf(d, "ji_events_val");           // [f32] × n
+    let jet = g_vec(d, "ji_event_tiles");
+    let n_je = je.len() / 2;
+    g.ji_events.clear();
+    g.ji_event_tiles.clear();
+    for i in 0..n_je {
+        let val = jev.get(i).copied().unwrap_or(0.0) as f32;
+        g.ji_events.push((je[i * 2] as u8, val, je[i * 2 + 1] as u8));
+        let jt = jet.get(i).copied().unwrap_or(27);
+        g.ji_event_tiles.push(if (0..27).contains(&jt) { jt as u8 } else { 27 });
+    }
+    let cj = g_vec(d, "claimed_ji");                // [打出者, 碰/杠者, tag, 明杠, 牌] × n
+    g.claimed_ji.clear();
+    let n_cj = cj.len() / 5;
+    for i in 0..n_cj {
+        g.claimed_ji.push((cj[i * 5] as u8, cj[i * 5 + 1] as u8, cj[i * 5 + 2] as u8,
+                           cj[i * 5 + 3] != 0, cj[i * 5 + 4] as u8));
+    }
+    let cap = g_vec(d, "captured_ji");              // [胡牌者, tag, 牌] × n
+    let capv = g_vecf(d, "captured_ji_val");
+    g.captured_ji.clear();
+    let n_cap = cap.len() / 3;
+    for i in 0..n_cap {
+        let val = capv.get(i).copied().unwrap_or(0.0) as f32;
+        g.captured_ji.push((cap[i * 3] as u8, val, cap[i * 3 + 1] as u8,
+                            cap[i * 3 + 2] as u8));
+    }
+    g.hengji_done = g_i64(d, "hengji_done", 0).max(0) as u32;
+    g.hengji_open = g_i64(d, "hengji_open", 0).max(0) as u32;
+    let hs = g_vec(d, "hengji_seats");
+    for (i, v) in hs.iter().enumerate().take(27) {
+        g.hengji_seats[i] = *v as u8;
+    }
+    let tl = g_vec(d, "ji_tag_of_last");
+    for (i, v) in tl.iter().enumerate().take(4) {
+        g.ji_tag_of_last[i] = *v as u8;
+    }
+    // 结算配置（网页可调值表 + 开关）
+    g.cfg.mantiangji = g_bool(d, "cfg_mantiangji", g.cfg.mantiangji);
+    g.cfg.jin_mult = g_f64(d, "cfg_jin_mult", g.cfg.jin_mult as f64) as f32;
+    g.cfg.end_baoji = g_bool(d, "cfg_end_baoji", g.cfg.end_baoji);
+    g.cfg.end_baogang = g_bool(d, "cfg_end_baogang", g.cfg.end_baogang);
+    g.cfg.huang_baoji = g_bool(d, "cfg_huang_baoji", g.cfg.huang_baoji);
+    g.cfg.huang_baogang = g_bool(d, "cfg_huang_baogang", g.cfg.huang_baogang);
+    g.cfg.huang_baodapai = g_bool(d, "cfg_huang_baodapai", g.cfg.huang_baodapai);
+    g.cfg.baojiao_bonus = g_f64(d, "cfg_baojiao_bonus", g.cfg.baojiao_bonus as f64) as f32;
+    g.cfg.ji_hold = g_f64(d, "cfg_ji_hold", g.cfg.ji_hold as f64) as f32;
+    g.cfg.ji_discard_plain = g_f64(d, "cfg_ji_discard_plain", g.cfg.ji_discard_plain as f64) as f32;
+    g.cfg.ji_chongfeng = g_f64(d, "cfg_ji_chongfeng", g.cfg.ji_chongfeng as f64) as f32;
+    g.cfg.ji_heng = g_f64(d, "cfg_ji_heng", g.cfg.ji_heng as f64) as f32;
+    g.cfg.ji_fanji = g_f64(d, "cfg_ji_fanji", g.cfg.ji_fanji as f64) as f32;
+    g.cfg.kong_chickens = g_f64(d, "cfg_kong_chickens", g.cfg.kong_chickens as f64) as f32;
+    g.cfg.zi_mo = g_f64(d, "cfg_zi_mo", g.cfg.zi_mo as f64) as f32;
+    g.cfg.dian_pao = g_f64(d, "cfg_dian_pao", g.cfg.dian_pao as f64) as f32;
+    g.cfg.gang_kai = g_f64(d, "cfg_gang_kai", g.cfg.gang_kai as f64) as f32;
+    g.cfg.gang_pao = g_f64(d, "cfg_gang_pao", g.cfg.gang_pao as f64) as f32;
+    g.cfg.da_dui_zi = g_f64(d, "cfg_da_dui_zi", g.cfg.da_dui_zi as f64) as f32;
+    g.cfg.qi_dui = g_f64(d, "cfg_qi_dui", g.cfg.qi_dui as f64) as f32;
+    g.cfg.long_qi_dui = g_f64(d, "cfg_long_qi_dui", g.cfg.long_qi_dui as f64) as f32;
+    g.cfg.dan_diao = g_f64(d, "cfg_dan_diao", g.cfg.dan_diao as f64) as f32;
+    g.cfg.qing_yi_se = g_f64(d, "cfg_qing_yi_se", g.cfg.qing_yi_se as f64) as f32;
     Ok(g)
 }
 
@@ -194,6 +270,10 @@ impl PySearch {
     }
 
     fn settle(&mut self, i: usize, delta: f64) { self.inner.settle(i, delta); }
+
+    /// Rust 内结算：返回 [(task_idx, delta)]，见 `Search::settle_internal`。
+    /// 调用方（rust_search.py）默认走此路径，不再 Python 重放动作轨迹。
+    fn settle_internal(&mut self) -> Vec<(usize, f64)> { self.inner.settle_internal() }
 
     fn action_q(&self) -> Vec<f64> { self.inner.action_q() }
 
@@ -302,6 +382,11 @@ impl PyDeepSearch {
 
     fn settle(&mut self, i: usize, delta: f64) {
         self.inner.current_mut().settle(i, delta);
+    }
+
+    /// Rust 内结算（当前层）：返回 [(task_idx, delta)]。
+    fn settle_internal(&mut self) -> Vec<(usize, f64)> {
+        self.inner.current_mut().settle_internal()
     }
 
     fn result(&self) -> Vec<f64> { self.inner.result() }

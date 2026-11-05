@@ -23,6 +23,14 @@ _HEAD_NAME = {0: "discard", 1: "self_kong", 2: "respond"}
 # 翻鸡模式字符串 → Rust Config 里的 u8 编码（与 rust_engine/src/bin/settle_parity.rs
 # 的 mode_code 同口径）：off=0 / up=1 / down=2 / both=3
 _FANJI_CODE = {"off": 0, "up": 1, "down": 2, "both": 3}
+# Python 鸡类型名 → Rust JI_* 编码（state.rs：0=幺鸡/普通 1=冲锋鸡 2=横鸡）
+_JI_TAG_CODE = {"冲锋鸡": 1, "横鸡": 2}
+
+
+def _ji_code(tag) -> int:
+    if isinstance(tag, (int, float)):
+        return int(tag)
+    return _JI_TAG_CODE.get(str(tag), 0)
 
 
 def _code(a) -> tuple[int, int]:
@@ -39,6 +47,40 @@ def _code(a) -> tuple[int, int]:
 
 def snapshot_of(game, p: int) -> dict:
     """把 DushanGame 的可变状态摊平成 Rust 认识的 dict。"""
+    # ---- 鸡历史摊平（2026-11-05，见下方快照字段注释）----
+    _flat_je, _je_val = [], []
+    for ev in (getattr(game, "ji_events", None) or []):
+        pp, vv, tg = ev
+        _flat_je.extend((int(pp), _ji_code(tg)))
+        _je_val.append(float(vv))
+    _flat_cj = []
+    for ev in (getattr(game, "claimed_ji", None) or []):
+        if len(ev) >= 5:
+            dcer, clmer, tg, ming, tl = ev
+        else:  # 旧 4 元组无牌面 → 27 哨兵（bit(27) 永不命中金/倍牌掩码）
+            dcer, clmer, tg, ming, tl = ev[0], ev[1], ev[2], ev[3], 27
+        _flat_cj.extend((int(dcer), int(clmer), _ji_code(tg),
+                         1 if ming else 0, int(tl)))
+    _flat_cap, _cap_val = [], []
+    for ev in (getattr(game, "captured_ji", None) or []):
+        w, vv, tg, tl = ev
+        _flat_cap.extend((int(w), _ji_code(tg), int(tl)))
+        _cap_val.append(float(vv))
+    _hengji_done = 0
+    for t in (getattr(game, "_hengji_done", None) or set()):
+        _hengji_done |= 1 << int(t)
+    _hengji_open = 0
+    _hengji_seats = [0] * 27
+    for sp, rnd in (getattr(game, "_hengji_rounds", None) or {}).items():
+        sp = int(sp)
+        _hengji_open |= 1 << sp
+        m = 0
+        for q in (rnd.get("seats") or set()):
+            m |= 1 << int(q)
+        _hengji_seats[sp] = m
+    _tag_last = [_ji_code(x) for x in
+                 (getattr(game, "_ji_tag_of_last", None) or ["幺鸡"] * 4)]
+
     melds = []
     for q in range(4):
         for mt, t, src in game.melds[q]:
@@ -99,6 +141,48 @@ def snapshot_of(game, p: int) -> dict:
         "qiang_gang": bool(cfg.enable_qiang_gang),
         "baojiao_auto": bool(cfg.baojiao_auto),
         "pinghu_needs_dou": bool(cfg.ping_hu_needs_dou_for_ron),
+        # ---- 2026-11-05：鸡历史 + 结算配置全量过桥 ----
+        # Rust 内结算（Search::settle_internal）直接在叶子终局上算番，不能再靠
+        # Python 从 determinization 起点重放来"顺路重建"历史。旧快照缺这些字段，
+        # 内结算与 Python 重放在有鸡历史/非默认配置的局面上会分叉（对拍实测
+        # max|ΔQ|>4）。字段形态与 state.rs Game / settle.rs 逐一对应。
+        "last_draw": 255 if getattr(game, "last_draw", None) is None
+                     else int(game.last_draw),
+        "last_discard_was_gang": bool(getattr(game, "last_discard_was_gang", False)),
+        "ji_events": _flat_je,          # [p, tag] × n
+        "ji_events_val": _je_val,       # [f32] × n（打出时记的基础分）
+        "ji_event_tiles": [int(t) for t in (getattr(game, "ji_event_tiles", None) or [])],
+        "claimed_ji": _flat_cj,         # [打出者, 碰/杠者, tag, 明杠0/1, 牌] × n
+        "captured_ji": _flat_cap,       # [胡牌者, tag, 牌] × n
+        "captured_ji_val": _cap_val,    # [f32] × n
+        "hengji_done": _hengji_done,
+        "hengji_open": _hengji_open,
+        "hengji_seats": _hengji_seats,  # [27] 每种鸡的轮内座位掩码
+        "ji_tag_of_last": _tag_last,    # [4] JI_* 编码
+        # ---- 结算配置（网页可调；键省略 cfg_ 前缀在 Rust 侧补）----
+        "cfg_mantiangji": bool(getattr(cfg, "mantiangji", False)),
+        "cfg_jin_mult": float(getattr(cfg, "jin_ji_multiplier", 2.0)),
+        "cfg_end_baoji": bool(getattr(cfg, "end_baoji", True)),
+        "cfg_end_baogang": bool(getattr(cfg, "end_baogang", False)),
+        "cfg_huang_baoji": bool(getattr(cfg, "huang_baoji", False)),
+        "cfg_huang_baogang": bool(getattr(cfg, "huang_baogang", False)),
+        "cfg_huang_baodapai": bool(getattr(cfg, "huang_baodapai", True)),
+        "cfg_baojiao_bonus": float(getattr(cfg, "baojiao_bonus", 10.0)),
+        "cfg_ji_hold": float(getattr(cfg, "ji_hold", 1.0)),
+        "cfg_ji_discard_plain": float(getattr(cfg, "ji_discard_plain", 1.0)),
+        "cfg_ji_chongfeng": float(getattr(cfg, "ji_chongfeng", 3.0)),
+        "cfg_ji_heng": float(getattr(cfg, "ji_heng", 2.0)),
+        "cfg_ji_fanji": float(getattr(cfg, "ji_fanji", 1.0)),
+        "cfg_kong_chickens": float(getattr(cfg, "kong_chickens", 3.0)),
+        "cfg_zi_mo": float(getattr(cfg, "zi_mo", 3.0)),
+        "cfg_dian_pao": float(getattr(cfg, "dian_pao", 3.0)),
+        "cfg_gang_kai": float(getattr(cfg, "gang_kai", 5.0)),
+        "cfg_gang_pao": float(getattr(cfg, "gang_pao", 5.0)),
+        "cfg_da_dui_zi": float(getattr(cfg, "da_dui_zi", 5.0)),
+        "cfg_qi_dui": float(getattr(cfg, "qi_dui", 10.0)),
+        "cfg_long_qi_dui": float(getattr(cfg, "long_qi_dui", 20.0)),
+        "cfg_dan_diao": float(getattr(cfg, "dan_diao", 10.0)),
+        "cfg_qing_yi_se": float(getattr(cfg, "qing_yi_se", 10.0)),
     }
 
 
@@ -115,6 +199,37 @@ def replay_delta(base_game, wall, wall_pos, hands_flat, trace, p: int) -> float:
     if not deltas:
         return 0.0
     return float(deltas[p])
+
+
+# 2026-11-05：终局结算默认走 Rust 内结算（叶子直算 + 无 FFI 序列化）。
+# 教师标注剖析：Python 重放占 7.1%（0.35ms/终局 × 每次搜索数百终局）。
+# 对拍/回滚：DUSHAN_PY_SETTLE=1 强制走 Python 重放旧路径（Q 值应逐位一致）。
+import os as _os  # noqa: E402
+USE_RUST_SETTLE = _os.environ.get("DUSHAN_PY_SETTLE") != "1"
+
+
+def _settle_terminals(sn, game, p, stats):
+    """把 sn 的待结算终局填回 Q。
+
+    默认：Rust `settle_internal`（真实结算直算叶子终局）。
+    回落：Python `replay_delta`（从 determinization 起点重放动作链）。
+    """
+    if USE_RUST_SETTLE and hasattr(sn, "settle_internal"):
+        stats["terminals"] += len(sn.settle_internal())
+        return
+    items = list(sn.unsettled())
+    for item in items:
+        if len(item) == 6:
+            i, _o, wall, wpos, hands, trace = item
+        else:
+            i, wall, wpos, hands, trace = item
+        stats["terminals"] += 1
+        try:
+            d = replay_delta(game, wall, wpos, hands, trace, p)
+        except Exception:  # noqa: BLE001 - 重放异常按 0 处理并计数
+            stats["replay_fail"] = stats.get("replay_fail", 0) + 1
+            d = 0.0
+        sn.settle(i, d)
 
 
 _PAD_CHOICES = (32, 64, 128, 256, 512, 1024, 2048, 4096)
@@ -249,14 +364,7 @@ def rust_q(model, game, p: int, legal, n_det: int = 32, ff_cap: int = 4,
                 sn.feed(acts.tolist(), vals)
             continue
         if sn.has_unsettled():
-            for (i, _d, wall, wpos, hands, trace) in sn.unsettled():
-                stats["terminals"] += 1
-                try:
-                    d = replay_delta(game, wall, wpos, hands, trace, p)
-                except Exception:  # noqa: BLE001 - 重放异常按 0 处理并计数
-                    stats["replay_fail"] = stats.get("replay_fail", 0) + 1
-                    d = 0.0
-                sn.settle(i, d)
+            _settle_terminals(sn, game, p, stats)
             continue
         break
     return np.array(sn.action_q(), dtype=np.float64), stats
@@ -301,14 +409,7 @@ def _deep_search_run(model, game, p: int, legal, n_det: int, ff_cap: int,
         ds.feed(acts.tolist(), vals)
 
     def settle_all():
-        for (i, _root, wall, wpos, hands, trace) in ds.unsettled():
-            stats["terminals"] += 1
-            try:
-                d = replay_delta(game, wall, wpos, hands, trace, p)
-            except Exception:  # noqa: BLE001
-                stats["replay_fail"] = stats.get("replay_fail", 0) + 1
-                d = 0.0
-            ds.settle(i, d)
+        _settle_terminals(ds, game, p, stats)
 
     guard = 0
     while not ds.finished():

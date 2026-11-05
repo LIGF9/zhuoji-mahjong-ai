@@ -34,6 +34,8 @@ def make_agent(model_path, mode, seat_seed, dev):
 
     ck = torch.load(str(model_path), map_location="cpu", weights_only=False)
     net, _ = build_from_ckpt(ck, map_location="cpu")
+    # ORT 后端按 stem 找 ONNX 缓存；stem=检查点文件名（2026-11-05）。
+    net.onnx_stem = Path(model_path).stem
     if mode == "greedy":
         return NetAgent(net, seed=seat_seed, temperature=0.0, name="greedy")
     from zhuoji.rust_search import RustSearchAgent
