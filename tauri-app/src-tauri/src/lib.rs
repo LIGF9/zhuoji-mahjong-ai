@@ -187,19 +187,38 @@ fn check_server(url: String) -> CheckResult {
     }
 }
 
+/// 给游戏地址补 `?touch=1`。
+///
+/// 游戏页用 `matchMedia("(hover: none) and (pointer: coarse)")` 判定触屏，
+/// 但 Tauri 的 Android WebView 不命中该查询，会被当成"过窄的桌面窗口"弹
+/// 「窗口宽度不足」门禁。`?touch=1` 是游戏自带的强制触屏口径（文档注明
+/// "真机走媒体查询，不受影响"），补上后与手机浏览器 / 无头测试完全一致。
+/// 用户已手动带 touch 参数时不重复添加。
+fn with_touch_param(url_str: &str) -> Result<String, String> {
+    let mut parsed = tauri::Url::parse(url_str).map_err(|e| format!("地址格式错误：{}", e))?;
+    let has_touch = parsed
+        .query_pairs()
+        .any(|(k, v)| k == "touch" && v == "1");
+    if !has_touch {
+        parsed.query_pairs_mut().append_pair("touch", "1");
+    }
+    Ok(parsed.to_string())
+}
+
 /// 保存地址并让 WebView 载入真实的游戏页面。
 /// 关键：**不做任何前端资源替换**，直接用服务端原样的 dushan.html。
 #[tauri::command]
 fn enter_game(app: tauri::AppHandle, window: WebviewWindow, url: String) -> Result<String, String> {
     let normalized = normalize_url(&url)?;
-    let parsed = tauri::Url::parse(&normalized).map_err(|e| format!("地址格式错误：{}", e))?;
+    let game_url = with_touch_param(&normalized)?;
+    let parsed = tauri::Url::parse(&game_url).map_err(|e| format!("地址格式错误：{}", e))?;
     if let Some(path) = config_path(&app) {
         let _ = fs::write(path, &normalized);
     }
     window
         .navigate(parsed)
         .map_err(|e| format!("无法打开游戏页面：{}", e))?;
-    Ok(normalized)
+    Ok(game_url)
 }
 
 /// 返回 APP 构建信息，供启动页展示（也用于自动化验证）。
@@ -258,6 +277,21 @@ mod tests {
     #[test]
     fn normalize_rejects_non_http_scheme() {
         assert!(normalize_url("javascript:alert(1)").is_err());
+    }
+
+    #[test]
+    fn touch_param_is_appended_once() {
+        assert_eq!(
+            with_touch_param("http://h:8770").unwrap(),
+            "http://h:8770/?touch=1"
+        );
+        assert_eq!(
+            with_touch_param("http://h:8770/?touch=1").unwrap(),
+            "http://h:8770/?touch=1"
+        );
+        // 已有其他参数时追加而不是覆盖
+        let u = with_touch_param("http://h:8770/?a=b").unwrap();
+        assert!(u.contains("a=b") && u.contains("touch=1"), "u={}", u);
     }
 
     #[test]
