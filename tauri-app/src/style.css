@@ -1,0 +1,221 @@
+/* 独山麻将 · 安卓客户端启动页
+   目标视口：手机横屏（约 780×360 CSS px）到桌面（960×540+）。
+   全部尺寸用 clamp/vmin，保证 320×240 也不溢出、不裁切。 */
+
+:root {
+  color-scheme: dark;
+  --gold: #e8c471;
+  --gold-2: #f6dfa0;
+  --ink: #f4ecd8;
+  --muted: #a9bdae;
+  --ok: #7fd8a4;
+  --err: #ff9b8a;
+  --line: rgba(232, 196, 113, .22);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  background: #07261d;
+  display: grid;
+  place-items: center;
+  padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+           max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+}
+
+/* 桌布：径向渐变 + 细纹，纯 CSS，不依赖图片资源 */
+.felt {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 50% 38%, #1c6047 0%, #0e3c2d 46%, #062117 100%),
+    #07261d;
+  z-index: 0;
+}
+.felt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: .16;
+  background-image:
+    repeating-linear-gradient(45deg, rgba(255,255,255,.07) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(-45deg, rgba(0,0,0,.10) 0 1px, transparent 1px 4px);
+}
+
+.card {
+  position: relative;
+  z-index: 1;
+  width: min(94vw, 560px);
+  max-height: calc(100vh - 12px);
+  max-height: calc(100dvh - 12px);
+  overflow-y: auto;
+  padding: clamp(12px, 2.6vmin, 24px) clamp(14px, 3vmin, 28px);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(7px, 1.5vmin, 14px);
+  border-radius: clamp(12px, 2.2vmin, 20px);
+  border: 1px solid var(--line);
+  background: linear-gradient(160deg, rgba(9, 44, 33, .96), rgba(5, 28, 21, .97));
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255,255,255,.06);
+}
+
+/* ---- 品牌 ---- */
+.brand { display: flex; align-items: center; gap: clamp(10px, 2vmin, 16px); }
+
+.tile {
+  flex: 0 0 auto;
+  width: clamp(38px, 6.4vmin, 56px);
+  height: clamp(48px, 8.2vmin, 72px);
+  border-radius: 8px;
+  background: linear-gradient(155deg, #fffdf3, #e8dfc3);
+  border: 1px solid rgba(0,0,0,.18);
+  box-shadow: 0 4px 0 #c9bd98, 0 8px 16px rgba(0,0,0,.4);
+  display: grid;
+  place-items: center;
+  transform: rotate(-4deg);
+}
+.tile span {
+  font-size: clamp(22px, 4vmin, 36px);
+  font-weight: 800;
+  line-height: 1;
+  color: #b3312c;
+  text-shadow: 0 1px 0 rgba(255,255,255,.7);
+}
+
+.brand-txt h1 {
+  margin: 0;
+  font-size: clamp(18px, 3.1vmin, 28px);
+  letter-spacing: .12em;
+  font-weight: 700;
+  color: var(--gold-2);
+}
+.brand-txt p {
+  margin: 2px 0 0;
+  font-size: clamp(10px, 1.65vmin, 13px);
+  letter-spacing: .16em;
+  color: var(--muted);
+}
+
+/* ---- 输入 ---- */
+.field label {
+  display: block;
+  font-size: clamp(10px, 1.6vmin, 13px);
+  color: var(--muted);
+  letter-spacing: .08em;
+  margin-bottom: 5px;
+}
+.input-row { display: flex; gap: 8px; }
+
+#url {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: clamp(34px, 5.4vmin, 44px);
+  padding: 0 clamp(10px, 1.8vmin, 14px);
+  font-size: clamp(12px, 1.9vmin, 15px);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color: var(--ink);
+  background: rgba(0, 0, 0, .30);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  outline: none;
+}
+#url:focus { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(232,196,113,.14); }
+#url::placeholder { color: rgba(169, 189, 174, .5); }
+
+/* ---- 状态 ---- */
+.status {
+  min-height: clamp(15px, 2.3vmin, 20px);
+  font-size: clamp(10px, 1.6vmin, 13px);
+  line-height: 1.45;
+  color: var(--muted);
+  word-break: break-word;
+}
+.status.ok  { color: var(--ok); }
+.status.err { color: var(--err); }
+.status.busy { color: var(--gold); }
+
+/* ---- 按钮 ---- */
+.actions { display: flex; gap: 10px; }
+.actions button {
+  flex: 1 1 0;
+  height: clamp(36px, 5.8vmin, 46px);
+  border-radius: 10px;
+  font-size: clamp(12px, 1.95vmin, 15px);
+  font-weight: 700;
+  letter-spacing: .1em;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: transform .08s ease, filter .12s ease;
+}
+.actions button:active { transform: translateY(1px) scale(.99); }
+.actions button:disabled { opacity: .55; cursor: wait; }
+
+.secondary {
+  color: var(--gold-2);
+  background: rgba(232, 196, 113, .09);
+  border-color: var(--line) !important;
+}
+.primary {
+  color: #123024;
+  background: linear-gradient(180deg, var(--gold-2), var(--gold));
+  box-shadow: 0 4px 14px rgba(232, 196, 113, .22);
+}
+.ghost {
+  flex: 0 0 auto;
+  padding: 0 clamp(10px, 1.8vmin, 14px);
+  height: clamp(34px, 5.4vmin, 44px);
+  border-radius: 9px;
+  font-size: clamp(10px, 1.6vmin, 13px);
+  color: var(--muted);
+  background: rgba(255,255,255,.05);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+/* ---- 说明 / 页脚 ---- */
+.hint {
+  font-size: clamp(9.5px, 1.5vmin, 12px);
+  line-height: 1.6;
+  color: var(--muted);
+  border-top: 1px dashed var(--line);
+  padding-top: clamp(6px, 1.2vmin, 10px);
+}
+.hint strong { color: var(--gold); font-weight: 600; }
+.hint code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: .95em;
+  color: var(--gold-2);
+  background: rgba(0,0,0,.28);
+  padding: 1px 4px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+.preview {
+  font-size: clamp(9.5px, 1.5vmin, 12px);
+  color: var(--gold);
+  background: rgba(232,196,113,.08);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 9px;
+}
+footer {
+  font-size: clamp(9px, 1.4vmin, 11px);
+  color: rgba(169, 189, 174, .62);
+  text-align: center;
+  letter-spacing: .04em;
+}
+
+/* 极矮视口（≤300px 高）：收紧间距，保证不裁切 */
+@media (max-height: 320px) {
+  .card { gap: 5px; padding: 9px 14px; }
+  .hint { display: none; }
+  .brand-txt p { display: none; }
+}

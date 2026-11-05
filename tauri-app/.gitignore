@@ -1,0 +1,11 @@
+# 注意：本文件位于 tauri-app/ 内，路径均相对本目录（不要再带 /tauri-app 前缀）
+src-tauri/target/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/build/
+src-tauri/gen/android/local.properties
+src-tauri/gen/android/keystore.properties
+src-tauri/gen/android/app/*.jks
+src-tauri/gen/schemas/
+node_modules/
+*.log

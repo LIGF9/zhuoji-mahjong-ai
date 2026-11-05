@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>独山麻将 · 大师之路</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="felt" aria-hidden="true"></div>
+
+  <main class="card" id="card">
+    <div class="brand">
+      <div class="tile" aria-hidden="true"><span>麻</span></div>
+      <div class="brand-txt">
+        <h1>独山麻将</h1>
+        <p>大师之路 · 安卓客户端</p>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="url">对局服务端地址</label>
+      <div class="input-row">
+        <input id="url" type="text" inputmode="url" autocomplete="off" autocapitalize="off"
+               spellcheck="false" placeholder="http://172.26.99.125:8770">
+        <button id="btn-default" class="ghost" type="button" title="恢复默认地址">默认</button>
+      </div>
+    </div>
+
+    <div class="status" id="status" role="status" aria-live="polite">正在读取上次使用的地址…</div>
+
+    <div class="actions">
+      <button id="btn-test" class="secondary" type="button">测试连接</button>
+      <button id="btn-enter" class="primary" type="button">进入游戏</button>
+    </div>
+
+    <div class="hint">
+      <strong>使用前</strong>：在电脑上启动
+      <code>python web/dushan_server.py --port 8770 --host 0.0.0.0</code>，
+      手机与电脑连同一 Wi-Fi，地址填启动日志里打印的局域网地址。
+    </div>
+
+    <div class="preview" id="preview" hidden>预览模式（未在 APP 内运行）：连接测试不可用，「进入游戏」将在浏览器中打开。</div>
+
+    <footer id="footer">客户端 v1.0.0 · 游戏界面、规则与 AI 均由服务端原样提供</footer>
+  </main>
+
+  <script src="main.js"></script>
+</body>
+</html>
