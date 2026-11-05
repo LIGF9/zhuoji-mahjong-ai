@@ -29,3 +29,7 @@ runs/
 
 # 冒烟测试产物
 models/*_smoke.pt
+
+# ExIt 训练产物（本地保留，不进 git——每轮 30MB+ 快照）
+models/exit_r*.pt
+models/exit_best.pt
