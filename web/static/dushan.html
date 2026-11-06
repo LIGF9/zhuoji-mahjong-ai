@@ -4628,7 +4628,25 @@ function setText(elm, txt) {
      总开关重新打开时 `resetAudioPools()` 整池重建，保证一键恢复。
    其它：首次用户手势用静音音频解锁自动播放策略（unlockAudio）；分通道音量
    masterVol × (bgmVol|voiceVol|sfxVol)；读牌与操作音效按发声玩家性别取
-   sound_boy / sound_girl；所有读取都在调用时取 SET.*，回放自动沿用同一套设置。 */
+   sound_boy / sound_girl；所有读取都在调用时取 SET.*，回放自动沿用同一套设置。
+
+   五修（2026-11-06，用户报「开启一段时间后读牌 + 碰杠全哑，只剩 BGM 和胡牌」）：
+   上面四次修补都在 <audio> 元素池上打补丁，换回上游真人配音 mp3 后再次复现，
+   且这次连碰/杠操作音效一起哑 ⇒ 根因不在某个池的忙闲判断，而在 HTMLMediaElement
+   本身：
+     · 13 类 sfx × 池 2~6 个元素 + 读牌轮转元素 + BGM，每个 new Audio() 且
+       preload=auto 都占一个媒体会话/解码器；移动端 WebView 配额只有十几个，
+       长局累积后新 play() 静默失败，只有最早创建、一直持有的 BGM 还活着；
+     · mp3 换 src 后 currentTime=0 要重新解帧 seek（上游短音效 0.5~0.94s，
+       32kbps VBR/ID3），高频读牌让元素长期卡在 seeking；PCM WAV 是即时 seek，
+       所以「换回 mp3 才复现」；
+     · 胡/自摸低频触发，恰好在池冷却时能响，造成「只有胡牌生效」的错觉。
+   根治：**所有短音效改走 Web Audio** —— 手势解锁后一次性把 66 个被引用的
+   短音效 mp3（上游共 68 个，根目录 胡牌/自摸 两个前端未用到）
+   fetch + decodeAudioData 成 AudioBuffer 缓存，播放只创建一次性
+   AudioBufferSourceNode（播完即弃）。零媒体元素、零自动播放策略、零 seek、
+   零回源、零解码器累积；BGM 是 52s 长音频，仍用 <audio> 流式播放。
+   老设备不支持 Web Audio 时，自动退回上面的 <audio> 池（保留 blob 预取保护）。 */
 /* 音源（2026-11-06 换回上游真人配音）：来自 LIGF9/DushanMajiang 的
    resource/sound，27 张牌名 + 碰/杠/胡/自摸 × 男女声各 31 条，根目录 6 条
    通用音效、bgmusic 5 首 BGM，均为 mp3。此前临时用 macOS TTS 合成的 16k
@@ -4640,8 +4658,8 @@ function setText(elm, txt) {
 const SND_EXT = "mp3";
 const SND_VER = "20261106";
 const ROOT_SND = ["打牌", "摸牌", "流局", "点击"];   // 这些在 sound/ 根目录（无性别）
-const AUDIO_POOL_MIN = 2;      // 每个音源常备元素数
-const AUDIO_POOL_MAX = 6;      // 忙时最多扩到这个数
+const AUDIO_POOL_MIN = 1;      // 五修：仅作老设备 fallback，不再预热多个媒体元素
+const AUDIO_POOL_MAX = 3;      // 上限同步调小，避免占满 WebView 的媒体解码器配额
 const AUDIO_ELS_MAX = 320;     // 全部音源的音频元素总量上限（防长局无限增长）
 let AUDIO_ELS = 0;
 const audioPool = {};        // key(src) -> {els:[Audio…]}
@@ -4678,6 +4696,139 @@ function _sndGain(ch) {
   if (ch === "bgm") return m * clamp01(SET.bgmVol);
   return m * clamp01(SET.sfxVol);
 }
+
+/* ================= Web Audio 短音效通道（五修 · 主路径） =================
+   66 个被引用的短音效（27 牌名 × 2 性别 + 碰/杠/胡/自摸 × 2 性别 + 4 根目录通用）
+   全量预解码成 AudioBuffer，播放用一次性 BufferSource。AudioBuffer 是纯 PCM，
+   播放不经过媒体元素/解码器配额，也不会因为 seek/play() 悬挂而僵死。 */
+let ACTX = null;                       // AudioContext（只在用户手势里创建）
+let SND_MASTER = null;
+const SND_GAIN = { voice: null, sfx: null };
+const SND_BUF = Object.create(null);   // src -> AudioBuffer
+const SND_LOAD = Object.create(null);  // src -> Promise（去重）
+const SND_FAIL = Object.create(null);  // src -> 失败次数（避免无限重试）
+let SND_PRELOADING = false;
+const SND_DIAG = { plays: 0, fallbacks: 0, decoded: 0, failed: 0 };
+
+function syncAudioGains() {
+  if (!ACTX || !SND_MASTER) return;
+  try {
+    SND_MASTER.gain.value = clamp01v(SET.masterVol);
+    SND_GAIN.voice.gain.value = clamp01(SET.voiceVol);
+    SND_GAIN.sfx.gain.value = clamp01(SET.sfxVol);
+  } catch (e) {}
+}
+/* gesture=true 时允许新建（必须发生在用户手势回调里，否则会被自动播放策略挂起）；
+   普通播放只做 resume + 音量同步，不新建，避免造出一个永远 suspended 的 ctx。 */
+function ensureAudioCtx(gesture) {
+  if (!ACTX && gesture) {
+    const C = window.AudioContext || window.webkitAudioContext;
+    if (!C) return null;
+    try {
+      ACTX = new C();
+      SND_MASTER = ACTX.createGain();
+      SND_MASTER.connect(ACTX.destination);
+      for (const k of ["voice", "sfx"]) {
+        SND_GAIN[k] = ACTX.createGain();
+        SND_GAIN[k].connect(SND_MASTER);
+      }
+    } catch (e) { ACTX = null; return null; }
+  }
+  if (!ACTX) return null;
+  if (ACTX.state === "suspended") {
+    try { ACTX.resume().catch(() => {}); } catch (e) {}
+  }
+  syncAudioGains();
+  return ACTX;
+}
+/* 老 Safari 的 decodeAudioData 是回调式，新版返回 Promise —— 两种都兼容。 */
+function decodeBuf(ab) {
+  return new Promise((resolve, reject) => {
+    try {
+      const p = ACTX.decodeAudioData(ab, resolve, reject);
+      if (p && p.then) p.then(resolve, reject);
+    } catch (e) { reject(e); }
+  });
+}
+function loadSndBuf(src) {
+  if (SND_BUF[src]) return Promise.resolve(SND_BUF[src]);
+  if (SND_LOAD[src]) return SND_LOAD[src];
+  if ((SND_FAIL[src] || 0) >= 3) return Promise.resolve(null);
+  const p = fetch(src, { cache: "force-cache" })
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
+    .then(decodeBuf)
+    .then(buf => {
+      SND_BUF[src] = buf; delete SND_LOAD[src];
+      SND_DIAG.decoded++;
+      return buf;
+    })
+    .catch(() => {
+      delete SND_LOAD[src];
+      SND_FAIL[src] = (SND_FAIL[src] || 0) + 1;
+      SND_DIAG.failed++;
+      return null;                       // 交给 <audio> fallback
+    });
+  SND_LOAD[src] = p;
+  return p;
+}
+function allShortSndPaths() {
+  const out = [], seen = new Set();
+  const push = p => { if (!seen.has(p)) { seen.add(p); out.push(p); } };
+  const names = [];
+  for (let t = 0; t < TILES.length; t++) {
+    const n = tileSndName(t);
+    if (n && !names.includes(n)) names.push(n);
+  }
+  for (const g of ["boy", "girl"]) {
+    for (const n of names) push(sndPath(n, g));
+    for (const a of ["碰", "杠", "胡", "自摸"]) push(sndPath(a, g));
+  }
+  for (const r of ROOT_SND) push(sndPath(r, null));
+  return out;
+}
+/* 6 个一批，避免 66 个请求一次性打满小服务端；已解码的会瞬时跳过，可重入。 */
+async function preloadAllSounds() {
+  if (SND_PRELOADING || !ACTX) return;
+  SND_PRELOADING = true;
+  try {
+    const paths = allShortSndPaths();
+    for (let i = 0; i < paths.length; i += 6)
+      await Promise.all(paths.slice(i, i + 6).map(loadSndBuf));
+  } finally {
+    SND_PRELOADING = false;
+    // 预解码窗口内若有音效走了 <audio> fallback，此刻把它们全部释放，
+    // 保证长局里除 BGM 外零媒体元素残留。
+    try { resetAudioPools(); } catch (e) {}
+  }
+}
+function playBuf(src, ch) {
+  const ctx = ensureAudioCtx(false);
+  if (!ctx || ctx.state !== "running") return false;
+  const buf = SND_BUF[src];
+  if (!buf) { loadSndBuf(src); return false; }   // 尚未解码完：本次静默，后台补齐
+  try {
+    const s = ctx.createBufferSource();
+    s.buffer = buf;
+    s.connect(SND_GAIN[ch] || SND_MASTER);      // 通道增益已含 master×vol
+    s.start(0);
+    s.onended = () => { try { s.disconnect(); } catch (e) {} };
+    SND_DIAG.plays++;
+    return true;
+  } catch (e) { SND_DIAG.failed++; return false; }
+}
+/* 供排查：控制台 __sndDiag() 看解码进度 / 主路径命中 / fallback 次数 */
+window.__sndDiag = () => ({
+  ctx: ACTX ? ACTX.state : "none",
+  decoded: Object.keys(SND_BUF).length,
+  total: allShortSndPaths().length,
+  pending: Object.keys(SND_LOAD).length,
+  failed: Object.assign({}, SND_FAIL),
+  plays: SND_DIAG.plays, fallbacks: SND_DIAG.fallbacks,
+  master: SND_MASTER ? SND_MASTER.gain.value : null,
+  voiceGain: SND_GAIN.voice ? SND_GAIN.voice.gain.value : null,
+  sfxGain: SND_GAIN.sfx ? SND_GAIN.sfx.gain.value : null,
+});
+
 function _newAudioEl() {
   const a = new Audio();
   a.preload = "auto";
@@ -4699,12 +4850,19 @@ function _pool(src) {
   }
   return p;
 }
-/* 整池重建：总开关从关到开时调用，把可能卡住的元素全换成新的（一键恢复） */
+/* 整池重建：总开关从关到开时调用，把可能卡住的元素全换成新的（一键恢复）；
+   五修后主路径是 Web Audio，这里顺手 resume 可能被系统挂起的 AudioContext。 */
 function resetAudioPools() {
+  ensureAudioCtx(true);
   for (const k of Object.keys(audioPool)) {
     for (const a of audioPool[k].els) { try { a.pause(); } catch (e) {} }
     AUDIO_ELS = Math.max(0, AUDIO_ELS - audioPool[k].els.length);
     delete audioPool[k];
+  }
+  // 五修：连同读牌轮转元素一起清掉 —— Web Audio 就绪后不留任何短音效媒体元素
+  for (const k of Object.keys(VOICE_ELS)) {
+    for (const a of VOICE_ELS[k]) { try { a.pause(); } catch (e) {} }
+    VOICE_ELS[k] = [];
   }
 }
 function _playOn(el, vol) {
@@ -4777,11 +4935,9 @@ function _rebuildVoiceEl(arr, a) {
   try { a.removeAttribute("src"); a.load(); } catch (e) {}
   arr[i] = _newVoiceEl();
 }
-/* 读牌 blob 预取（2026-11-01 三修「一段时间后读牌哑掉只剩 BGM」）：
-   手机浏览器对 HTTP/1.1 单主机连接数有限制，Audio 元素每次换到没听过的
-   src 都要现连现拉；长局 + 缓存回收后，读牌请求挤在连接池里超时变哑，
-   而 BGM 早已整段加载完毕不受影响——正是「只剩背景音」的症状。
-   根治：解锁后把 27 张牌 × 2 性别全部 fetch 成 blob，播放零网络请求。 */
+/* 旧 <audio> 通道的 blob 预取（2026-11-01 三修）：五修后只在设备不支持
+   Web Audio、必须退回 <audio> 池时才调用（见 unlockAudio）。主路径用
+   preloadAllSounds() 解码成 AudioBuffer，不再制造 blob URL。 */
 const VOICE_BLOB = {};
 let VOICE_PRELOADING = false;
 async function preloadVoices() {
@@ -4827,6 +4983,7 @@ function voicePlay(src, vol) {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   AUDIO_UNLOCKED = false;
+  ensureAudioCtx(true);      // 五修：iOS/切后台会 suspend AudioContext，回前台立刻 resume
   for (const k of Object.keys(VOICE_ELS)) {
     for (const a of VOICE_ELS[k]) { try { a.pause(); } catch (e) {} }
     VOICE_ELS[k] = [];
@@ -4854,6 +5011,10 @@ function snd(name, gender, channel) {
   const vol = _sndGain(ch);
   if (vol <= 0) return;
   const src = sndPath(name, g);
+  // 五修：短音效统一走 Web Audio（零媒体元素，长局不会哑）；只有不支持
+  // Web Audio / ctx 尚未 running / 该音源解码失败时才退回旧 <audio> 池。
+  if (playBuf(src, ch)) return;
+  SND_DIAG.fallbacks++;
   if (ch === "voice") { voicePlay(src, vol); return; }
   _rawPlay(src, vol);
 }
@@ -4869,13 +5030,24 @@ const sndEvent = {
 /* 一段极短的静音 wav（data URI），用于在用户手势里解锁自动播放策略 */
 const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
 function unlockAudio() {
+  const first = !AUDIO_UNLOCKED;
+  // 五修主路径：手势里 new AudioContext() + resume() 解锁 Web Audio，
+  // 预解码**立即启动**，不等下面 <audio> 的 play() 结果（被拒也不拖累主路径）。
+  ensureAudioCtx(true);
+  if (ACTX && (first || SND_DIAG.decoded === 0)) preloadAllSounds();
+  // 同时解锁 <audio> 通道：老设备要靠它，新设备在 ctx 被系统挂起时也要靠它
+  // 兜底。两路互不阻塞，避免「Web Audio 可用 ⇒ <audio> 永远没解锁」的死锁。
   if (AUDIO_UNLOCKED) return;
   try {
     const a = new Audio(SILENT_WAV);
     a.volume = 0;
     const pr = a.play();
-    if (pr && pr.then) pr.then(() => { AUDIO_UNLOCKED = true; preloadVoices(); }).catch(() => {});
-    else { AUDIO_UNLOCKED = true; preloadVoices(); }
+    const done = () => {
+      AUDIO_UNLOCKED = true;
+      if (!ACTX) preloadVoices();   // 不支持 Web Audio → 老通道 blob 预取保护
+    };
+    if (pr && pr.then) pr.then(done).catch(() => {});
+    else done();
   } catch (e) {}
 }
 /* 首次用户手势即解锁（点击/按键/触摸任意一处） */
@@ -4922,6 +5094,7 @@ function stopBgm() {
 }
 /* 设置里改了 总开关 / 背景音乐开关 / 曲目 / 任一音量 → 立即生效 */
 function applySoundSettings() {
+  syncAudioGains();          // 五修：Web Audio 分通道音量即时跟随滑杆
   if (!SOUND_ON || !SET.bgmOn) { stopBgm(); return; }
   if (BGM) { applyBgmVolume(); startBgm(); }
   else startBgm();
