@@ -1183,6 +1183,16 @@ html.replaying #timer::after {
   font-family: inherit; font-size: 13px; padding: 5px 9px; border-radius: 8px;
   border: 1px solid rgba(232,184,75,.4); background: rgba(10,22,14,.9); color: #f0e8d2;
   min-width: 7.6em; }   /* 2026-11-06：背景音乐 / 读牌音色两行下拉框同宽对齐 */
+/* 六修：设置页音效自检（不占 sndgrid 的列，移动端自动折行） */
+.sndselftest { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.sndselftest button {
+  font-family: inherit; font-size: 12px; padding: 6px 12px; border-radius: 9px;
+  border: 1px solid rgba(232,184,75,.45); background: rgba(232,184,75,.12);
+  color: #f0e8d2; cursor: pointer; white-space: nowrap; }
+.sndselftest button:active { background: rgba(232,184,75,.26); }
+.sndselftest .snddiag { flex: 1 1 100%; font-size: 11px; color: #cfd8c5;
+  line-height: 1.6; word-break: break-all; }
+html.mob .sndselftest .snddiag { font-size: 10px; }
 html.mob .sndrow { grid-template-columns: var(--sndlbl-w) minmax(0, 1fr); gap: 5px 9px;
   padding: 6px 0; --sndlbl-w: 7em; }
 html.mob .sndrow > .volrow, html.mob .sndrow > select { grid-column: 2; }
@@ -3905,6 +3915,13 @@ html.mob .scoregrid input { width: 42px; }
           </span>
         </div>
       </div>
+      <!-- 六修：页面内音效自检，直接测「一次性 audio」通道，绕过总开关/音量，
+           结果里带 build，可一眼确认手机是否已刷新到新版页面。 -->
+      <div class="sndselftest">
+        <button id="snd-selftest" type="button">🔊 播放测试音</button>
+        <button id="snd-reload" type="button">补取音效资源</button>
+        <span class="snddiag" id="snd-diag">未测试</span>
+      </div>
     </section>
 
         <section data-pane="rule">
@@ -4641,12 +4658,20 @@ function setText(elm, txt) {
        32kbps VBR/ID3），高频读牌让元素长期卡在 seeking；PCM WAV 是即时 seek，
        所以「换回 mp3 才复现」；
      · 胡/自摸低频触发，恰好在池冷却时能响，造成「只有胡牌生效」的错觉。
-   根治：**所有短音效改走 Web Audio** —— 手势解锁后一次性把 66 个被引用的
-   短音效 mp3（上游共 68 个，根目录 胡牌/自摸 两个前端未用到）
-   fetch + decodeAudioData 成 AudioBuffer 缓存，播放只创建一次性
-   AudioBufferSourceNode（播完即弃）。零媒体元素、零自动播放策略、零 seek、
-   零回源、零解码器累积；BGM 是 52s 长音频，仍用 <audio> 流式播放。
-   老设备不支持 Web Audio 时，自动退回上面的 <audio> 池（保留 blob 预取保护）。 */
+   五修尝试：66 个短音效改走 Web Audio（预解码 AudioBuffer + 一次性
+   BufferSource）。**真机验证失败**：用户第二局仍报「读牌 + 碰杠哑，只剩 BGM 和胡」。
+   复盘：胡与碰/杠在 snd() 里是同一条路径，差别只在触发频率 ⇒ Web Audio 主路径
+   整体没生效（安卓 WebView 的 decodeAudioData 对 mp3 支持不稳定 / AudioContext
+   被系统挂起后非手势上下文 resume 无效），playBuf() 返回 false 后 snd() 全部
+   退回旧 <audio> 池，五修等于没改，症状自然与四修一模一样。
+
+   六修（当前实现）：短音效彻底不依赖任何持久状态 —— 每条音效新建一次性
+   <audio> + 全量预取的 blob URL，播完立即 pause + removeAttribute('src') +
+   load() 释放；不池化、不换 src、不 seek。playing 事件做出声确认，1.4s 未
+   出声则换原始 URL 重试一次，同时存活元素上限 6。Web Audio 代码保留但
+   SND_USE_WA=false 默认停用，不再让它决定「有没有声音」。
+   BGM 是 52s 长音频，始终用独立 <audio> 流式播放，不在此列。
+   设置页「播放测试音」可直接测通道并打印 __sndDiag()（含 build 版本号）。 */
 /* 音源（2026-11-06 换回上游真人配音）：来自 LIGF9/DushanMajiang 的
    resource/sound，27 张牌名 + 碰/杠/胡/自摸 × 男女声各 31 条，根目录 6 条
    通用音效、bgmusic 5 首 BGM，均为 mp3。此前临时用 macOS TTS 合成的 16k
@@ -4708,7 +4733,8 @@ const SND_BUF = Object.create(null);   // src -> AudioBuffer
 const SND_LOAD = Object.create(null);  // src -> Promise（去重）
 const SND_FAIL = Object.create(null);  // src -> 失败次数（避免无限重试）
 let SND_PRELOADING = false;
-const SND_DIAG = { plays: 0, fallbacks: 0, decoded: 0, failed: 0 };
+const SND_DIAG = { plays: 0, fallbacks: 0, decoded: 0, failed: 0,
+  oneshot: 0, ok: 0, retry: 0, fail: 0, blocked: 0, lastErr: "" };
 
 function syncAudioGains() {
   if (!ACTX || !SND_MASTER) return;
@@ -4816,18 +4842,123 @@ function playBuf(src, ch) {
     return true;
   } catch (e) { SND_DIAG.failed++; return false; }
 }
-/* 供排查：控制台 __sndDiag() 看解码进度 / 主路径命中 / fallback 次数 */
+/* ================= 一次性 <audio> 通道（六修 · 默认主路径） =================
+   五修把短音效放到 Web Audio，真机上第二局仍只剩 BGM 和低频的胡牌音 —— 说明
+   Web Audio 主路径**整体没有生效**：安卓 WebView 的 decodeAudioData 对 mp3
+   支持不稳定（66 个可能全失败），或 AudioContext 在长局/音频焦点切换后被系统
+   挂起、非手势上下文里 resume() 又无效。playBuf() 一旦返回 false，snd() 就
+   全部退回**旧的池化 <audio>** —— 五修等于没改，症状与四修完全一致。
+   旧池的根疾是「同一个元素反复换 src + currentTime=0」：mp3 换源要重新解帧，
+   高频读牌把元素卡在 seeking，轮转元素逐个僵死；低频的胡/自摸偶尔撞上冷却
+   好的元素还能响，BGM 是独立常驻元素永远在 —— 正好解释「胡可以、碰杠读牌哑」。
+
+   六修：短音效不再依赖任何持久状态（AudioContext / 池 / 轮转元素）。
+     每条音效 = 新建一个 <audio> + 预取的 blob URL，播完立刻 pause +
+     removeAttribute('src') + load() 释放；不复用、不换 src、不 seek。
+     · 出声确认用 playing 事件；1.4s 未确认 → 换原始 URL 再试一次。
+     · 同时存活元素上限 6，超出丢弃本次（宁可丢一声，也不拖垮整条通道）。
+     · 66 个短音效全量预取 blob（含碰杠胡自摸与根目录通用音效），
+       播放零网络请求，不受连接池/缓存回收影响。 */
+const SND_BUILD = "r6-20261106-oneshot";
+const SND_USE_WA = false;      // Web Audio 仅保留为可选加速，默认关闭（真机不可靠）
+const SND_LIVE_MAX = 6;
+const SND_BLOB = Object.create(null);       // src -> blob: URL
+const SND_BLOB_LOAD = Object.create(null);  // src -> Promise（去重）
+const SND_LIVE_ELS = new Set();             // 当前存活的一次性元素
+let SND_BLOB_PRELOADING = false, SND_BLOB_DONE = false, SND_BLOB_TRIES = 0;
+let SND_BLOB_OFF = false, SND_BLOB_TIMEOUTS = 0;  // 设备不支持 blob: 播放时自动降级
+
+function loadSndBlob(src) {
+  if (SND_BLOB[src]) return Promise.resolve(SND_BLOB[src]);
+  if (SND_BLOB_LOAD[src]) return SND_BLOB_LOAD[src];
+  const p = fetch(src, { cache: "force-cache" })
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
+    .then(b => { const u = URL.createObjectURL(b); SND_BLOB[src] = u; return u; })
+    .catch(() => { delete SND_BLOB_LOAD[src]; return null; });
+  SND_BLOB_LOAD[src] = p;
+  return p;
+}
+async function preloadBlobs() {
+  if (SND_BLOB_PRELOADING) return;
+  SND_BLOB_PRELOADING = true;
+  try {
+    const paths = allShortSndPaths();
+    for (let i = 0; i < paths.length; i += 6)
+      await Promise.all(paths.slice(i, i + 6).map(loadSndBlob));
+    SND_BLOB_DONE = paths.every(p => !!SND_BLOB[p]);
+  } finally { SND_BLOB_PRELOADING = false; }
+}
+function releaseOneShot(a) {
+  if (a._released) return;
+  a._released = true;
+  if (a._wd) { clearTimeout(a._wd); a._wd = null; }
+  try { a.pause(); } catch (e) {}
+  // 关键：主动断源并 load()，否则 WebView 的媒体会话/解码器不会立即归还
+  try { a.removeAttribute("src"); a.load(); } catch (e) {}
+  SND_LIVE_ELS.delete(a);
+}
+function playOneShot(src, vol, attempt) {
+  if (SND_LIVE_ELS.size >= SND_LIVE_MAX) { SND_DIAG.blocked++; return; }
+  const a = new Audio();
+  a.preload = "auto";
+  a._ok = false;
+  a._released = false;
+  try { a.volume = clamp01(vol); } catch (e) {}
+  // 首选预取 blob（零网络）；重试或设备不支持 blob 时用原始 URL
+  a.src = (!attempt && !SND_BLOB_OFF && SND_BLOB[src]) ? SND_BLOB[src] : src;
+  SND_LIVE_ELS.add(a);
+  SND_DIAG.oneshot++;
+  const retry = why => {
+    if (a._released) return;
+    const fromBlob = !attempt && !!SND_BLOB[src] && !SND_BLOB_OFF;
+    releaseOneShot(a);
+    if (fromBlob && why === "timeout") {
+      // 某些 WebView 不接受 blob: 作为 <audio> 源 —— 连续 3 次不出声就
+      // 整条通道改用原始 URL（服务端音频有 1 天强缓存，仍不回源）。
+      if (++SND_BLOB_TIMEOUTS >= 3) { SND_BLOB_OFF = true; SND_DIAG.lastErr = "blob-disabled"; }
+    }
+    if (!attempt) {
+      SND_DIAG.retry++; SND_DIAG.lastErr = SND_BLOB_OFF ? SND_DIAG.lastErr : (why || "retry");
+      playOneShot(src, vol, 1);
+    } else { SND_DIAG.fail++; SND_DIAG.lastErr = why || "fail"; }
+  };
+  a.addEventListener("playing", () => { a._ok = true; SND_DIAG.ok++; });
+  a.addEventListener("ended", () => releaseOneShot(a));
+  a.addEventListener("error", () => { if (!a._ok) retry("media-error"); else releaseOneShot(a); });
+  // 出声看门狗：0.5~0.94s 的短音效，1.4s 仍没 playing 就判定本次僵死
+  a._wd = setTimeout(() => {
+    if (a._ok) { releaseOneShot(a); return; }  // 已出声但没 ended：主动释放，不重播
+    retry("timeout");
+  }, 1400);
+  try {
+    const pr = a.play();
+    if (pr && pr.catch) pr.catch(err => {
+      const nm = (err && err.name) || String(err);
+      if (nm === "NotAllowedError" || nm === "SecurityError") {
+        // 播放授权被吊销 → 复位，下一次用户手势会重新解锁
+        AUDIO_UNLOCKED = false; SND_DIAG.blocked++; SND_DIAG.lastErr = nm;
+        releaseOneShot(a);
+      } else if (nm !== "AbortError") retry(nm);
+    });
+  } catch (e) { retry("throw:" + (e && e.name)); }
+}
+
+/* 供排查：控制台 __sndDiag() 或设置页「播放测试音」显示当前通道状态 */
 window.__sndDiag = () => ({
+  build: SND_BUILD,
+  channel: SND_USE_WA ? "web-audio" : "oneshot-audio",
   ctx: ACTX ? ACTX.state : "none",
-  decoded: Object.keys(SND_BUF).length,
   total: allShortSndPaths().length,
-  pending: Object.keys(SND_LOAD).length,
-  failed: Object.assign({}, SND_FAIL),
+  blob: Object.keys(SND_BLOB).length, blobOff: SND_BLOB_OFF,
+  decoded: Object.keys(SND_BUF).length,
+  live: SND_LIVE_ELS.size,
+  oneshot: SND_DIAG.oneshot, ok: SND_DIAG.ok, retry: SND_DIAG.retry,
+  fail: SND_DIAG.fail, blocked: SND_DIAG.blocked, lastErr: SND_DIAG.lastErr,
   plays: SND_DIAG.plays, fallbacks: SND_DIAG.fallbacks,
-  master: SND_MASTER ? SND_MASTER.gain.value : null,
-  voiceGain: SND_GAIN.voice ? SND_GAIN.voice.gain.value : null,
-  sfxGain: SND_GAIN.sfx ? SND_GAIN.sfx.gain.value : null,
+  soundOn: SOUND_ON, voiceOn: SET.voiceOn, sfxOn: SET.sfxOn,
+  master: SET.masterVol, voice: SET.voiceVol, sfx: SET.sfxVol,
 });
+
 
 function _newAudioEl() {
   const a = new Audio();
@@ -4853,17 +4984,18 @@ function _pool(src) {
 /* 整池重建：总开关从关到开时调用，把可能卡住的元素全换成新的（一键恢复）；
    五修后主路径是 Web Audio，这里顺手 resume 可能被系统挂起的 AudioContext。 */
 function resetAudioPools() {
-  ensureAudioCtx(true);
+  // 六修：主通道是「一次性 <audio>」，没有池可重建；这里只释放历史遗留的
+  // 池/轮转元素，然后重新解锁自动播放策略并补齐 blob 预取。
   for (const k of Object.keys(audioPool)) {
     for (const a of audioPool[k].els) { try { a.pause(); } catch (e) {} }
     AUDIO_ELS = Math.max(0, AUDIO_ELS - audioPool[k].els.length);
     delete audioPool[k];
   }
-  // 五修：连同读牌轮转元素一起清掉 —— Web Audio 就绪后不留任何短音效媒体元素
   for (const k of Object.keys(VOICE_ELS)) {
     for (const a of VOICE_ELS[k]) { try { a.pause(); } catch (e) {} }
     VOICE_ELS[k] = [];
   }
+  unlockAudio();
 }
 function _playOn(el, vol) {
   const dur = (el.duration && isFinite(el.duration) && el.duration > 0) ? el.duration : 0.7;
@@ -4977,17 +5109,12 @@ function voicePlay(src, vol) {
     _rebuildVoiceEl(arr, a);               // 僵死元素：换新（下一句读牌即恢复）
   }, 1600);
 }
-/* iOS/手机浏览器：切后台、来电、锁屏会吊销媒体的播放授权——回到前台时
-   把读牌元素整个重建、播放锁复位，下一次触摸即重新解锁（pointerdown 已挂）；
-   回前台当场先试一次自动解锁（桌面切回无新手势也能恢复）。 */
+/* iOS/手机浏览器：切后台、来电、锁屏会吊销媒体的播放授权 —— 回前台把
+   播放锁复位，下一次触摸重新解锁；同时补一次 blob 预取（缺哪个补哪个）。 */
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   AUDIO_UNLOCKED = false;
-  ensureAudioCtx(true);      // 五修：iOS/切后台会 suspend AudioContext，回前台立刻 resume
-  for (const k of Object.keys(VOICE_ELS)) {
-    for (const a of VOICE_ELS[k]) { try { a.pause(); } catch (e) {} }
-    VOICE_ELS[k] = [];
-  }
+  SND_BLOB_DONE = false;
   unlockAudio();
 });
 /* 单条音效：name=文件名（不含 .mp3）；gender 仅对非根目录音效生效；
@@ -5011,12 +5138,13 @@ function snd(name, gender, channel) {
   const vol = _sndGain(ch);
   if (vol <= 0) return;
   const src = sndPath(name, g);
-  // 五修：短音效统一走 Web Audio（零媒体元素，长局不会哑）；只有不支持
-  // Web Audio / ctx 尚未 running / 该音源解码失败时才退回旧 <audio> 池。
-  if (playBuf(src, ch)) return;
+  // 六修：默认一次性 <audio>（不依赖 AudioContext / 池 / 轮转元素）。
+  // Web Audio 只在 SND_USE_WA 显式打开时作为可选加速；那条路在安卓 WebView
+  // 上不可靠，不能让它决定「有没有声音」。
+  if (SND_USE_WA && playBuf(src, ch)) return;
   SND_DIAG.fallbacks++;
-  if (ch === "voice") { voicePlay(src, vol); return; }
-  _rawPlay(src, vol);
+  if (!SND_BLOB[src]) loadSndBlob(src);   // 后台补齐预取，不阻塞本次播放
+  playOneShot(src, vol, 0);
 }
 /* 读牌：打出牌时报牌名（按该家性别） */
 function voiceTile(t, gender) { const n = tileSndName(t); if (n) snd(n, gender, "voice"); }
@@ -5030,22 +5158,18 @@ const sndEvent = {
 /* 一段极短的静音 wav（data URI），用于在用户手势里解锁自动播放策略 */
 const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
 function unlockAudio() {
-  const first = !AUDIO_UNLOCKED;
-  // 五修主路径：手势里 new AudioContext() + resume() 解锁 Web Audio，
-  // 预解码**立即启动**，不等下面 <audio> 的 play() 结果（被拒也不拖累主路径）。
-  ensureAudioCtx(true);
-  if (ACTX && (first || SND_DIAG.decoded === 0)) preloadAllSounds();
-  // 同时解锁 <audio> 通道：老设备要靠它，新设备在 ctx 被系统挂起时也要靠它
-  // 兜底。两路互不阻塞，避免「Web Audio 可用 ⇒ <audio> 永远没解锁」的死锁。
+  // 六修：短音效通道是「一次性 <audio> + 全量 blob 预取」，唯一需要解锁的是
+  // 浏览器的自动播放策略（静音 wav），与 AudioContext / 元素池全部解耦。
+  if (!SND_BLOB_DONE && !SND_BLOB_PRELOADING && SND_BLOB_TRIES < 3) {
+    SND_BLOB_TRIES++; preloadBlobs();
+  }
+  if (SND_USE_WA) ensureAudioCtx(true);   // 可选加速，默认关闭
   if (AUDIO_UNLOCKED) return;
   try {
     const a = new Audio(SILENT_WAV);
     a.volume = 0;
     const pr = a.play();
-    const done = () => {
-      AUDIO_UNLOCKED = true;
-      if (!ACTX) preloadVoices();   // 不支持 Web Audio → 老通道 blob 预取保护
-    };
+    const done = () => { AUDIO_UNLOCKED = true; };
     if (pr && pr.then) pr.then(done).catch(() => {});
     else done();
   } catch (e) {}
@@ -9189,6 +9313,42 @@ function applySoundNow() {
   const n = el(id);
   if (n) { n.addEventListener("input", applySoundNow); n.addEventListener("change", applySoundNow); }
 });
+
+/* ---- 六修：设置页「播放测试音」 ----
+   直接调 playOneShot（绕过 SOUND_ON / 分通道开关 / 音量），测的是通道本身；
+   输出里带 SND_BUILD，手机若还停在旧版页面一眼可辨。 */
+(function bindSndSelftest() {
+  const b = el("snd-selftest"), r = el("snd-reload"), out = el("snd-diag");
+  const show = prefix => {
+    if (!out) return;
+    const d = window.__sndDiag ? window.__sndDiag() : {};
+    out.textContent = (prefix ? prefix + " · " : "") +
+      `${d.build || "旧版页面"} · 预取 ${d.blob}/${d.total} · 播放 ${d.oneshot}` +
+      ` · 出声 ${d.ok} · 重试 ${d.retry} · 失败 ${d.fail} · 阻塞 ${d.blocked}` +
+      ` · 存活 ${d.live}` + (d.blobOff ? " · blob已降级" : "") +
+      (d.lastErr ? ` · ${d.lastErr}` : "");
+  };
+  if (r) r.addEventListener("click", () => {
+    SND_BLOB_DONE = false; SND_BLOB_TRIES = 0; unlockAudio();
+    show("补取中"); setTimeout(() => show("补取完成"), 1600);
+  });
+  if (!b) return;
+  b.addEventListener("click", () => {
+    unlockAudio();
+    const seq = [["8万", "boy"], ["3条", "girl"], ["碰", "boy"], ["杠", "girl"], ["胡", "boy"]];
+    // 第一声放在点击同步栈里播（iOS 自动播放策略最严），其余错开 700ms
+    seq.forEach((x, i) => {
+      const fire = () => {
+        const src = sndPath(x[0], x[1]);
+        if (!SND_BLOB[src]) loadSndBlob(src);
+        playOneShot(src, 0.9, 0);
+      };
+      if (i === 0) fire(); else setTimeout(fire, i * 700);
+    });
+    show("测试中");
+    setTimeout(() => show("结果"), seq.length * 700 + 1400);
+  });
+})();
 
 /* ---- 设置面板：左侧分类导航（记忆上次分类） ---- */
 let SET_PANE = localStorage.getItem("dushan_setpane") || "who";
