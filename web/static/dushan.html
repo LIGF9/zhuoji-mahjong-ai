@@ -728,11 +728,18 @@ table.res td img.tin { height: 24px; vertical-align: middle; border-radius: 2px;
 .ovhand .ovtile .jimark { position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
   border-radius: 50%; background: #e8483d; box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
 .ovhand .ovtile .jimark.jin { background: #43b16c; }
+/* 打出的鸡牌（2026-11-06 第十二批用户口径）：从标签行的小图移到**手牌行末尾**，
+   牌面放大到与手牌同尺寸（26×40），margin-left:auto 靠右；虚线把「手牌」与
+   「已打出的鸡牌」分开，不额外加文字以免抢视线。点标沿用结算手牌口径（#result-mask
+   .jidots 统一 6px），责任鸡仍是黄点。 */
+.ovhand .ovdiscs { display: inline-flex; align-items: flex-end; gap: 0;
+  margin-left: auto; padding-left: 10px; border-left: 1px dashed rgba(232,184,75,.32); }
+.ovhand .ovdiscs .ovtile img { width: 26px; height: 40px; border-radius: 3px; display: block; }
 .ovmeta { font-size: 12px; color: #cfd8c5; line-height: 1.7; }
 /* 打出的鸡牌图与文字标签**底部平齐**：inline-flex 的基线是图片底边，
    而 inline-block 标签的底边在基线之下（下行字母区），不处理会差约 7px；
    统一 vertical-align:bottom 让两者底边都落在行框底上 */
-.ovmeta .tag, .ovmeta .cap, .ovmeta .disc { vertical-align: bottom; }
+.ovmeta .tag, .ovmeta .cap { vertical-align: bottom; }
 .ovmeta .tag { display: inline-block; padding: 0 6px; margin-right: 4px; border-radius: 8px;
   background: rgba(232,184,75,.14); color: var(--gold); border: 1px solid rgba(232,184,75,.35); font-size: 11px; }
 /* 总览：听牌牌的迷你牌面（嵌在标签里） */
@@ -746,9 +753,8 @@ table.res td img.tin { height: 24px; vertical-align: middle; border-radius: 2px;
   margin-right: 4px; border-radius: 8px; font-size: 11px;
   background: rgba(120,180,255,.1); color: #bcd7f5; border: 1px solid rgba(120,180,255,.32); }
 .ovmeta .cap img { height: 20px; border-radius: 2px; display: block; }
-/* 总览：打出的鸡牌（真实牌面 + 统一角标，冲=红 / 横=蓝） */
-.ovmeta .disc { display: inline-flex; align-items: center; gap: 2px; margin-right: 4px; }
-.ovmeta .disc img { height: 26px; border-radius: 3px; display: block; }
+/* 2026-11-06 第十二批：标签行不再放「打出的鸡牌」小图，已整体移到手牌行末尾
+   （.ovhand .ovdiscs，与手牌同尺寸）；标签行内的小牌图也不再加红点。 */
 /* 结束印记：夹在「对家弃牌区内缘(y180，收拢后)」与「计时盘上缘(y234)」之间的安全带内。
    #river 局部坐标 600×600：印记 150×52，占 y181~233，
    上距对家弃牌区 1px、下距计时盘 1px，不再遮挡任何弃牌 */
@@ -5782,20 +5788,20 @@ const MELD_BACK = "/assets/tiles/face-down.png";
 function ovMeldCaption(m, ownerSeat, nameOfSeat) {
   // 2026-11-02 v4 用户口径：标签里的小牌图（20px 高）不再加冲/横红点 —— 前面
   // 「碰横鸡 / 碰冲锋鸡」的文字已经说清楚了，牌图只保留牌面本身。
-  // 2026-11-06：标签里的小牌图也要红点（碰/杠吃进的鸡牌，含只有牌种、没有
-  // 冲锋鸡/横鸡丝带的开局翻鸡种），与副露牌格/结算明细同口径。
+  // 2026-11-06 第十二批用户口径（覆盖同日早先的「标签小图也加红点」）：
+  // 标签内的鸡牌**一律不用红点表示鸡牌**，文字标签已足够；小图恢复光板。
+  // 副露牌格（手牌行里的 .mc）与结算明细小图仍保留点标，不受此处影响。
   const isJi = !!m.ji || activeJiSet().has(+m.tile);
-  const dots = isJi ? jiDotsFor(m.tile, m.ji) : "";
   if (m.type === 1) {
     if (!isJi) return "";
     const src = nameOfSeat ? nameOfSeat(m.src) : "";
-    return `碰${m.ji || "鸡"}<span class="jcap"><img src="${tileImg(m.tile)}" alt="">${dots}</span>${src ? `(${src})` : ""}`;
+    return `碰${m.ji || "鸡"}<span class="jcap"><img src="${tileImg(m.tile)}" alt=""></span>${src ? `(${src})` : ""}`;
   }
   if (m.type === 2 || m.type === 3 || m.type === 4) {
     const who = (m.type === 2 && Number.isInteger(m.src) && nameOfSeat)
       ? nameOfSeat(m.src) : (m.type === 2 ? "明杠" : "");
     const how = m.type === 4 ? "自杠" : m.type === 3 ? "补杠" : (who || "明杠");
-    return `杠<span class="jcap"><img src="${tileImg(m.tile)}" alt="">${dots}</span>(${how})`;
+    return `杠<span class="jcap"><img src="${tileImg(m.tile)}" alt=""></span>(${how})`;
   }
   return "";
 }
@@ -7541,11 +7547,14 @@ function resJibarHTML(st) {
   // 四倍金鸡=2×2 四红点）；普通鸡牌不加（信息条只列鸡牌种本身）。
   const gold = new Set((res.gold_tiles || []).map(Number));
   const quad = new Set((res.quad_gold_tiles || []).map(Number));
-  // 2026-11-06 用户口径：信息条里**所有鸡牌**都要红点（金鸡=绿点 / 四倍金鸡=4 绿点），
-  // 不能只对金鸡加点 —— 结算翻出的普通鸡牌此前是光板，玩家看不出哪张是鸡。
-  const gimg = t => `<span class="goldwrap"><img src="${tileImg(t)}" alt="">` +
-    (quad.has(+t) ? jiDotsHTML("金鸡", "jin q4")
-      : gold.has(+t) ? jiDotsHTML("金鸡", "jin") : jiDotsFor(t)) + `</span>`;
+  // 2026-11-06 第十二批用户口径：顶部信息条里的牌**本身就是鸡牌**（前面已写
+  // 「开局鸡牌 / 结算翻鸡」），不再叠红点重复说明；金鸡/四倍金鸡保留绿点，
+  // 那个点表达的是倍率信息，不是「这是鸡牌」。
+  const gimg = t => {
+    const mark = quad.has(+t) ? jiDotsHTML("金鸡", "jin q4")
+      : gold.has(+t) ? jiDotsHTML("金鸡", "jin") : "";
+    return `<span class="goldwrap"><img src="${tileImg(t)}" alt="">${mark}</span>`;
+  };
   const jiImgs = jiTilesOrdered(st.ji_tiles && st.ji_tiles.length ? st.ji_tiles : [YAOJI])
     .map(t => `<span class="jt">${gimg(t)}</span>`).join("");
   const bar = [];
@@ -7682,27 +7691,23 @@ function playerHandBlock(st, rel, ctx) {
     const cap = ovMeldCaption(m, p.seat, ctx.nameOfSeat);
     if (cap) meta.push(`<span class="cap">${cap}</span>`);
   }
-  // 打出的鸡牌：冲锋鸡/横鸡 = 真实牌面 + 统一角标（冲=红/横=蓝）；普通鸡用普通牌面
-  // 2026-10-13 用户口径：这张鸡牌若已被别人**碰/杠走**（discard_claimed），
-  // 打出者要按「责任鸡」另付溢价 → 在该牌上加一个青绿「责」角标标出来。
-  const discs = [];
+  // 打出的鸡牌（2026-11-06 第十二批用户口径）：**不再塞在标签行的小图里**，
+  // 改到手牌行末尾、放大到与手牌同尺寸并靠右展示（.ovhand .ovdiscs）。
+  // 标签行只留「未听/听/碰横鸡/杠」等文字标签，标签内的小牌图也不再点红点。
+  // 点标沿用结算手牌口径：责任鸡（已被碰/杠走）= 黄点，其余按 冲锋鸡3/横鸡2/普通1。
+  const discCells = [];
   (p.discards || []).forEach((t, i) => {
     const tg = (p.discard_tags || [])[i];
     const isJi = !!tg || jiSet.has(t);       // 只显示「打出的鸡牌」（普通牌不进这一栏）
     if (!isJi) return;
     const claimed = !!((p.discard_claimed || [])[i]);
-    // 2026-11-02 v4 用户口径：①责任鸡不再用「责」丝带角标，改用**黄点**
-    // （点数看它是冲锋鸡责任鸡 3 点 / 横鸡责任鸡 2 点 / 普通鸡责任鸡 1 点）；
-    // ②这一行的小牌图太小（26px 高），冲/横红点已看不清 → 不再加红点，
-    // 该张是冲/横由紧随其后的标签文字（碰鸡/杠鸡说明）表达。
-    // 2026-11-06 用户口径：打出的鸡牌（含开局鸡）在标签行也要红点标识；
-    // 责任鸡仍用黄点（尺寸由 CSS 统一），其余一律红点（冲锋鸡 3 / 横鸡 2 / 普通 1）。
     const dots = claimed ? jiDotsHTML(tg, "zr") : jiDotsFor(t, tg);
     const zrTip = claimed ? "（责任鸡：这张已被碰/杠走）" : "";
-    discs.push(`<span class="jwrap"><img src="${tileImg(t)}" alt="${tg || "鸡牌"}" ` +
-      `title="${tg || "鸡牌"}${zrTip}">${dots}</span>`);
+    discCells.push(`<span class="ovtile" title="${tg || "鸡牌"}${zrTip}">` +
+      `<img src="${tileImg(t)}" alt="${tg || "鸡牌"}">${dots}</span>`);
   });
-  if (discs.length) meta.push(`<span class="disc">${discs.join("")}</span>`);
+  const discHtml = discCells.length
+    ? `<span class="ovdiscs" title="本局打出的鸡牌">${discCells.join("")}</span>` : "";
   const hand = (p.hand_tiles || []).slice().sort((a, b) => a - b);
   // 胡牌张（2026-11-01 用户口径）：单独摆在手牌最右、与手牌隔开一段距离。
   // 自摸的那张本来混在排序手牌里，看不出是哪张 → 从手牌里取出来单摆；
@@ -7731,9 +7736,9 @@ function playerHandBlock(st, rel, ctx) {
   const winHtml = winTile == null ? "" :
     `<span class="ovwingap"></span><span class="ovwin" title="胡牌张（${
       res.is_tsumo ? "自摸" : winHowTag(res)}）">${tileCell(winTile)}</span>`;
-  const handHtml = (meldsHtml || hand.length || winHtml)
+  const handHtml = (meldsHtml || hand.length || winHtml || discHtml)
     ? `<div class="ovhand">${meldsHtml}<span class="ovhandgroup">${
-        hand.map(tileCell).join("")}</span>${winHtml}</div>` : "";
+        hand.map(tileCell).join("")}</span>${winHtml}${discHtml}</div>` : "";
   return { handHtml, metaHtml: meta.join(""), isWin };
 }
 /* 单人视角「尝试性布局」用的一行：头像 + 手牌 + 标签（无名字、无总分；总览的对照物） */
