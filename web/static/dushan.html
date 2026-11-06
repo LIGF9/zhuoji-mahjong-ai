@@ -4774,7 +4774,7 @@ const SND_FAIL = Object.create(null);  // src -> 失败次数（避免无限重�
 let SND_PRELOADING = false;
 const SND_DIAG = { plays: 0, fallbacks: 0, decoded: 0, failed: 0,
   oneshot: 0, ok: 0, retry: 0, fail: 0, blocked: 0, lastErr: "",
-  probeOk: 0, probeSilent: 0, peak: 0 };
+  probeOk: 0, probeSilent: 0, peak: 0, trig: 0 };
 let SND_WA_SILENT = 0, SND_WA_DISABLED = false;
 
 function syncAudioGains() {
@@ -4966,7 +4966,7 @@ function playBuf(src, ch) {
      · 同时存活元素上限 6，超出丢弃本次（宁可丢一声，也不拖垮整条通道）。
      · 66 个短音效全量预取 blob（含碰杠胡自摸与根目录通用音效），
        播放零网络请求，不受连接池/缓存回收影响。 */
-const SND_BUILD = "r8-20261106-loudness";
+const SND_BUILD = "r9-20261106-evcursor";
 /* 通道：auto（Web Audio 优先 + 真实信号探测自动降级）| wa | audio | both。
    用户可在设置页切换，控制台也可 __sndChan("audio") 强制切。 */
 let SND_CHAN = (() => {
@@ -5097,6 +5097,7 @@ window.__sndDiag = () => ({
   peak: +SND_DIAG.peak.toFixed(4),
   probeOk: SND_DIAG.probeOk, probeSilent: SND_DIAG.probeSilent,
   wa: SND_DIAG.plays, audio: SND_DIAG.oneshot, ok: SND_DIAG.ok,
+  trig: SND_DIAG.trig,
   retry: SND_DIAG.retry, fail: SND_DIAG.fail, blocked: SND_DIAG.blocked,
   live: SND_LIVE_ELS.size, fallbacks: SND_DIAG.fallbacks,
   vol: `${SET.masterVol}/${SET.voiceVol}/${SET.sfxVol}`,
@@ -5271,6 +5272,8 @@ document.addEventListener("visibilitychange", () => {
    channel = "voice"（读牌）| "sfx"（操作音效，默认）。 */
 function snd(name, gender, channel) {
   if (!name) return;
+  SND_DIAG.trig++;   // 九修：对局内被触发的次数 —— 与播放计数分开，
+                     // 「触发涨、播放不涨」=触发后被通道吞；「触发都不涨」=上游没来
   /* 声音门禁（2026-10-13 用户口径）：
      · 正常对局 → 由**总开关** SOUND_ON 说了算；
      · 回放器 → 由**回放器自己的开关** RP_SOUND 说了算（进回放时会与牌局总开关同步，
@@ -6752,11 +6755,45 @@ function renderLog(events) {
   // 会话切换（新局/恢复）：只同步计数，不回放历史音效
   if (lg.dataset.sid !== String(SID)) {
     lg.dataset.sid = SID; lastShown = events.length; lg.dataset.count = events.length;
+    // 九修：声音水位线同步到当前最后一条 —— 历史事件进流水但不发声
+    const t0 = events.length ? events[events.length - 1] : null;
+    lg.dataset.sndhwm = (t0 && t0.hand != null && t0.seq != null) ? `${t0.hand}|${t0.seq}` : "";
   }
   // 新事件音效（2026-10-13 重构）：摸牌/打牌 = 操作音效；出牌牌名 = 读牌（按该家性别）；
   // 碰/杠 = 操作音效（按该家性别）。冲锋鸡/横鸡：动画开→动画播报；动画关→toast 播报。
-  if (events.length > lastShown) {
-    for (let i = Math.max(lastShown, events.length - 4); i < events.length; i++) {
+  //
+  // 九修（2026-11-06 · 用户实测「第二局起读牌/碰杠哑、测试按钮却能响、只剩 BGM
+  // 和胡自摸」）：判新游标改用「事件编号 (hand, seq)」水位线。旧写法拿
+  // events.length（条数）比大小，但 st.events 是服务端滑动窗口
+  // （list(self.events)[-160:]，底层 deque maxlen=600）—— 条数到 160 后
+  // 不再增长，events.length > lastShown 从此永久为假，摸/打/读牌/碰杠集体静默；
+  // 而胡/自摸走结算页状态触发、BGM 独立常驻、设置页测试按钮直调 snd()，都不
+  // 经过这道闸 → 正好就是现场现象。文字渲染的指纹早就改用 tail.hand-tail.seq
+  // （见下方 sig 注释），声音游标当年漏改。seq 每局归零、hand 递增，
+  // (hand,seq) 在会话内严格单调，可作水位线。
+  const evKey = e => (e && e.hand != null && e.seq != null)
+    ? Number(e.hand) * 1000000 + Number(e.seq) : null;
+  const tailEv = events.length ? events[events.length - 1] : null;
+  const tailKey = evKey(tailEv);
+  let hwKey = null;
+  if (lg.dataset.sndhwm) {
+    const hw = lg.dataset.sndhwm.split("|");
+    hwKey = (parseInt(hw[0], 10) || 0) * 1000000 + (parseInt(hw[1], 10) || 0);
+  }
+  let freshFrom = -1;
+  if (tailKey != null) {
+    const base = (hwKey == null) ? -1 : hwKey;
+    for (let i = 0; i < events.length; i++) {
+      const k = evKey(events[i]);
+      if (k != null && k > base) { freshFrom = i; break; }
+    }
+  } else if (events.length > lastShown) {
+    // 兜底：事件不带 hand/seq（旧服务端）→ 沿用条数游标
+    freshFrom = Math.max(lastShown, events.length - 4);
+  }
+  if (freshFrom >= 0) {
+    // 突发（切后台后追进度）：至多补最近 4 条，与旧口径一致，宁缺勿炸
+    for (let i = Math.max(freshFrom, events.length - 4); i < events.length; i++) {
       const e = events[i];
       const g = (e.rel == null || e.rel < 0) ? null : relGender(e.rel);
       if (e.kind === "draw") snd("摸牌", null, "sfx");
@@ -6782,6 +6819,9 @@ function renderLog(events) {
         toast(`${logToastName(e.rel)} 报叫`, 1800);
       }
     }
+    // 水位线只进不退：LAST_STATE 重绘可能拿到旧快照，倒退会让新事件重播一遍
+    if (tailKey != null && (hwKey == null || tailKey > hwKey))
+      lg.dataset.sndhwm = `${tailEv.hand}|${tailEv.seq}`;
     lastShown = events.length;
     lg.dataset.count = events.length;
   }
@@ -9495,7 +9535,7 @@ function applySoundNow() {
     const d = window.__sndDiag ? window.__sndDiag() : {};
     out.textContent = (prefix ? prefix + " · " : "") +
       `${d.build || "旧版页面"} · ${d.eff} · ctx ${d.ctx}` +
-      ` · PCM ${d.pcm}/${d.total} · WA ${d.wa} / 音频 ${d.audio}` +
+      ` · PCM ${d.pcm}/${d.total} · 触发 ${d.trig} · WA ${d.wa} / 音频 ${d.audio}` +
       ` · 峰值 ${d.peak} · 探测 ${d.probeOk}:${d.probeSilent}` +
       ` · 音量 ${d.vol} → 实效 ${d.effVoice}/${d.effSfx}` +
       ` · 开关 ${d.soundOn}/${d.voiceOn}/${d.sfxOn}` +
