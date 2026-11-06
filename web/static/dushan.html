@@ -1181,7 +1181,8 @@ html.replaying #timer::after {
 .sndrow > select { grid-column: 4; }
 .sndrow select {
   font-family: inherit; font-size: 13px; padding: 5px 9px; border-radius: 8px;
-  border: 1px solid rgba(232,184,75,.4); background: rgba(10,22,14,.9); color: #f0e8d2; }
+  border: 1px solid rgba(232,184,75,.4); background: rgba(10,22,14,.9); color: #f0e8d2;
+  min-width: 7.6em; }   /* 2026-11-06：背景音乐 / 读牌音色两行下拉框同宽对齐 */
 html.mob .sndrow { grid-template-columns: var(--sndlbl-w) minmax(0, 1fr); gap: 5px 9px;
   padding: 6px 0; --sndlbl-w: 7em; }
 html.mob .sndrow > .volrow, html.mob .sndrow > select { grid-column: 2; }
@@ -2724,7 +2725,7 @@ html.mob .sndrow > .lbl { flex: 0 0 auto; }
 html.mob .sndrow > .switch { flex: 0 0 auto; }
 html.mob .sndrow > .volrow { flex: 1 1 auto; min-width: 0; }
 html.mob .sndrow > .volrow input[type="range"] { flex: 1 1 auto; width: auto; min-width: 56px; }
-html.mob .sndrow > select { flex: 0 0 auto; margin-left: auto; }
+html.mob .sndrow > select { flex: 0 0 auto; margin-left: auto; min-width: 0; max-width: 7em; }
 
 /* ==================================================================
    第四轮修订（2026-11-02 晚，用户第六批反馈 · 桌面为主）
@@ -3883,12 +3884,17 @@ html.mob .scoregrid input { width: 42px; }
           </select>
         </div>
         <div class="sndrow">
-          <div class="lbl">读牌声音<span class="q" data-q="有人打出牌时报出牌名；按**该玩家头像的性别**选男声 / 女声（男孩头像=男声，女孩头像=女声）">?</span></div>
+          <div class="lbl">读牌声音<span class="q" data-q="有人打出牌时报出牌名；**默认按该玩家头像的性别**选男声 / 女声（男孩头像=男声，女孩头像=女声）。也可在这里固定为男声或女声，两套真人配音均来自上游 resource/sound">?</span></div>
           <input type="checkbox" id="set-voice-on" class="switch">
           <span class="volrow">
             <input type="range" id="set-vol-voice" min="0" max="1" step="0.05" value="1">
             <b class="volval" id="set-vol-voice-val">100%</b>
           </span>
+          <select id="set-voice-gender" title="读牌音色">
+            <option value="auto">按头像性别</option>
+            <option value="boy">固定男声</option>
+            <option value="girl">固定女声</option>
+          </select>
         </div>
         <div class="sndrow">
           <div class="lbl">操作音效<span class="q" data-q="摸牌 / 打牌 / 碰 / 杠 / 胡 / 自摸 / 荒牌 / 点击等动作音效；碰杠胡自摸按**该玩家头像的性别**选男声 / 女声">?</span></div>
@@ -4424,6 +4430,13 @@ const SET = {
   bgmOn: _BGM_INIT.on,                     // 背景音乐总开关
   bgmTrack: _BGM_INIT.track,               // 背景音乐曲目：random（默认）| bg0..bg4
   voiceOn: loadBool("dushan_voice_on", true),      // 读牌声音
+  // 读牌音色（2026-11-06 换回上游真人配音后显式化）：auto=按发声玩家头像性别
+  // 自动选 sound_boy / sound_girl（默认，等同历史行为）；boy/girl=固定单套音色。
+  // 只作用于读牌通道；碰/杠/胡/自摸等操作音效仍按发声者头像性别。
+  voiceGender: (() => {
+    const v = localStorage.getItem("dushan_voice_gender");
+    return v === "boy" || v === "girl" ? v : "auto";
+  })(),
   sfxOn: loadBool("dushan_sfx_on", true),          // 操作音效
   masterVol: clamp01(localStorage.getItem("dushan_vol_master") === null
     ? 0.8 : localStorage.getItem("dushan_vol_master")),
@@ -4475,6 +4488,7 @@ function saveSet() {
   localStorage.setItem("dushan_bgm_on", SET.bgmOn ? "1" : "0");
   localStorage.setItem("dushan_bgm_track", SET.bgmTrack);
   localStorage.setItem("dushan_voice_on", SET.voiceOn ? "1" : "0");
+  localStorage.setItem("dushan_voice_gender", SET.voiceGender);
   localStorage.setItem("dushan_sfx_on", SET.sfxOn ? "1" : "0");
   localStorage.setItem("dushan_vol_master", String(clamp01(SET.masterVol)));
   localStorage.setItem("dushan_vol_bgm", String(clamp01(SET.bgmVol)));
@@ -4615,6 +4629,16 @@ function setText(elm, txt) {
    其它：首次用户手势用静音音频解锁自动播放策略（unlockAudio）；分通道音量
    masterVol × (bgmVol|voiceVol|sfxVol)；读牌与操作音效按发声玩家性别取
    sound_boy / sound_girl；所有读取都在调用时取 SET.*，回放自动沿用同一套设置。 */
+/* 音源（2026-11-06 换回上游真人配音）：来自 LIGF9/DushanMajiang 的
+   resource/sound，27 张牌名 + 碰/杠/胡/自摸 × 男女声各 31 条，根目录 6 条
+   通用音效、bgmusic 5 首 BGM，均为 mp3。此前临时用 macOS TTS 合成的 16k
+   单声道 WAV 已全部移除（见 tools/gen_sound_assets.py 的兜底说明）。
+   性别路由保持原设计：**按发声玩家头像的性别**取 sound_boy / sound_girl，
+   读牌（voice）与碰杠胡自摸（sfx）都走这条路由；ROOT_SND 是无性别通用音效。
+   SND_VER 只用于破服务端给音频的 max-age=86400 缓存：以后换音源改这个值
+   即可强制端上更新，不必让用户清缓存（服务端 do_GET 会剥掉 query）。 */
+const SND_EXT = "mp3";
+const SND_VER = "20261106";
 const ROOT_SND = ["打牌", "摸牌", "流局", "点击"];   // 这些在 sound/ 根目录（无性别）
 const AUDIO_POOL_MIN = 2;      // 每个音源常备元素数
 const AUDIO_POOL_MAX = 6;      // 忙时最多扩到这个数
@@ -4629,12 +4653,12 @@ function tileSndName(t) {
   return (CN_NUM[x.cn[0]] || x.cn[0]) + x.cn.slice(1);
 }
 function sndPath(name, gender) {
-  // 2026-11-06：原始 .mp3 资源从未入库、迁移后整目录缺失（所有设备静音）。
-  // 改由 tools/gen_sound_assets.py 生成 16k/16bit 单声道 WAV，浏览器与
-  // Android WebView 原生可播，无需外部解码器；文件名口径不变。
-  const f = name + ".wav";
-  if (ROOT_SND.includes(name)) return "/assets/sound/" + f;
-  return `/assets/sound/${gender === "girl" ? "sound_girl" : "sound_boy"}/${f}`;
+  // 性别目录由 relGender() 依据发声者头像决定：男孩头像 → sound_boy，
+  // 女孩头像 → sound_girl；两套都是 27 张牌名 + 碰/杠/胡/自摸的真人配音。
+  const f = name + "." + SND_EXT;
+  const q = "?v=" + SND_VER;
+  if (ROOT_SND.includes(name)) return "/assets/sound/" + f + q;
+  return `/assets/sound/${gender === "girl" ? "sound_girl" : "sound_boy"}/${f}${q}`;
 }
 /* 相对座位 → 该家性别（回放取记录头像，实盘取本局头像；缺省男声） */
 function relGender(rel) {
@@ -4821,7 +4845,12 @@ function snd(name, gender, channel) {
   if (RP_MODE ? !RP_SOUND : !SOUND_ON) return;
   const ch = channel || "sfx";
   if (ch === "voice" ? !SET.voiceOn : !SET.sfxOn) return;
-  const g = ROOT_SND.includes(name) ? null : (gender || "boy");
+  let g = ROOT_SND.includes(name) ? null : (gender || "boy");
+  // 2026-11-06：读牌音色可在设置里固定男声/女声（默认 auto = 按头像性别）。
+  // 两套真人配音 mp3 都已在 preloadVoices 预取，切换零延迟。
+  // 操作音效不覆盖：碰/杠/胡/自摸始终跟随发声者头像性别。
+  if (ch === "voice" && (SET.voiceGender === "boy" || SET.voiceGender === "girl"))
+    g = SET.voiceGender;
   const vol = _sndGain(ch);
   if (vol <= 0) return;
   const src = sndPath(name, g);
@@ -4859,8 +4888,9 @@ let BGM_SRC = "";
 function bgmSrc() {
   if (!SET.bgmOn) return null;
   const v = SET.bgmTrack;
-  if (!v || v === "random") return `/assets/sound/bgmusic/bg${Math.floor(Math.random() * 5)}.wav`;
-  return `/assets/sound/bgmusic/${/^bg[0-4]$/.test(v) ? v : "bg0"}.wav`;
+  const q = "?v=" + SND_VER;
+  if (!v || v === "random") return `/assets/sound/bgmusic/bg${Math.floor(Math.random() * 5)}.${SND_EXT}${q}`;
+  return `/assets/sound/bgmusic/${/^bg[0-4]$/.test(v) ? v : "bg0"}.${SND_EXT}${q}`;
 }
 function applyBgmVolume() {
   if (!BGM) return;
@@ -8884,6 +8914,7 @@ function fillSetSelects() {
   el("set-bgm-on").checked = SET.bgmOn;
   el("set-bgm").value = SET.bgmTrack;
   el("set-voice-on").checked = SET.voiceOn;
+  el("set-voice-gender").value = SET.voiceGender;
   el("set-sfx-on").checked = SET.sfxOn;
   el("set-vol-master").value = String(SET.masterVol);
   el("set-vol-bgm").value = String(SET.bgmVol);
@@ -8967,6 +8998,8 @@ function applySoundNow() {
   SET.bgmOn = newBgmOn;
   SET.bgmTrack = newTrack;
   SET.voiceOn = el("set-voice-on").checked;
+  const vg = el("set-voice-gender");
+  SET.voiceGender = vg && (vg.value === "boy" || vg.value === "girl") ? vg.value : "auto";
   SET.sfxOn = el("set-sfx-on").checked;
   SET.masterVol = clamp01(el("set-vol-master").value);
   SET.bgmVol = clamp01(el("set-vol-bgm").value);
@@ -8978,7 +9011,7 @@ function applySoundNow() {
   if (bgmChanged) stopBgm();       // 换曲目/开关背景音乐：重开一首（随机曲目也重新掷）
   applySoundSettings();
 }
-["set-soundon", "set-bgm-on", "set-bgm", "set-voice-on", "set-sfx-on",
+["set-soundon", "set-bgm-on", "set-bgm", "set-voice-on", "set-voice-gender", "set-sfx-on",
  "set-vol-master", "set-vol-bgm", "set-vol-voice", "set-vol-sfx"].forEach(id => {
   const n = el(id);
   if (n) { n.addEventListener("input", applySoundNow); n.addEventListener("change", applySoundNow); }

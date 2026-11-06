@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""生成 web/static/assets/sound/ 下的音效资源（2026-11-06 补齐丢失音源）。
+"""离线兜底：生成 web/static/assets/sound/ 下的 TTS 音效（2026-11-06 起降级为备用）。
 
-背景：原工程依赖一批 .mp3（27 牌名 × 男女声 + 碰杠胡自摸 + BGM），但这批
-二进制从未进过 git，迁移到新机后整个目录缺失 → 所有设备声音全哑。
-本脚本用 macOS 中文 TTS（say + afconvert）读牌名/动作词，用 numpy 合成
-操作音与 5 段背景音乐，统一输出 16kHz/16bit 单声道 WAV（浏览器与
-Android WebView 原生支持，无需解码器、无需额外依赖）。
+背景：原工程依赖一批 .mp3（27 牌名 × 男女声 + 碰杠胡自摸 + BGM），这批
+二进制曾未入库，迁移到新机后整目录缺失 → 所有设备声音全哑，当时用本脚本
+顶上。2026-11-06 已从上游 LIGF9/DushanMajiang 的 resource/sound 取回全部
+73 个真人配音 mp3 并入库，**线上默认使用 mp3，不再依赖本脚本**。
+
+本脚本现在只作离线/无外网环境的应急兜底：
+  · 用 macOS 中文 TTS（say + afconvert）读牌名/动作词，numpy 合成操作音与
+    5 段背景音乐，输出 16kHz/16bit 单声道 WAV；
+  · 产物是 .wav，与线上 .mp3 同名不同扩展名，不会覆盖真人配音；
+  · 若要真正启用，必须把 web/static/dushan.html 的 `SND_EXT` 改成 "wav"
+    并递增 `SND_VER`，否则前端仍会去请求 mp3。
 
 用法：.venv/bin/python tools/gen_sound_assets.py
 产物：web/static/assets/sound/**.wav（可重复生成，覆盖同名文件）
