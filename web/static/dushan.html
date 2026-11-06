@@ -3902,7 +3902,7 @@ html.mob .scoregrid input { width: 42px; }
           <div class="lbl">读牌声音<span class="q" data-q="有人打出牌时报出牌名；**默认按该玩家头像的性别**选男声 / 女声（男孩头像=男声，女孩头像=女声）。也可在这里固定为男声或女声，两套真人配音均来自上游 resource/sound">?</span></div>
           <input type="checkbox" id="set-voice-on" class="switch">
           <span class="volrow">
-            <input type="range" id="set-vol-voice" min="0" max="1" step="0.05" value="1">
+            <input type="range" id="set-vol-voice" min="0.2" max="1" step="0.05" value="1">
             <b class="volval" id="set-vol-voice-val">100%</b>
           </span>
           <select id="set-voice-gender" title="读牌音色">
@@ -3915,7 +3915,7 @@ html.mob .scoregrid input { width: 42px; }
           <div class="lbl">操作音效<span class="q" data-q="摸牌 / 打牌 / 碰 / 杠 / 胡 / 自摸 / 荒牌 / 点击等动作音效；碰杠胡自摸按**该玩家头像的性别**选男声 / 女声">?</span></div>
           <input type="checkbox" id="set-sfx-on" class="switch">
           <span class="volrow">
-            <input type="range" id="set-vol-sfx" min="0" max="1" step="0.05" value="0.9">
+            <input type="range" id="set-vol-sfx" min="0.2" max="1" step="0.05" value="0.9">
             <b class="volval" id="set-vol-sfx-val">90%</b>
           </span>
         </div>
@@ -4708,8 +4708,8 @@ function setText(elm, txt) {
    SND_VER 只用于破服务端给音频的 max-age=86400 缓存：以后换音源改这个值
    即可强制端上更新，不必让用户清缓存（服务端 do_GET 会剥掉 query）。 */
 const SND_EXT = "mp3";           // BGM：52s 长音频，保持 mp3 流式播放（一直有声，不动）
-const SND_SFX_EXT = "wav";       // 短音效：16k/16bit 单声道 PCM WAV（七修，见 tools/gen_pcm_sfx.py）
-const SND_VER = "20261106r7";    // 破服务端给音频的 max-age=86400 强缓存
+const SND_SFX_EXT = "wav";       // 短音效：16k/16bit 单声道 PCM WAV（八修响度归一化，见 tools/gen_pcm_sfx.py）
+const SND_VER = "20261106r8";    // 破服务端给音频的 max-age=86400 强缓存
 const ROOT_SND = ["打牌", "摸牌", "流局", "点击"];   // 这些在 sound/ 根目录（无性别）
 const AUDIO_POOL_MIN = 1;      // 五修：仅作老设备 fallback，不再预热多个媒体元素
 const AUDIO_POOL_MAX = 3;      // 上限同步调小，避免占满 WebView 的媒体解码器配额
@@ -4745,11 +4745,18 @@ function relGender(rel) {
   return AVATAR_DIR[nm] === "girl" ? "girl" : "boy";
 }
 const clamp01v = clamp01;   // 音效块内沿用同一实现（保留可读的别名）
+/* 八修「音量保险丝」：voice/sfx 有效增益不低于 0.25。
+   实测事故：音量滑杆被拖到 读牌 0.1 / 操作 0.15 后，有效增益只有 8%~12%，
+   叠加上游录音响度参差（最安静 WAV 峰值 0.36），输出峰值 0.028 —— 物理上
+   听不见；而 AnalyserNode 探测阈值是 1e-4(-80dB)，照常全绿，于是「诊断
+   全绿却没声」。静音请用总开关 / 读牌开关 / 操作开关，不要靠把滑杆拖到 0。 */
+const SND_GAIN_FLOOR = 0.25;
 function _sndGain(ch) {
   const m = clamp01v(SET.masterVol);
-  if (ch === "voice") return m * clamp01(SET.voiceVol);
+  if (m <= 0.02) return 0;   // 总音量拉到 0 = 真静音（尊重主动意图）
+  if (ch === "voice") return Math.max(m * clamp01(SET.voiceVol), SND_GAIN_FLOOR);
   if (ch === "bgm") return m * clamp01(SET.bgmVol);
-  return m * clamp01(SET.sfxVol);
+  return Math.max(m * clamp01(SET.sfxVol), SND_GAIN_FLOOR);
 }
 
 /* ================= Web Audio 短音效通道（七修 · 主路径） =================
@@ -4773,9 +4780,13 @@ let SND_WA_SILENT = 0, SND_WA_DISABLED = false;
 function syncAudioGains() {
   if (!ACTX || !SND_MASTER) return;
   try {
-    SND_MASTER.gain.value = clamp01v(SET.masterVol);
-    SND_GAIN.voice.gain.value = clamp01(SET.voiceVol);
-    SND_GAIN.sfx.gain.value = clamp01(SET.sfxVol);
+    // 八修：有效增益统一走 _sndGain（含 0.25 保险丝），master 与 channel 的
+    // 乘积在分通道节点一次算完；master 节点保持 1.0 仅作汇流，避免 WA 路径
+    // 与 <audio> 路径增益不一致（此前 WA 走 master×channel 两个节点相乘、
+    // audio 走 _sndGain，滑杆拖低时两边都低于可听阈但数值口径还不同）。
+    SND_MASTER.gain.value = 1;
+    SND_GAIN.voice.gain.value = _sndGain("voice");
+    SND_GAIN.sfx.gain.value = _sndGain("sfx");
   } catch (e) {}
 }
 /* gesture=true 时允许新建（必须发生在用户手势回调里，否则会被自动播放策略挂起）；
@@ -4955,7 +4966,7 @@ function playBuf(src, ch) {
      · 同时存活元素上限 6，超出丢弃本次（宁可丢一声，也不拖垮整条通道）。
      · 66 个短音效全量预取 blob（含碰杠胡自摸与根目录通用音效），
        播放零网络请求，不受连接池/缓存回收影响。 */
-const SND_BUILD = "r7-20261106-pcm-wa";
+const SND_BUILD = "r8-20261106-loudness";
 /* 通道：auto（Web Audio 优先 + 真实信号探测自动降级）| wa | audio | both。
    用户可在设置页切换，控制台也可 __sndChan("audio") 强制切。 */
 let SND_CHAN = (() => {
@@ -5089,6 +5100,9 @@ window.__sndDiag = () => ({
   retry: SND_DIAG.retry, fail: SND_DIAG.fail, blocked: SND_DIAG.blocked,
   live: SND_LIVE_ELS.size, fallbacks: SND_DIAG.fallbacks,
   vol: `${SET.masterVol}/${SET.voiceVol}/${SET.sfxVol}`,
+  // 八修：把「滑杆值」与「实际生效增益」分开显示，滑杆被拖低时一眼可见
+  effVoice: +_sndGain("voice").toFixed(2), effSfx: +_sndGain("sfx").toFixed(2),
+  volLow: _sndGain("voice") < 0.3 || _sndGain("sfx") < 0.3,
   soundOn: SOUND_ON, voiceOn: SET.voiceOn, sfxOn: SET.sfxOn,
   bgmOn: SET.bgmOn, bgmPlaying: !!(typeof BGM !== "undefined" && BGM),
   lastErr: SND_DIAG.lastErr,
@@ -9359,6 +9373,14 @@ function fillSetSelects() {
   el("set-voice-on").checked = SET.voiceOn;
   el("set-voice-gender").value = SET.voiceGender;
   el("set-sfx-on").checked = SET.sfxOn;
+  /* 八修「音量自动修复」：读牌/操作滑杆若都被拖到 ≤0.2（典型事故值
+     0.1/0.15 —— 有效增益只剩 8%~12%，短音效物理上听不见），一次性拉回
+     0.9 并提示。静音请用三个开关，滑杆只管相对响度。 */
+  if (SET.voiceVol <= 0.2 && SET.sfxVol <= 0.2) {
+    SET.voiceVol = 0.9; SET.sfxVol = 0.9;
+    saveSet();
+    setTimeout(() => toast("读牌/操作音量过低已自动调高到 90%（静音请用开关）", 3200), 600);
+  }
   el("set-vol-master").value = String(SET.masterVol);
   el("set-vol-bgm").value = String(SET.bgmVol);
   el("set-vol-voice").value = String(SET.voiceVol);
@@ -9475,9 +9497,11 @@ function applySoundNow() {
       `${d.build || "旧版页面"} · ${d.eff} · ctx ${d.ctx}` +
       ` · PCM ${d.pcm}/${d.total} · WA ${d.wa} / 音频 ${d.audio}` +
       ` · 峰值 ${d.peak} · 探测 ${d.probeOk}:${d.probeSilent}` +
-      ` · 音量 ${d.vol} · 开关 ${d.soundOn}/${d.voiceOn}/${d.sfxOn}` +
+      ` · 音量 ${d.vol} → 实效 ${d.effVoice}/${d.effSfx}` +
+      ` · 开关 ${d.soundOn}/${d.voiceOn}/${d.sfxOn}` +
       ` · BGM ${d.bgmOn ? (d.bgmPlaying ? "播放中" : "待播") : "关"}` +
       ` · 失败 ${d.fail} 阻塞 ${d.blocked} 存活 ${d.live}` +
+      (d.volLow ? " · ⚠增益偏低" : "") +
       (d.waOff ? " · WA已自动停用" : "") +
       (d.blobOff ? " · blob已降级" : "") +
       (d.lastErr ? ` · ${d.lastErr}` : "");
@@ -9518,6 +9542,12 @@ function applySoundNow() {
       SET.masterVol = save.mv; SET.voiceVol = save.vv; SET.sfxVol = save.sv;
       syncAudioGains();
       show("结果");
+      // 八修：测试音是临时放大到 100%/90%/90% 播的；若真实设置的增益偏低，
+      // 明确告知 —— 避免「测试能响、对局没声」再被误判成播放通道故障。
+      const ev = _sndGain("voice"), es = _sndGain("sfx");
+      if (Math.max(ev, es) < 0.35) {
+        toast(`测试音已放大播放；当前实际增益 读牌${Math.round(ev * 100)}% / 操作${Math.round(es * 100)}%，请把音量滑杆调高到 80% 以上`, 4200);
+      }
     }, seq.length * 700 + 1600);
   });
 })();
