@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""离线兜底：生成 web/static/assets/sound/ 下的 TTS 音效（2026-11-06 起降级为备用）。
+"""离线兜底：生成 web/static/assets/sound/ 下的 TTS 音效（应急用，正常不要跑）。
 
-背景：原工程依赖一批 .mp3（27 牌名 × 男女声 + 碰杠胡自摸 + BGM），这批
-二进制曾未入库，迁移到新机后整目录缺失 → 所有设备声音全哑，当时用本脚本
-顶上。2026-11-06 已从上游 LIGF9/DushanMajiang 的 resource/sound 取回全部
-73 个真人配音 mp3 并入库，**线上默认使用 mp3，不再依赖本脚本**。
+当前线上音源（2026-11-06 音效七修之后）：
+  · 短音效 = `tools/gen_pcm_sfx.py` 把上游 LIGF9/DushanMajiang
+    resource/sound 里的真人配音 mp3 转成的 16kHz/16bit 单声道 PCM WAV，
+    前端手写 RIFF 解析后用 Web Audio 播放；
+  · BGM = 上游 bgmusic/bg0..bg4.mp3，常驻 <audio> 流式播放。
+  · 前端 `SND_SFX_EXT = "wav"`，短音效路径就是 .wav。
 
-本脚本现在只作离线/无外网环境的应急兜底：
-  · 用 macOS 中文 TTS（say + afconvert）读牌名/动作词，numpy 合成操作音与
-    5 段背景音乐，输出 16kHz/16bit 单声道 WAV；
-  · 产物是 .wav，与线上 .mp3 同名不同扩展名，不会覆盖真人配音；
-  · 若要真正启用，必须把 web/static/dushan.html 的 `SND_EXT` 改成 "wav"
-    并递增 `SND_VER`，否则前端仍会去请求 mp3。
+⚠️ 本脚本会写出**同名 .wav**，也就是会覆盖线上真人配音音效、把它换成
+macOS TTS 合成的读牌声。只在完全拿不到上游 mp3、又必须让页面有声音的
+离线环境里使用。为了防止误执行，检测到真人配音 WAV 已存在时默认直接退出，
+确需重建请显式加 `--force`。
 
-用法：.venv/bin/python tools/gen_sound_assets.py
-产物：web/static/assets/sound/**.wav（可重复生成，覆盖同名文件）
+用法：.venv/bin/python tools/gen_sound_assets.py [--force]
 """
 from __future__ import annotations
 
@@ -123,6 +122,14 @@ def tts(text: str, dest: Path, voice: str) -> bool:
 
 
 def main() -> int:
+    # 防误执行：线上真人配音 PCM WAV 已存在时，禁止 TTS 兜底覆盖它
+    sentinel = OUT / "sound_boy" / "8万.wav"
+    if sentinel.exists() and "--force" not in sys.argv:
+        print(f"[abort] 检测到真人配音 PCM WAV 已存在：{sentinel}\n"
+              "本脚本是离线 TTS 应急兜底，会覆盖线上真人配音音效。\n"
+              "确需重建请显式执行：tools/gen_sound_assets.py --force",
+              file=sys.stderr)
+        return 2
     OUT.mkdir(parents=True, exist_ok=True)
     made, failed = 0, []
 

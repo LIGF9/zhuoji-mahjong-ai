@@ -1190,6 +1190,11 @@ html.replaying #timer::after {
   border: 1px solid rgba(232,184,75,.45); background: rgba(232,184,75,.12);
   color: #f0e8d2; cursor: pointer; white-space: nowrap; }
 .sndselftest button:active { background: rgba(232,184,75,.26); }
+.sndselftest select {
+  font-family: inherit; font-size: 12px; padding: 6px 9px; border-radius: 9px;
+  border: 1px solid rgba(232,184,75,.45); background: rgba(10,22,14,.9);
+  color: #f0e8d2; cursor: pointer; max-width: 10.5em; }
+html.mob .sndselftest select { font-size: 11px; max-width: 9em; }
 .sndselftest .snddiag { flex: 1 1 100%; font-size: 11px; color: #cfd8c5;
   line-height: 1.6; word-break: break-all; }
 html.mob .sndselftest .snddiag { font-size: 10px; }
@@ -3915,11 +3920,17 @@ html.mob .scoregrid input { width: 42px; }
           </span>
         </div>
       </div>
-      <!-- 六修：页面内音效自检，直接测「一次性 audio」通道，绕过总开关/音量，
-           结果里带 build，可一眼确认手机是否已刷新到新版页面。 -->
+      <!-- 七修：页面内音效自检 + 通道切换。诊断里的「峰值」是 AnalyserNode
+           实测输出信号，>0 才说明 Web Audio 真的把采样送到了输出端。 -->
       <div class="sndselftest">
         <button id="snd-selftest" type="button">🔊 播放测试音</button>
         <button id="snd-reload" type="button">补取音效资源</button>
+        <select id="snd-chan" title="音效输出通道">
+          <option value="auto">自动（推荐）</option>
+          <option value="wa">Web Audio</option>
+          <option value="audio">独立音频元素</option>
+          <option value="both">双通道并播</option>
+        </select>
         <span class="snddiag" id="snd-diag">未测试</span>
       </div>
     </section>
@@ -4665,13 +4676,29 @@ function setText(elm, txt) {
    被系统挂起后非手势上下文 resume 无效），playBuf() 返回 false 后 snd() 全部
    退回旧 <audio> 池，五修等于没改，症状自然与四修一模一样。
 
-   六修（当前实现）：短音效彻底不依赖任何持久状态 —— 每条音效新建一次性
-   <audio> + 全量预取的 blob URL，播完立即 pause + removeAttribute('src') +
-   load() 释放；不池化、不换 src、不 seek。playing 事件做出声确认，1.4s 未
-   出声则换原始 URL 重试一次，同时存活元素上限 6。Web Audio 代码保留但
-   SND_USE_WA=false 默认停用，不再让它决定「有没有声音」。
-   BGM 是 52s 长音频，始终用独立 <audio> 流式播放，不在此列。
-   设置页「播放测试音」可直接测通道并打印 __sndDiag()（含 build 版本号）。 */
+   六修（一次性 <audio> + 全量 blob 预取）：**真机仍失败**。用户第二局后
+   「读牌 + 碰杠哑，只剩 BGM 和胡」，设置页诊断却是
+   `预取 66/66 · 播放 18 · 出声 18 · 重试 0 · 失败 0 · 存活 0` ——
+   每一次 play() 都拿到 playing 事件、零失败、零残留，**但人耳听不到**。
+   这条证据排除了「播放被拒 / 元素僵死 / 资源未加载 / 音量为 0」，
+   只剩：短音效的 HTMLMediaElement 在长局后拿不到音频输出（多元素争焦点、
+   或 WebView 把新建元素的输出压掉），而最早创建、一直持有的 BGM 幸存。
+
+   七修（当前实现）：**短音效彻底不再使用 HTMLMediaElement 主通道**。
+     · 音源改 16kHz/16bit 单声道 PCM WAV（见 tools/gen_pcm_sfx.py），
+       前端手写 RIFF 解析 + AudioContext.createBuffer() 填 Float32Array，
+       完全不调用 decodeAudioData（五修失败于它对 32kbps mp3 的不稳定支持），
+       也不需要任何媒体元素 / 自动播放授权 / seek / 解码器配额。
+     · 播放 = 一次性 AudioBufferSourceNode → voice/sfx GainNode → master →
+       destination；BGM 仍是唯一的 <audio>，不动它（它一直有声）。
+     · AnalyserNode 串在 master 后做**真实信号探测**：播后 70~430ms 采样
+       时域峰值，连续 3 次峰值≈0 即判定「WA 起来了但没输出」→ auto 模式
+       自动切到改良版一次性 audio 兜底通道，不再重演「日志全绿却没声」。
+     · 兜底通道也换了 PCM WAV、把元素挂到 DOM、ended 后延迟释放，避免
+       未挂载元素被静音/播完立刻掐断。
+     · 设置页可选通道：自动 / Web Audio / 独立音频 / 双通道并播（终极兼容）。
+   诊断 __sndDiag() 输出 ctx、PCM 解析数、两条通道播放数、信号峰值、
+   音量与开关状态；桌面与手机都能一锤定音定位到「哪一层没出声」。 */
 /* 音源（2026-11-06 换回上游真人配音）：来自 LIGF9/DushanMajiang 的
    resource/sound，27 张牌名 + 碰/杠/胡/自摸 × 男女声各 31 条，根目录 6 条
    通用音效、bgmusic 5 首 BGM，均为 mp3。此前临时用 macOS TTS 合成的 16k
@@ -4680,8 +4707,9 @@ function setText(elm, txt) {
    读牌（voice）与碰杠胡自摸（sfx）都走这条路由；ROOT_SND 是无性别通用音效。
    SND_VER 只用于破服务端给音频的 max-age=86400 缓存：以后换音源改这个值
    即可强制端上更新，不必让用户清缓存（服务端 do_GET 会剥掉 query）。 */
-const SND_EXT = "mp3";
-const SND_VER = "20261106";
+const SND_EXT = "mp3";           // BGM：52s 长音频，保持 mp3 流式播放（一直有声，不动）
+const SND_SFX_EXT = "wav";       // 短音效：16k/16bit 单声道 PCM WAV（七修，见 tools/gen_pcm_sfx.py）
+const SND_VER = "20261106r7";    // 破服务端给音频的 max-age=86400 强缓存
 const ROOT_SND = ["打牌", "摸牌", "流局", "点击"];   // 这些在 sound/ 根目录（无性别）
 const AUDIO_POOL_MIN = 1;      // 五修：仅作老设备 fallback，不再预热多个媒体元素
 const AUDIO_POOL_MAX = 3;      // 上限同步调小，避免占满 WebView 的媒体解码器配额
@@ -4698,7 +4726,9 @@ function tileSndName(t) {
 function sndPath(name, gender) {
   // 性别目录由 relGender() 依据发声者头像决定：男孩头像 → sound_boy，
   // 女孩头像 → sound_girl；两套都是 27 张牌名 + 碰/杠/胡/自摸的真人配音。
-  const f = name + "." + SND_EXT;
+  // 短音效统一走 PCM WAV：前端自己 RIFF 解析成 AudioBuffer，不依赖浏览器
+  // 的 mp3 解码器；兜底 <audio> 播 WAV 也是即时解码、无需解帧 seek。
+  const f = name + "." + SND_SFX_EXT;
   const q = "?v=" + SND_VER;
   if (ROOT_SND.includes(name)) return "/assets/sound/" + f + q;
   return `/assets/sound/${gender === "girl" ? "sound_girl" : "sound_boy"}/${f}${q}`;
@@ -4722,19 +4752,23 @@ function _sndGain(ch) {
   return m * clamp01(SET.sfxVol);
 }
 
-/* ================= Web Audio 短音效通道（五修 · 主路径） =================
-   66 个被引用的短音效（27 牌名 × 2 性别 + 碰/杠/胡/自摸 × 2 性别 + 4 根目录通用）
-   全量预解码成 AudioBuffer，播放用一次性 BufferSource。AudioBuffer 是纯 PCM，
-   播放不经过媒体元素/解码器配额，也不会因为 seek/play() 悬挂而僵死。 */
+/* ================= Web Audio 短音效通道（七修 · 主路径） =================
+   66 个被引用的短音效是 16kHz/16bit 单声道 PCM WAV。前端手写 RIFF 解析，
+   直接 ACTX.createBuffer() 填 Float32Array —— **不调用 decodeAudioData**，
+   因此与浏览器/WebView 的 mp3 解码器实现完全无关。播放用一次性
+   AudioBufferSourceNode，不创建任何 HTMLMediaElement、不需要自动播放授权、
+   没有 seek、没有解码器配额累积。BGM 保持独立 <audio> 流式播放。 */
 let ACTX = null;                       // AudioContext（只在用户手势里创建）
-let SND_MASTER = null;
+let SND_MASTER = null, SND_ANALYSER = null;
 const SND_GAIN = { voice: null, sfx: null };
-const SND_BUF = Object.create(null);   // src -> AudioBuffer
+const SND_BUF = Object.create(null);   // src -> AudioBuffer（自解析 PCM）
 const SND_LOAD = Object.create(null);  // src -> Promise（去重）
 const SND_FAIL = Object.create(null);  // src -> 失败次数（避免无限重试）
 let SND_PRELOADING = false;
 const SND_DIAG = { plays: 0, fallbacks: 0, decoded: 0, failed: 0,
-  oneshot: 0, ok: 0, retry: 0, fail: 0, blocked: 0, lastErr: "" };
+  oneshot: 0, ok: 0, retry: 0, fail: 0, blocked: 0, lastErr: "",
+  probeOk: 0, probeSilent: 0, peak: 0 };
+let SND_WA_SILENT = 0, SND_WA_DISABLED = false;
 
 function syncAudioGains() {
   if (!ACTX || !SND_MASTER) return;
@@ -4753,28 +4787,90 @@ function ensureAudioCtx(gesture) {
     try {
       ACTX = new C();
       SND_MASTER = ACTX.createGain();
-      SND_MASTER.connect(ACTX.destination);
       for (const k of ["voice", "sfx"]) {
         SND_GAIN[k] = ACTX.createGain();
         SND_GAIN[k].connect(SND_MASTER);
       }
+      // Analyser 串在主链末尾（pass-through，不改音质）：用来判断「Web Audio
+      // 是否真的把采样送到了输出端」，而不是只看 start() 有没有抛错。
+      // 老设备没有 createAnalyser 就直连，探测自动跳过。
+      try {
+        SND_ANALYSER = ACTX.createAnalyser();
+        SND_ANALYSER.fftSize = 512;
+        SND_MASTER.connect(SND_ANALYSER);
+        SND_ANALYSER.connect(ACTX.destination);
+      } catch (e) {
+        SND_ANALYSER = null;
+        SND_MASTER.connect(ACTX.destination);
+      }
+      try {
+        ACTX.addEventListener("statechange", () => {
+          if (ACTX && ACTX.state === "running") syncAudioGains();
+        });
+      } catch (e) {}
     } catch (e) { ACTX = null; return null; }
   }
   if (!ACTX) return null;
+  // 手机切后台/锁屏/来电会把 ctx 挂起；每次手势和每次播放都补一次 resume
   if (ACTX.state === "suspended") {
-    try { ACTX.resume().catch(() => {}); } catch (e) {}
+    try { const p = ACTX.resume(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
   }
   syncAudioGains();
   return ACTX;
 }
-/* 老 Safari 的 decodeAudioData 是回调式，新版返回 Promise —— 两种都兼容。 */
-function decodeBuf(ab) {
-  return new Promise((resolve, reject) => {
-    try {
-      const p = ACTX.decodeAudioData(ab, resolve, reject);
-      if (p && p.then) p.then(resolve, reject);
-    } catch (e) { reject(e); }
-  });
+/* 手写 RIFF/WAVE 解析 → AudioBuffer。只支持 PCM 16bit（生成脚本保证），
+   遍历 chunk 以兼容 afconvert 写入的 JUNK/fact 等扩展块；奇数长度按 RIFF
+   规范补 1 字节对齐。**完全不碰 decodeAudioData**，不受 mp3 解码器影响。 */
+function parseWav(ab) {
+  const dv = new DataView(ab);
+  if (dv.byteLength < 44) return null;
+  const tag = o => String.fromCharCode(dv.getUint8(o), dv.getUint8(o + 1),
+    dv.getUint8(o + 2), dv.getUint8(o + 3));
+  if (tag(0) !== "RIFF" || tag(8) !== "WAVE") return null;
+  let off = 12, fmt = null, data = null;
+  while (off + 8 <= dv.byteLength) {
+    const id = tag(off), sz = dv.getUint32(off + 4, true), body = off + 8;
+    if (id === "fmt " && sz >= 16) {
+      fmt = { format: dv.getUint16(body, true), ch: dv.getUint16(body + 2, true),
+        rate: dv.getUint32(body + 4, true), bits: dv.getUint16(body + 14, true) };
+    } else if (id === "data") { data = { off: body, len: sz }; break; }
+    off = body + sz + (sz & 1);
+  }
+  if (!fmt || !data || fmt.format !== 1 || fmt.bits !== 16 || fmt.ch < 1) return null;
+  const n = Math.min(Math.floor(data.len / (2 * fmt.ch)),
+    Math.floor((dv.byteLength - data.off) / (2 * fmt.ch)));
+  if (n <= 0 || !ACTX) return null;
+  const buf = ACTX.createBuffer(fmt.ch, n, fmt.rate);
+  for (let c = 0; c < fmt.ch; c++) {
+    const out = buf.getChannelData(c);
+    for (let i = 0; i < n; i++)
+      out[i] = dv.getInt16(data.off + (i * fmt.ch + c) * 2, true) / 32768;
+  }
+  return buf;
+}
+/* 真实信号探测：播放后 70/160/250/340/430ms 采样时域峰值。
+   连续 3 次整段静音 ⇒ Web Audio 虽 start() 成功但没送到输出（六修那种
+   「日志全绿却没声」），auto 模式自动切到独立音频通道，并把峰值留在诊断里。 */
+function probeWaSignal() {
+  if (!SND_ANALYSER || !ACTX || ACTX.state !== "running") return;
+  let left = 5, hit = false;
+  const arr = new Float32Array(SND_ANALYSER.fftSize || 512);
+  const tick = () => {
+    if (!SND_ANALYSER) return;
+    try { SND_ANALYSER.getFloatTimeDomainData(arr); } catch (e) { return; }
+    let peak = 0;
+    for (let i = 0; i < arr.length; i++) { const v = Math.abs(arr[i]); if (v > peak) peak = v; }
+    if (peak > SND_DIAG.peak) SND_DIAG.peak = peak;
+    if (peak > 1e-4) hit = true;
+    if (--left > 0 && !hit) { setTimeout(tick, 90); return; }
+    if (hit) { SND_DIAG.probeOk++; SND_WA_SILENT = 0; return; }
+    SND_DIAG.probeSilent++;
+    if (++SND_WA_SILENT >= 3 && SND_CHAN === "auto") {
+      SND_WA_DISABLED = true;
+      SND_DIAG.lastErr = "wa-silent→audio";
+    }
+  };
+  setTimeout(tick, 70);
 }
 function loadSndBuf(src) {
   if (SND_BUF[src]) return Promise.resolve(SND_BUF[src]);
@@ -4782,7 +4878,11 @@ function loadSndBuf(src) {
   if ((SND_FAIL[src] || 0) >= 3) return Promise.resolve(null);
   const p = fetch(src, { cache: "force-cache" })
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
-    .then(decodeBuf)
+    .then(ab => {
+      const buf = parseWav(ab);
+      if (!buf) throw new Error("bad PCM WAV");
+      return buf;
+    })
     .then(buf => {
       SND_BUF[src] = buf; delete SND_LOAD[src];
       SND_DIAG.decoded++;
@@ -4820,12 +4920,7 @@ async function preloadAllSounds() {
     const paths = allShortSndPaths();
     for (let i = 0; i < paths.length; i += 6)
       await Promise.all(paths.slice(i, i + 6).map(loadSndBuf));
-  } finally {
-    SND_PRELOADING = false;
-    // 预解码窗口内若有音效走了 <audio> fallback，此刻把它们全部释放，
-    // 保证长局里除 BGM 外零媒体元素残留。
-    try { resetAudioPools(); } catch (e) {}
-  }
+  } finally { SND_PRELOADING = false; }
 }
 function playBuf(src, ch) {
   const ctx = ensureAudioCtx(false);
@@ -4839,6 +4934,7 @@ function playBuf(src, ch) {
     s.start(0);
     s.onended = () => { try { s.disconnect(); } catch (e) {} };
     SND_DIAG.plays++;
+    probeWaSignal();
     return true;
   } catch (e) { SND_DIAG.failed++; return false; }
 }
@@ -4859,9 +4955,22 @@ function playBuf(src, ch) {
      · 同时存活元素上限 6，超出丢弃本次（宁可丢一声，也不拖垮整条通道）。
      · 66 个短音效全量预取 blob（含碰杠胡自摸与根目录通用音效），
        播放零网络请求，不受连接池/缓存回收影响。 */
-const SND_BUILD = "r6-20261106-oneshot";
-const SND_USE_WA = false;      // Web Audio 仅保留为可选加速，默认关闭（真机不可靠）
-const SND_LIVE_MAX = 6;
+const SND_BUILD = "r7-20261106-pcm-wa";
+/* 通道：auto（Web Audio 优先 + 真实信号探测自动降级）| wa | audio | both。
+   用户可在设置页切换，控制台也可 __sndChan("audio") 强制切。 */
+let SND_CHAN = (() => {
+  const v = localStorage.getItem("dushan_snd_chan");
+  return (v === "wa" || v === "audio" || v === "both") ? v : "auto";
+})();
+window.__sndChan = v => {
+  if (v !== "auto" && v !== "wa" && v !== "audio" && v !== "both") return SND_CHAN;
+  SND_CHAN = v; SND_WA_DISABLED = false; SND_WA_SILENT = 0;
+  try { localStorage.setItem("dushan_snd_chan", v); } catch (e) {}
+  try { const s = document.getElementById("snd-chan"); if (s) s.value = v; } catch (e) {}
+  try { unlockAudio(); } catch (e) {}
+  return SND_CHAN;
+};
+const SND_LIVE_MAX = 10;
 const SND_BLOB = Object.create(null);       // src -> blob: URL
 const SND_BLOB_LOAD = Object.create(null);  // src -> Promise（去重）
 const SND_LIVE_ELS = new Set();             // 当前存活的一次性元素
@@ -4888,13 +4997,26 @@ async function preloadBlobs() {
     SND_BLOB_DONE = paths.every(p => !!SND_BLOB[p]);
   } finally { SND_BLOB_PRELOADING = false; }
 }
-function releaseOneShot(a) {
+let SND_HOST = null;
+function sndHost() {
+  if (SND_HOST && SND_HOST.parentNode) return SND_HOST;
+  try {
+    SND_HOST = document.createElement("div");
+    SND_HOST.setAttribute("aria-hidden", "true");
+    SND_HOST.style.cssText = "position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;pointer-events:none";
+    (document.body || document.documentElement).appendChild(SND_HOST);
+  } catch (e) { SND_HOST = null; }
+  return SND_HOST;
+}
+function releaseOneShot(a, delay) {
   if (a._released) return;
+  if (delay) { setTimeout(() => releaseOneShot(a, 0), delay); return; }
   a._released = true;
   if (a._wd) { clearTimeout(a._wd); a._wd = null; }
   try { a.pause(); } catch (e) {}
   // 关键：主动断源并 load()，否则 WebView 的媒体会话/解码器不会立即归还
   try { a.removeAttribute("src"); a.load(); } catch (e) {}
+  try { if (a.parentNode) a.parentNode.removeChild(a); } catch (e) {}
   SND_LIVE_ELS.delete(a);
 }
 function playOneShot(src, vol, attempt) {
@@ -4904,8 +5026,12 @@ function playOneShot(src, vol, attempt) {
   a._ok = false;
   a._released = false;
   try { a.volume = clamp01(vol); } catch (e) {}
-  // 首选预取 blob（零网络）；重试或设备不支持 blob 时用原始 URL
+  // 首选预取 blob（零网络）；重试或设备不支持 blob 时用原始 URL。
+  // 源已是 PCM WAV：即使退回 <audio> 也是即时解码，不再有 mp3 解帧/seek 僵死。
   a.src = (!attempt && !SND_BLOB_OFF && SND_BLOB[src]) ? SND_BLOB[src] : src;
+  // 挂到 DOM：部分安卓 WebView 对「未挂载的媒体元素」不给音频输出，
+  // playing 事件照发但没声 —— 六修「日志全绿却听不到」的可疑点之一。
+  try { const h = sndHost(); if (h) h.appendChild(a); } catch (e) {}
   SND_LIVE_ELS.add(a);
   SND_DIAG.oneshot++;
   const retry = why => {
@@ -4923,13 +5049,15 @@ function playOneShot(src, vol, attempt) {
     } else { SND_DIAG.fail++; SND_DIAG.lastErr = why || "fail"; }
   };
   a.addEventListener("playing", () => { a._ok = true; SND_DIAG.ok++; });
-  a.addEventListener("ended", () => releaseOneShot(a));
-  a.addEventListener("error", () => { if (!a._ok) retry("media-error"); else releaseOneShot(a); });
-  // 出声看门狗：0.5~0.94s 的短音效，1.4s 仍没 playing 就判定本次僵死
+  // 播完延迟 180ms 再断源：部分 WebView 的 ended 早于输出缓冲 flush，
+  // 立刻 removeAttribute('src')+load() 会把尾音甚至整声掐掉。
+  a.addEventListener("ended", () => releaseOneShot(a, 180));
+  a.addEventListener("error", () => { if (!a._ok) retry("media-error"); else releaseOneShot(a, 150); });
+  // 出声看门狗：0.5~0.94s 的短音效，1.8s 仍没 playing 才判定本次僵死
   a._wd = setTimeout(() => {
-    if (a._ok) { releaseOneShot(a); return; }  // 已出声但没 ended：主动释放，不重播
+    if (a._ok) { releaseOneShot(a, 0); return; }  // 已出声但没 ended：主动释放，不重播
     retry("timeout");
-  }, 1400);
+  }, 1800);
   try {
     const pr = a.play();
     if (pr && pr.catch) pr.catch(err => {
@@ -4943,20 +5071,27 @@ function playOneShot(src, vol, attempt) {
   } catch (e) { retry("throw:" + (e && e.name)); }
 }
 
-/* 供排查：控制台 __sndDiag() 或设置页「播放测试音」显示当前通道状态 */
+/* 供排查：控制台 __sndDiag() 或设置页「播放测试音」显示当前通道状态。
+   七修重点：「播了」与「有声」分开记 —— peak 是 AnalyserNode 实测的时域
+   峰值，>0 才说明 Web Audio 真的把采样送到了输出端。 */
 window.__sndDiag = () => ({
   build: SND_BUILD,
-  channel: SND_USE_WA ? "web-audio" : "oneshot-audio",
+  chan: SND_CHAN,
+  eff: SND_CHAN === "auto" ? (SND_WA_DISABLED ? "audio" : "wa") : SND_CHAN,
+  waOff: SND_WA_DISABLED,
   ctx: ACTX ? ACTX.state : "none",
+  pcm: Object.keys(SND_BUF).length,
   total: allShortSndPaths().length,
   blob: Object.keys(SND_BLOB).length, blobOff: SND_BLOB_OFF,
-  decoded: Object.keys(SND_BUF).length,
-  live: SND_LIVE_ELS.size,
-  oneshot: SND_DIAG.oneshot, ok: SND_DIAG.ok, retry: SND_DIAG.retry,
-  fail: SND_DIAG.fail, blocked: SND_DIAG.blocked, lastErr: SND_DIAG.lastErr,
-  plays: SND_DIAG.plays, fallbacks: SND_DIAG.fallbacks,
+  peak: +SND_DIAG.peak.toFixed(4),
+  probeOk: SND_DIAG.probeOk, probeSilent: SND_DIAG.probeSilent,
+  wa: SND_DIAG.plays, audio: SND_DIAG.oneshot, ok: SND_DIAG.ok,
+  retry: SND_DIAG.retry, fail: SND_DIAG.fail, blocked: SND_DIAG.blocked,
+  live: SND_LIVE_ELS.size, fallbacks: SND_DIAG.fallbacks,
+  vol: `${SET.masterVol}/${SET.voiceVol}/${SET.sfxVol}`,
   soundOn: SOUND_ON, voiceOn: SET.voiceOn, sfxOn: SET.sfxOn,
-  master: SET.masterVol, voice: SET.voiceVol, sfx: SET.sfxVol,
+  bgmOn: SET.bgmOn, bgmPlaying: !!(typeof BGM !== "undefined" && BGM),
+  lastErr: SND_DIAG.lastErr,
 });
 
 
@@ -5115,7 +5250,8 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   AUDIO_UNLOCKED = false;
   SND_BLOB_DONE = false;
-  unlockAudio();
+  SND_BLOB_TRIES = 0;
+  unlockAudio();          // 内部 resume ctx + 补 PCM / blob 预取
 });
 /* 单条音效：name=文件名（不含 .mp3）；gender 仅对非根目录音效生效；
    channel = "voice"（读牌）| "sfx"（操作音效，默认）。 */
@@ -5138,13 +5274,16 @@ function snd(name, gender, channel) {
   const vol = _sndGain(ch);
   if (vol <= 0) return;
   const src = sndPath(name, g);
-  // 六修：默认一次性 <audio>（不依赖 AudioContext / 池 / 轮转元素）。
-  // Web Audio 只在 SND_USE_WA 显式打开时作为可选加速；那条路在安卓 WebView
-  // 上不可靠，不能让它决定「有没有声音」。
-  if (SND_USE_WA && playBuf(src, ch)) return;
+  // 七修：主通道 Web Audio（PCM WAV 自解析）。auto 模式下若信号探测连续
+  // 判定「WA 起来了却没输出」就整体切到独立音频通道；both 双通道并播兜底。
+  const chan = SND_CHAN === "auto" ? (SND_WA_DISABLED ? "audio" : "wa") : SND_CHAN;
+  const wantWa = (chan === "wa" || chan === "both");
+  const playedWa = wantWa ? playBuf(src, ch) : false;
+  if (chan === "wa" && playedWa) return;
+  // WA 本次不可用（ctx 未就绪 / PCM 还在解析）、或 audio / both 通道
   SND_DIAG.fallbacks++;
   if (!SND_BLOB[src]) loadSndBlob(src);   // 后台补齐预取，不阻塞本次播放
-  playOneShot(src, vol, 0);
+  playOneShot(src, chan === "both" ? vol * 0.8 : vol, 0);
 }
 /* 读牌：打出牌时报牌名（按该家性别） */
 function voiceTile(t, gender) { const n = tileSndName(t); if (n) snd(n, gender, "voice"); }
@@ -5158,18 +5297,25 @@ const sndEvent = {
 /* 一段极短的静音 wav（data URI），用于在用户手势里解锁自动播放策略 */
 const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
 function unlockAudio() {
-  // 六修：短音效通道是「一次性 <audio> + 全量 blob 预取」，唯一需要解锁的是
-  // 浏览器的自动播放策略（静音 wav），与 AudioContext / 元素池全部解耦。
+  // 七修：手势里创建 / resume AudioContext，并启动 66 个 PCM WAV 的自解析。
+  // AudioContext 在手势上下文里创建才不会被自动播放策略挂起；之后每次
+  // pointerdown 都会走这里补一次 resume（切后台/锁屏后系统会 suspend）。
+  ensureAudioCtx(true);
+  if (ACTX) preloadAllSounds();   // 内部有并发锁 + 已解析去重，可重入
+  // 独立音频兜底通道的 blob 预取也一并补齐
   if (!SND_BLOB_DONE && !SND_BLOB_PRELOADING && SND_BLOB_TRIES < 3) {
     SND_BLOB_TRIES++; preloadBlobs();
   }
-  if (SND_USE_WA) ensureAudioCtx(true);   // 可选加速，默认关闭
   if (AUDIO_UNLOCKED) return;
   try {
     const a = new Audio(SILENT_WAV);
     a.volume = 0;
     const pr = a.play();
-    const done = () => { AUDIO_UNLOCKED = true; };
+    const done = () => {
+      AUDIO_UNLOCKED = true;
+      // 用完即弃，避免每次解锁都留一个媒体元素（六修的另一处隐性累积）
+      try { a.pause(); a.removeAttribute("src"); a.load(); } catch (e) {}
+    };
     if (pr && pr.then) pr.then(done).catch(() => {});
     else done();
   } catch (e) {}
@@ -9314,39 +9460,65 @@ function applySoundNow() {
   if (n) { n.addEventListener("input", applySoundNow); n.addEventListener("change", applySoundNow); }
 });
 
-/* ---- 六修：设置页「播放测试音」 ----
-   直接调 playOneShot（绕过 SOUND_ON / 分通道开关 / 音量），测的是通道本身；
-   输出里带 SND_BUILD，手机若还停在旧版页面一眼可辨。 */
+/* ---- 七修：设置页音效自检 + 通道切换 ----
+   测试音走的是**真实生效的通道**（和 snd() 一样的决策），只是临时绕过
+   总开关/分通道开关/音量，测完原样恢复。诊断带 build、ctx、PCM 解析数、
+   两条通道播放数与 AnalyserNode 实测峰值 —— 手机是否刷新到新版、卡在
+   哪一层，一行就能看出来。 */
 (function bindSndSelftest() {
-  const b = el("snd-selftest"), r = el("snd-reload"), out = el("snd-diag");
+  const b = el("snd-selftest"), r = el("snd-reload"),
+    sel = el("snd-chan"), out = el("snd-diag");
   const show = prefix => {
     if (!out) return;
     const d = window.__sndDiag ? window.__sndDiag() : {};
     out.textContent = (prefix ? prefix + " · " : "") +
-      `${d.build || "旧版页面"} · 预取 ${d.blob}/${d.total} · 播放 ${d.oneshot}` +
-      ` · 出声 ${d.ok} · 重试 ${d.retry} · 失败 ${d.fail} · 阻塞 ${d.blocked}` +
-      ` · 存活 ${d.live}` + (d.blobOff ? " · blob已降级" : "") +
+      `${d.build || "旧版页面"} · ${d.eff} · ctx ${d.ctx}` +
+      ` · PCM ${d.pcm}/${d.total} · WA ${d.wa} / 音频 ${d.audio}` +
+      ` · 峰值 ${d.peak} · 探测 ${d.probeOk}:${d.probeSilent}` +
+      ` · 音量 ${d.vol} · 开关 ${d.soundOn}/${d.voiceOn}/${d.sfxOn}` +
+      ` · BGM ${d.bgmOn ? (d.bgmPlaying ? "播放中" : "待播") : "关"}` +
+      ` · 失败 ${d.fail} 阻塞 ${d.blocked} 存活 ${d.live}` +
+      (d.waOff ? " · WA已自动停用" : "") +
+      (d.blobOff ? " · blob已降级" : "") +
       (d.lastErr ? ` · ${d.lastErr}` : "");
   };
+  window.__sndShowDiag = show;
+  if (sel) {
+    sel.value = SND_CHAN;
+    sel.addEventListener("change", () => {
+      window.__sndChan(sel.value);
+      show("通道已切");
+    });
+  }
   if (r) r.addEventListener("click", () => {
     SND_BLOB_DONE = false; SND_BLOB_TRIES = 0; unlockAudio();
-    show("补取中"); setTimeout(() => show("补取完成"), 1600);
+    show("补取中"); setTimeout(() => show("补取完成"), 1800);
   });
   if (!b) return;
   b.addEventListener("click", () => {
     unlockAudio();
-    const seq = [["8万", "boy"], ["3条", "girl"], ["碰", "boy"], ["杠", "girl"], ["胡", "boy"]];
-    // 第一声放在点击同步栈里播（iOS 自动播放策略最严），其余错开 700ms
+    const save = { on: SOUND_ON, rp: RP_SOUND,
+      vo: SET.voiceOn, so: SET.sfxOn,
+      mv: SET.masterVol, vv: SET.voiceVol, sv: SET.sfxVol };
+    SOUND_ON = true; RP_SOUND = true;
+    SET.voiceOn = true; SET.sfxOn = true;
+    SET.masterVol = 1; SET.voiceVol = 0.9; SET.sfxVol = 0.9;
+    syncAudioGains();
+    const seq = [["8万", "boy", "voice"], ["3条", "girl", "voice"],
+      ["碰", "boy", "sfx"], ["杠", "girl", "sfx"], ["胡", "boy", "sfx"]];
+    // 第一声放在点击同步栈里播（iOS / 安卓自动播放策略最严），其余错开 700ms
     seq.forEach((x, i) => {
-      const fire = () => {
-        const src = sndPath(x[0], x[1]);
-        if (!SND_BLOB[src]) loadSndBlob(src);
-        playOneShot(src, 0.9, 0);
-      };
+      const fire = () => snd(x[0], x[1], x[2]);
       if (i === 0) fire(); else setTimeout(fire, i * 700);
     });
     show("测试中");
-    setTimeout(() => show("结果"), seq.length * 700 + 1400);
+    setTimeout(() => {
+      SOUND_ON = save.on; RP_SOUND = save.rp;
+      SET.voiceOn = save.vo; SET.sfxOn = save.so;
+      SET.masterVol = save.mv; SET.voiceVol = save.vv; SET.sfxVol = save.sv;
+      syncAudioGains();
+      show("结果");
+    }, seq.length * 700 + 1600);
   });
 })();
 
