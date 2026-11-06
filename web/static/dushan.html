@@ -1183,21 +1183,6 @@ html.replaying #timer::after {
   font-family: inherit; font-size: 13px; padding: 5px 9px; border-radius: 8px;
   border: 1px solid rgba(232,184,75,.4); background: rgba(10,22,14,.9); color: #f0e8d2;
   min-width: 7.6em; }   /* 2026-11-06：背景音乐 / 读牌音色两行下拉框同宽对齐 */
-/* 六修：设置页音效自检（不占 sndgrid 的列，移动端自动折行） */
-.sndselftest { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.sndselftest button {
-  font-family: inherit; font-size: 12px; padding: 6px 12px; border-radius: 9px;
-  border: 1px solid rgba(232,184,75,.45); background: rgba(232,184,75,.12);
-  color: #f0e8d2; cursor: pointer; white-space: nowrap; }
-.sndselftest button:active { background: rgba(232,184,75,.26); }
-.sndselftest select {
-  font-family: inherit; font-size: 12px; padding: 6px 9px; border-radius: 9px;
-  border: 1px solid rgba(232,184,75,.45); background: rgba(10,22,14,.9);
-  color: #f0e8d2; cursor: pointer; max-width: 10.5em; }
-html.mob .sndselftest select { font-size: 11px; max-width: 9em; }
-.sndselftest .snddiag { flex: 1 1 100%; font-size: 11px; color: #cfd8c5;
-  line-height: 1.6; word-break: break-all; }
-html.mob .sndselftest .snddiag { font-size: 10px; }
 html.mob .sndrow { grid-template-columns: var(--sndlbl-w) minmax(0, 1fr); gap: 5px 9px;
   padding: 6px 0; --sndlbl-w: 7em; }
 html.mob .sndrow > .volrow, html.mob .sndrow > select { grid-column: 2; }
@@ -3920,19 +3905,6 @@ html.mob .scoregrid input { width: 42px; }
           </span>
         </div>
       </div>
-      <!-- 七修：页面内音效自检 + 通道切换。诊断里的「峰值」是 AnalyserNode
-           实测输出信号，>0 才说明 Web Audio 真的把采样送到了输出端。 -->
-      <div class="sndselftest">
-        <button id="snd-selftest" type="button">🔊 播放测试音</button>
-        <button id="snd-reload" type="button">补取音效资源</button>
-        <select id="snd-chan" title="音效输出通道">
-          <option value="auto">自动（推荐）</option>
-          <option value="wa">Web Audio</option>
-          <option value="audio">独立音频元素</option>
-          <option value="both">双通道并播</option>
-        </select>
-        <span class="snddiag" id="snd-diag">未测试</span>
-      </div>
     </section>
 
         <section data-pane="rule">
@@ -4966,18 +4938,15 @@ function playBuf(src, ch) {
      · 同时存活元素上限 6，超出丢弃本次（宁可丢一声，也不拖垮整条通道）。
      · 66 个短音效全量预取 blob（含碰杠胡自摸与根目录通用音效），
        播放零网络请求，不受连接池/缓存回收影响。 */
-const SND_BUILD = "r9-20261106-evcursor";
+const SND_BUILD = "r10-20261106-setclean";
 /* 通道：auto（Web Audio 优先 + 真实信号探测自动降级）| wa | audio | both。
-   用户可在设置页切换，控制台也可 __sndChan("audio") 强制切。 */
-let SND_CHAN = (() => {
-  const v = localStorage.getItem("dushan_snd_chan");
-  return (v === "wa" || v === "audio" || v === "both") ? v : "auto";
-})();
+   2026-11-06 音效稳定后设置页通道下拉已移除（用户要求删测试选项），
+   仅保留控制台 __sndChan("audio") 强制切，供以后排查。 */
+let SND_CHAN = "auto";   // 2026-11-06：通道下拉（自检区）已删，启动固定 auto；
+                         // 调试期留在 localStorage 的 "both" 等钉住值不再生效
 window.__sndChan = v => {
   if (v !== "auto" && v !== "wa" && v !== "audio" && v !== "both") return SND_CHAN;
   SND_CHAN = v; SND_WA_DISABLED = false; SND_WA_SILENT = 0;
-  try { localStorage.setItem("dushan_snd_chan", v); } catch (e) {}
-  try { const s = document.getElementById("snd-chan"); if (s) s.value = v; } catch (e) {}
   try { unlockAudio(); } catch (e) {}
   return SND_CHAN;
 };
@@ -5082,7 +5051,7 @@ function playOneShot(src, vol, attempt) {
   } catch (e) { retry("throw:" + (e && e.name)); }
 }
 
-/* 供排查：控制台 __sndDiag() 或设置页「播放测试音」显示当前通道状态。
+/* 供排查：控制台 __sndDiag() 显示当前通道状态。
    七修重点：「播了」与「有声」分开记 —— peak 是 AnalyserNode 实测的时域
    峰值，>0 才说明 Web Audio 真的把采样送到了输出端。 */
 window.__sndDiag = () => ({
@@ -9522,75 +9491,8 @@ function applySoundNow() {
   if (n) { n.addEventListener("input", applySoundNow); n.addEventListener("change", applySoundNow); }
 });
 
-/* ---- 七修：设置页音效自检 + 通道切换 ----
-   测试音走的是**真实生效的通道**（和 snd() 一样的决策），只是临时绕过
-   总开关/分通道开关/音量，测完原样恢复。诊断带 build、ctx、PCM 解析数、
-   两条通道播放数与 AnalyserNode 实测峰值 —— 手机是否刷新到新版、卡在
-   哪一层，一行就能看出来。 */
-(function bindSndSelftest() {
-  const b = el("snd-selftest"), r = el("snd-reload"),
-    sel = el("snd-chan"), out = el("snd-diag");
-  const show = prefix => {
-    if (!out) return;
-    const d = window.__sndDiag ? window.__sndDiag() : {};
-    out.textContent = (prefix ? prefix + " · " : "") +
-      `${d.build || "旧版页面"} · ${d.eff} · ctx ${d.ctx}` +
-      ` · PCM ${d.pcm}/${d.total} · 触发 ${d.trig} · WA ${d.wa} / 音频 ${d.audio}` +
-      ` · 峰值 ${d.peak} · 探测 ${d.probeOk}:${d.probeSilent}` +
-      ` · 音量 ${d.vol} → 实效 ${d.effVoice}/${d.effSfx}` +
-      ` · 开关 ${d.soundOn}/${d.voiceOn}/${d.sfxOn}` +
-      ` · BGM ${d.bgmOn ? (d.bgmPlaying ? "播放中" : "待播") : "关"}` +
-      ` · 失败 ${d.fail} 阻塞 ${d.blocked} 存活 ${d.live}` +
-      (d.volLow ? " · ⚠增益偏低" : "") +
-      (d.waOff ? " · WA已自动停用" : "") +
-      (d.blobOff ? " · blob已降级" : "") +
-      (d.lastErr ? ` · ${d.lastErr}` : "");
-  };
-  window.__sndShowDiag = show;
-  if (sel) {
-    sel.value = SND_CHAN;
-    sel.addEventListener("change", () => {
-      window.__sndChan(sel.value);
-      show("通道已切");
-    });
-  }
-  if (r) r.addEventListener("click", () => {
-    SND_BLOB_DONE = false; SND_BLOB_TRIES = 0; unlockAudio();
-    show("补取中"); setTimeout(() => show("补取完成"), 1800);
-  });
-  if (!b) return;
-  b.addEventListener("click", () => {
-    unlockAudio();
-    const save = { on: SOUND_ON, rp: RP_SOUND,
-      vo: SET.voiceOn, so: SET.sfxOn,
-      mv: SET.masterVol, vv: SET.voiceVol, sv: SET.sfxVol };
-    SOUND_ON = true; RP_SOUND = true;
-    SET.voiceOn = true; SET.sfxOn = true;
-    SET.masterVol = 1; SET.voiceVol = 0.9; SET.sfxVol = 0.9;
-    syncAudioGains();
-    const seq = [["8万", "boy", "voice"], ["3条", "girl", "voice"],
-      ["碰", "boy", "sfx"], ["杠", "girl", "sfx"], ["胡", "boy", "sfx"]];
-    // 第一声放在点击同步栈里播（iOS / 安卓自动播放策略最严），其余错开 700ms
-    seq.forEach((x, i) => {
-      const fire = () => snd(x[0], x[1], x[2]);
-      if (i === 0) fire(); else setTimeout(fire, i * 700);
-    });
-    show("测试中");
-    setTimeout(() => {
-      SOUND_ON = save.on; RP_SOUND = save.rp;
-      SET.voiceOn = save.vo; SET.sfxOn = save.so;
-      SET.masterVol = save.mv; SET.voiceVol = save.vv; SET.sfxVol = save.sv;
-      syncAudioGains();
-      show("结果");
-      // 八修：测试音是临时放大到 100%/90%/90% 播的；若真实设置的增益偏低，
-      // 明确告知 —— 避免「测试能响、对局没声」再被误判成播放通道故障。
-      const ev = _sndGain("voice"), es = _sndGain("sfx");
-      if (Math.max(ev, es) < 0.35) {
-        toast(`测试音已放大播放；当前实际增益 读牌${Math.round(ev * 100)}% / 操作${Math.round(es * 100)}%，请把音量滑杆调高到 80% 以上`, 4200);
-      }
-    }, seq.length * 700 + 1600);
-  });
-})();
+/* ---- 2026-11-06：音效稳定后按用户要求移除设置页自检区（测试音 / 补取 /
+   通道切换 / 诊断行）。控制台 __sndDiag()、__sndChan() 保留，供以后排查。 */
 
 /* ---- 设置面板：左侧分类导航（记忆上次分类） ---- */
 let SET_PANE = localStorage.getItem("dushan_setpane") || "who";
