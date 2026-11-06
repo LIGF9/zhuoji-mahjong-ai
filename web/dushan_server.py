@@ -1607,7 +1607,7 @@ class Session:
             self.hint_used = True
             return game.clone(), self.my_seat
 
-    def hint(self, strategy: str = "search32:master") -> dict:
+    def hint(self, strategy: str = "search128:master") -> dict:
         snap = self._hint_snapshot()
         if snap is None:
             return {"ok": False, "error": "现在不是你的决策点"}
@@ -1871,7 +1871,12 @@ class Session:
         返回 ``{"ok": True, "cur": {"tiles": [...], "types": [...]}}``（未听牌 cur=None）。
         """
         with self.lock:
-            game = self.game
+            # 2026-11-06 修复「非决策点点听牌按钮 → 对局未开始」：
+            # wait_human() 在玩家出牌后立刻把 self.game 置 None（等下一次轮到自己才恢复），
+            # 但整局期间 _cur_game 一直指向同一个 game 对象（game.step 原地推进）。
+            # 因此「手里没有刚摸进的牌」的三家行牌 / 等待窗口，改用 _cur_game 兜底，
+            # 就能按当前暗手算出听牌；不动对局状态机，也不影响 ting_hint 的决策点判据。
+            game = self.game or self._cur_game
             if game is None:
                 return {"ok": False, "error": "对局未开始"}
             me = self.my_seat
@@ -2477,7 +2482,7 @@ def get_session(sid: str) -> Session | None:
 # ---------------------------------------------------------------------------
 CTYPES = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".mp3": "audio/mpeg", ".ttf": "font/ttf", ".ico": "image/x-icon",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ttf": "font/ttf", ".ico": "image/x-icon",
     ".html": "text/html; charset=utf-8", ".js": "text/javascript",
     ".css": "text/css", ".json": "application/json",
 }
@@ -2593,7 +2598,7 @@ class Handler(BaseHTTPRequestHandler):
             s = get_session(sid)
             if not s:
                 return self._json({"ok": False, "error": "会话不存在"}, 404)
-            strat = self._query().get("strategy") or "search32:master"
+            strat = self._query().get("strategy") or "search128:master"
             r = s.hint(strat)
             # 诊断日志：手机端「来源不符」类问题时，从这里核对真实下发的策略
             try:

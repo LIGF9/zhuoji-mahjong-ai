@@ -2789,8 +2789,17 @@ html.mob .river-top { flex-flow: row-reverse wrap-reverse; }
 .river-pile .jidots { top: 3px; right: auto; left: 3px; gap: 2px; }
 .river-pile .mc.rot .jidots { top: 3px; left: 3px; }
 
-/* ---- E) 结算：责任鸡黄点（冲 3 / 横 2 / 其余 1）；小图不加红点 ---- */
+/* ---- E) 结算：责任鸡黄点（冲 3 / 横 2 / 其余 1）---- */
 .jidots.zr i { background: #e9c94c; box-shadow: 0 0 0 1px rgba(0,0,0,.42); }
+/* 2026-11-06：结算页小牌上的红/绿/黄点统一 6px（四倍金鸡 5px），
+   责任鸡黄点此前跟牌宽 clamp 走、与其它点不同大小，用户反馈「点大小不合适」。
+   同特异性后置覆盖横置牌 .mc.heng/.vz 的等比点径，保证一屏内点标一致。 */
+#result-mask .jidots { gap: 2px; }
+#result-mask .jidots i,
+#result-mask .jidots.zr i,
+#result-mask .mc.heng .jidots i,
+#result-mask .mc.vz .jidots i { --jd: 6px; }
+#result-mask .jidots.q4 i { --jd: 5px; }
 
 /* ---- F) 设置页 ---- */
 /* 追加鸡牌并进「满堂鸡」那一排的第二格（不再单开一行） */
@@ -3381,6 +3390,61 @@ html.mob #grid-display > .setrow {
    `html.mob #nav-more { position:fixed }`，菜单相对 #nav 定位，而 JS 写入的是
    视口坐标 → 面板被整体推远（用户截图：离按钮 100+ px）。这里同特异性后置覆盖。 */
 html.mob #nav #nav-more { position: fixed; }
+
+/* ==================================================================
+   第二十一轮修订（2026-11-06，用户第十一批反馈 · 设置页 / 宽屏徽标）
+   ================================================================== */
+
+/* ---- A) 设置项：名称列定宽 + 控件列左对齐（每行、每列都对齐）----------
+   移动端此前把名称列改成 max-content / minmax(0,auto)，名字长短不同就把
+   下拉框与开关推得参差；统一回「固定名称列 + 剩余宽度控件列」，并让
+   开关 / 下拉同高，视觉上成列。 */
+html.mob .setgrid { --setlbl-w: 8.6em; }
+html.mob .setgrid .setrow,
+html.mob .setpanes section[data-pane="rule"] .setgrid > .setrow:not(.jirow),
+html.mob #grid-display > .setrow,
+html.mob .setgrid .setrow.jirow {
+  grid-template-columns: var(--setlbl-w, 9.8em) minmax(0, 1fr);
+  gap: 4px 8px; align-items: center;
+}
+html.mob .setgrid .setrow > :not(.lbl) { justify-self: start; min-width: 0; }
+.setgrid .setrow select { min-width: 92px; min-height: 28px; }
+.setgrid .setrow .switch { flex: 0 0 auto; margin: 0; }
+
+/* ---- B) 规则开关页：「追加鸡牌」并进「满堂鸡」那一行的第 2 格 ----------
+   与第 1 行第 2 格「开局翻鸡」同列对齐，不再独占整行。牌宫格入口过宽时
+   只在自己格内滚动，不把整个设置面板撑出横向滚动条。 */
+html.mob .setpanes section[data-pane="rule"] .setgrid > .setrow.jirow,
+html:not(.mob) .setpanes section[data-pane="rule"] .setgrid > .setrow.jirow {
+  grid-column: auto;
+}
+.setgrid .setrow.jirow .jientry { min-width: 0; overflow-x: auto; }
+
+/* ---- C) 分值表：收紧间距 + 面板加宽，取消整页左右滑动 ------------------
+   旧版 4 列 × (76px 名称 + 10px gap + 56px 输入框) 超出 624px 面板内宽，
+   只能横向滚动才能看全。现在每格约 104~114px，4 列轻松放下。 */
+html.mob .setmodal { width: min(96vw, 680px) !important; }
+.scoregrid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 10px; }
+.scoregrid label { gap: 6px; min-width: 0; }
+.scoregrid label .sname { flex: 0 0 62px; font-size: 11.5px; }
+.scoregrid input { width: 46px; padding: 4px; }
+html.mob .scoregrid { gap: 6px 6px; }
+html.mob .scoregrid label .sname { flex: 0 0 56px; font-size: 11px; }
+html.mob .scoregrid input { width: 42px; }
+.setpanes { overflow-x: hidden; }
+
+/* ---- D) 宽屏徽标与移动 UI 对齐 ----------------------------------------
+   移动端第十一轮起把「杠·通行证 / 报叫」统一挂 .ava-side，侧家竖排且徽章
+   竖排文字；宽屏此前侧家仍横排、字号也大一号。这里把同一套表现扩展到
+   所有设备（移动端规则值相同，不产生变化）。我 / 对家仍横排居中，两端一致。 */
+.seat-left .ava-side, .seat-right .ava-side {
+  flex-direction: column; top: 0; transform: none; gap: 3px;
+}
+.seat-left .ava-side .badge, .seat-right .ava-side .badge {
+  writing-mode: vertical-rl; text-orientation: mixed;
+  letter-spacing: 2px; padding: 6px 2px; max-width: none;
+  font-size: 9px; border-radius: 7px;
+}
 </style>
 </head>
 <body>
@@ -4168,8 +4232,10 @@ const TILES = [];   // {id, name, cn, suit, rank}
 const YAOJI = 9;    // 1条
 let META = null, SID = null, MY_SEAT = 0;
 let SELECTED = -1, SELECTED_IDX = -1, LAST_STATE = null, COACH_HINTS = [];
-// 声音总开关：从 localStorage 恢复（2026-10-13 修复：旧版只写不读 → 每次刷新都变静音）
-let SOUND_ON = localStorage.getItem("dushan_sound") === "1";
+// 声音总开关：从 localStorage 恢复。2026-11-06 修复「所有设备无声」：
+// 旧版默认 **关**（读不到 "1" 就静音），用户从没点过开关时整站静音；改为默认开，
+// 只有显式关过（存 "0"）才静音。设置里的开关仍可随时关闭。
+let SOUND_ON = localStorage.getItem("dushan_sound") !== "0";
 let POLL_TIMER = null;
 let PAGE_VER = null, UPDATE_NAG = null;
 
@@ -4294,9 +4360,9 @@ const _timeoutVal = clampSetting(_timeoutRaw, 0, 600, 15);
 const _timeoutLegacyOff = _timeoutRaw !== null && _timeoutVal === 0
   && localStorage.getItem("dushan_timeouton") === null;
 const SET = {
-  // 推荐策略（= 「我」的模型）。2026-11-02 模型精简后默认「深算 · 32 路推演」；
+  // 推荐策略（= 「我」的模型）。2026-11-06 用户口径：默认「极算 · 128 路推演」；
   // 白名单见 OPP_OPTIONS，存量配置由 migrateCfgVersion / migrateModelOptions 迁移。
-  strategy: localStorage.getItem("dushan_strategy") || "search32:master",
+  strategy: localStorage.getItem("dushan_strategy") || "search128:master",
   // ---- 功能开关（与时间设置分离：关闭后其时间设置自动置灰）----
   hintOn: loadBool("dushan_hinton", true),               // 显示大师推荐
   timeoutOn: _timeoutLegacyOff ? false : loadBool("dushan_timeouton", true),
@@ -4498,6 +4564,14 @@ function jiDotsFor(t, tag, zr) {
   const cls = GOLD_CTX.quad.has(+t) ? "jin q4" : (GOLD_CTX.gold.has(+t) ? "jin" : "");
   return jiDotsHTML(tag, cls);
 }
+/* 当前帧的鸡牌种集合（结算帧优先用 RES_SRC，支持回放；局中用 LAST_STATE）。
+   2026-11-06：副露/标签里「普通鸡牌」常常没有 m.ji 丝带标记，只靠牌种判断，
+   不能因为 m.ji 为空就当成普通牌漏掉红点。 */
+function activeJiSet() {
+  const st = (typeof RES_SRC !== "undefined" && RES_SRC) || LAST_STATE;
+  const arr = st && st.ji_tiles && st.ji_tiles.length ? st.ji_tiles : [YAOJI];
+  return new Set(arr.map(Number));
+}
 
 const SUIT_FILE = ["万", "条", "筒"];
 function tileImg(t) {
@@ -4549,7 +4623,10 @@ function tileSndName(t) {
   return (CN_NUM[x.cn[0]] || x.cn[0]) + x.cn.slice(1);
 }
 function sndPath(name, gender) {
-  const f = name + ".mp3";
+  // 2026-11-06：原始 .mp3 资源从未入库、迁移后整目录缺失（所有设备静音）。
+  // 改由 tools/gen_sound_assets.py 生成 16k/16bit 单声道 WAV，浏览器与
+  // Android WebView 原生可播，无需外部解码器；文件名口径不变。
+  const f = name + ".wav";
   if (ROOT_SND.includes(name)) return "/assets/sound/" + f;
   return `/assets/sound/${gender === "girl" ? "sound_girl" : "sound_boy"}/${f}`;
 }
@@ -4776,8 +4853,8 @@ let BGM_SRC = "";
 function bgmSrc() {
   if (!SET.bgmOn) return null;
   const v = SET.bgmTrack;
-  if (!v || v === "random") return `/assets/sound/bgmusic/bg${Math.floor(Math.random() * 5)}.mp3`;
-  return `/assets/sound/bgmusic/${/^bg[0-4]$/.test(v) ? v : "bg0"}.mp3`;
+  if (!v || v === "random") return `/assets/sound/bgmusic/bg${Math.floor(Math.random() * 5)}.wav`;
+  return `/assets/sound/bgmusic/${/^bg[0-4]$/.test(v) ? v : "bg0"}.wav`;
 }
 function applyBgmVolume() {
   if (!BGM) return;
@@ -5141,11 +5218,11 @@ el("ji-mask").addEventListener("click", (ev) => {
    权重换代只覆盖 models/dushan_master.pt，文案按 mtime 自动跟随。 */
 const OPP_OPTIONS = [
   { v: "model:master", label: "🤖 大师（贪心·2ms）", dyn: "master" },
-  { v: "search32:master", label: "🔍 深算 · 32 路推演（默认）" },
-  { v: "search128:master", label: "⚡ 极算 · 128 路推演" },
+  { v: "search32:master", label: "🔍 深算 · 32 路推演" },
+  { v: "search128:master", label: "⚡ 极算 · 128 路推演（默认）" },
 ];
 const OPP_ALLOWED = OPP_OPTIONS.map(o => o.v);
-const DEFAULT_STRATEGY = "search32:master";   // 搜索 Agent 默认档：n32
+const DEFAULT_STRATEGY = "search128:master";  // 2026-11-06：推荐默认升到极算 n128
 const DEFAULT_OPP = "model:master";           // 所有玩家默认：大师
 /* 旧配置收敛：把 localStorage 里存着的已下线档位挪进白名单。
    对手位（含教师/随机/bc/s7）→ 大师；我的推荐策略 → 深算 n32。
@@ -5165,14 +5242,14 @@ function migrateModelOptions() {
   });
   return dirty;
 }
-/* 配置版本迁移（一次性）。老版本把「大师推荐」的默认值存成 model:master，
-   而绝大多数人从没动过那个下拉 —— 只改代码里的默认值救不了存量用户，
-   必须迁移已存的那份。标记写进 localStorage，之后用户手动改回大师不会再被覆盖。 */
-const CFG_VER = 2;
+/* 配置版本迁移（一次性）。默认值只改代码救不了已把旧值写进 localStorage 的存量设备，
+   必须用版本号强制迁移一次；迁移标记写入后，用户手动改回其它档位不会再被覆盖。
+   v2 → v3（2026-11-06）：推荐默认由深算 n32 升到极算 n128。 */
+const CFG_VER = 3;
 function migrateCfgVersion() {
   const cur = parseInt(localStorage.getItem("dushan_cfg_ver"), 10) || 1;
   if (cur >= CFG_VER) return false;
-  SET.strategy = DEFAULT_STRATEGY;              // v1 → v2：推荐默认升到深算 n32
+  SET.strategy = DEFAULT_STRATEGY;
   localStorage.setItem("dushan_cfg_ver", String(CFG_VER));
   return true;
 }
@@ -5705,16 +5782,20 @@ const MELD_BACK = "/assets/tiles/face-down.png";
 function ovMeldCaption(m, ownerSeat, nameOfSeat) {
   // 2026-11-02 v4 用户口径：标签里的小牌图（20px 高）不再加冲/横红点 —— 前面
   // 「碰横鸡 / 碰冲锋鸡」的文字已经说清楚了，牌图只保留牌面本身。
+  // 2026-11-06：标签里的小牌图也要红点（碰/杠吃进的鸡牌，含只有牌种、没有
+  // 冲锋鸡/横鸡丝带的开局翻鸡种），与副露牌格/结算明细同口径。
+  const isJi = !!m.ji || activeJiSet().has(+m.tile);
+  const dots = isJi ? jiDotsFor(m.tile, m.ji) : "";
   if (m.type === 1) {
-    if (!m.ji) return "";
+    if (!isJi) return "";
     const src = nameOfSeat ? nameOfSeat(m.src) : "";
-    return `碰${m.ji}<span class="jcap"><img src="${tileImg(m.tile)}" alt=""></span>${src ? `(${src})` : ""}`;
+    return `碰${m.ji || "鸡"}<span class="jcap"><img src="${tileImg(m.tile)}" alt="">${dots}</span>${src ? `(${src})` : ""}`;
   }
   if (m.type === 2 || m.type === 3 || m.type === 4) {
     const who = (m.type === 2 && Number.isInteger(m.src) && nameOfSeat)
       ? nameOfSeat(m.src) : (m.type === 2 ? "明杠" : "");
     const how = m.type === 4 ? "自杠" : m.type === 3 ? "补杠" : (who || "明杠");
-    return `杠<span class="jcap"><img src="${tileImg(m.tile)}" alt=""></span>(${how})`;
+    return `杠<span class="jcap"><img src="${tileImg(m.tile)}" alt="">${dots}</span>(${how})`;
   }
   return "";
 }
@@ -5738,7 +5819,9 @@ function meldCells(m, rc, ownerSeat, mirror, dots) {
     `<img src="${src}" alt=""></span>`;
   const normal = tileImg(m.tile);
   // 副露吃进冲锋鸡/横鸡：真实牌面 + 统一角标（冲=红/横=蓝）；普通幺鸡/翻鸡鸡牌用普通牌面
-  const isJi = !!m.ji;                 // 该副露吃进的是鸡牌（冲锋鸡/横鸡/幺鸡/翻鸡）
+  // 2026-11-06：普通鸡牌（幺鸡/开局翻鸡种/结算翻鸡种）常常没有 m.ji 丝带标签，
+  // 只按牌种判断；否则碰杠中的这些鸡牌会是光板（用户报「漏加点」）。
+  const isJi = !!m.ji || activeJiSet().has(+m.tile);
   // dots = true（结算页）：牌小，丝带看不清 → 与结算手牌同款红点（2026-11-02 v4 口径）
   const jiCell = (extra = "") =>       // 鸡牌格：冲/横/金=丝带；普通鸡/翻鸡种=1 点标
     // 注意：横置指示格不带座位旋转类 rc（左右家组内横置牌=竖立的牌，见 .mc.vz）
@@ -7458,9 +7541,11 @@ function resJibarHTML(st) {
   // 四倍金鸡=2×2 四红点）；普通鸡牌不加（信息条只列鸡牌种本身）。
   const gold = new Set((res.gold_tiles || []).map(Number));
   const quad = new Set((res.quad_gold_tiles || []).map(Number));
+  // 2026-11-06 用户口径：信息条里**所有鸡牌**都要红点（金鸡=绿点 / 四倍金鸡=4 绿点），
+  // 不能只对金鸡加点 —— 结算翻出的普通鸡牌此前是光板，玩家看不出哪张是鸡。
   const gimg = t => `<span class="goldwrap"><img src="${tileImg(t)}" alt="">` +
     (quad.has(+t) ? jiDotsHTML("金鸡", "jin q4")
-      : gold.has(+t) ? jiDotsHTML("金鸡", "jin") : "") + `</span>`;
+      : gold.has(+t) ? jiDotsHTML("金鸡", "jin") : jiDotsFor(t)) + `</span>`;
   const jiImgs = jiTilesOrdered(st.ji_tiles && st.ji_tiles.length ? st.ji_tiles : [YAOJI])
     .map(t => `<span class="jt">${gimg(t)}</span>`).join("");
   const bar = [];
@@ -7610,10 +7695,12 @@ function playerHandBlock(st, rel, ctx) {
     // （点数看它是冲锋鸡责任鸡 3 点 / 横鸡责任鸡 2 点 / 普通鸡责任鸡 1 点）；
     // ②这一行的小牌图太小（26px 高），冲/横红点已看不清 → 不再加红点，
     // 该张是冲/横由紧随其后的标签文字（碰鸡/杠鸡说明）表达。
-    const zr = claimed ? jiDotsHTML(tg, "zr") : "";
+    // 2026-11-06 用户口径：打出的鸡牌（含开局鸡）在标签行也要红点标识；
+    // 责任鸡仍用黄点（尺寸由 CSS 统一），其余一律红点（冲锋鸡 3 / 横鸡 2 / 普通 1）。
+    const dots = claimed ? jiDotsHTML(tg, "zr") : jiDotsFor(t, tg);
     const zrTip = claimed ? "（责任鸡：这张已被碰/杠走）" : "";
     discs.push(`<span class="jwrap"><img src="${tileImg(t)}" alt="${tg || "鸡牌"}" ` +
-      `title="${tg || "鸡牌"}${zrTip}">${zr}</span>`);
+      `title="${tg || "鸡牌"}${zrTip}">${dots}</span>`);
   });
   if (discs.length) meta.push(`<span class="disc">${discs.join("")}</span>`);
   const hand = (p.hand_tiles || []).slice().sort((a, b) => a - b);
@@ -7632,9 +7719,15 @@ function playerHandBlock(st, rel, ctx) {
   // 2026-11-04 第十六轮：点色 绿=鸡牌 / 红=金鸡 / 四倍金鸡 4 红点
   const meldsHtml = (p.melds && p.melds.length)
     ? `<span class="ovmelds">${p.melds.map(m => meldHTML(m, "", p.seat, false, true)).join("")}</span>` : "";
-  const tileCell = t => (jiSet.has(t) || ctx.fanjiSet.has(t))
-    ? `<span class="ovtile"><img src="${tileImg(t)}" alt="">${jiDotsFor(t)}</span>`
-    : `<img src="${tileImg(t)}" alt="">`;
+  // 2026-11-06：所有玩家（含未听牌者）手里的鸡牌一律加点。此前只认
+  // jiSet ∪ fanjiSet，金鸡/回放帧/开局鸡种容易漏判 → 补 GOLD_CTX 与当前帧鸡种并集。
+  const tileCell = t => {
+    const isJi = jiSet.has(+t) || ctx.fanjiSet.has(+t) ||
+      GOLD_CTX.gold.has(+t) || GOLD_CTX.quad.has(+t) || activeJiSet().has(+t);
+    return isJi
+      ? `<span class="ovtile"><img src="${tileImg(t)}" alt="">${jiDotsFor(t)}</span>`
+      : `<img src="${tileImg(t)}" alt="">`;
+  };
   const winHtml = winTile == null ? "" :
     `<span class="ovwingap"></span><span class="ovwin" title="胡牌张（${
       res.is_tsumo ? "自摸" : winHowTag(res)}）">${tileCell(winTile)}</span>`;
@@ -7816,9 +7909,12 @@ function renderPairs(st) {
   const gmOf = t => GOLD_CTX.quad.has(+t) ? GM * 2 : (GOLD_CTX.gold.has(+t) ? GM : 0);
   const chip = (t, n, tags, x, title, kind) => {
     const quad = GOLD_CTX.quad.has(+t), gold = GOLD_CTX.gold.has(+t);
-    const dots = kind === "zr"
-      ? jiDotsHTML((tags || []).find(g => g === "冲锋鸡" || g === "横鸡"), "zr")
-      : quad ? jiDotsHTML("金鸡", "jin q4") : gold ? jiDotsHTML("金鸡", "jin") : "";
+    // 2026-11-06：明细里每一张鸡牌都要有点标 —— 责任鸡黄点、金鸡绿点、
+    // 其余（手中鸡 / 翻鸡 / 打出鸡 / 碰杠鸡）统一红点，不再留光板小图。
+    const ctag = (tags || []).find(g => g === "冲锋鸡" || g === "横鸡");
+    const dots = kind === "zr" ? jiDotsHTML(ctag, "zr")
+      : quad ? jiDotsHTML("金鸡", "jin q4")
+        : gold ? jiDotsHTML("金鸡", "jin") : jiDotsHTML(ctag);
     const x2 = (x && x !== 1) ? ` <b class="x2">X${x}</b>` : "";
     return `<span class="jcnt" title="${esc(title)}"><span class="goldwrap">` +
       `<img src="${tileImg(t)}" alt="">${dots}</span>×${n}${x2}</span>`;
@@ -8192,7 +8288,12 @@ async function refreshTingPop() {
   // 决策点（暗手 14 张）服务端回落成逐张候选 map：上浮了哪张就看那张打出去听什么
   let hit = r.cur;
   if (!hit && r.map && SELECTED != null) hit = r.map[String(SELECTED)];
-  if (!hit || !hit.tiles || !hit.tiles.length) { toast("当前未听牌", 1600); return; }
+  if (!hit || !hit.tiles || !hit.tiles.length) {
+    // 2026-11-06：决策点还没上浮手牌时，别误报「未听牌」——给明确指引
+    const keys = r.map ? Object.keys(r.map) : [];
+    toast(keys.length ? "已听牌：点选一张手牌，查看打出后听什么" : "当前未听牌", 1800);
+    return;
+  }
   const cells = hit.tiles.map(x =>
     `<span class="tcell"><img class="tin" src="${tileImg(x.t)}" alt="${TILES[x.t].cn}">` +
     `<span class="tcnt${x.left <= 0 ? " z" : ""}">剩${x.left}</span></span>`).join("");
@@ -9053,7 +9154,7 @@ el("hand").onclick = (ev) => {
 };
 
 /* ================= 启动 ================= */
-/* 配置迁移必须早于第一次回填：v1→v2 把推荐默认升到深算 n32，
+/* 配置迁移必须早于第一次回填：v1→v2 升到深算 n32、v2→v3 升到极算 n128，
    再把所有已下线档位（教师/随机/bc/s7/简算 n8）收敛进白名单。
    两个迁移都要跑，不能短路（|| 会让第二个被跳过）。 */
 const _cfgMig1 = migrateCfgVersion();
