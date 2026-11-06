@@ -8402,23 +8402,18 @@ function renderPairs(st) {
   });
   const cnOf = t => (TILES[+t] ? TILES[+t].cn : "牌" + t);
   const esc = s => String(s == null ? "" : s).replace(/"/g, "&quot;");
-  /* 一张牌的小片：[牌图（金鸡红点 / 四倍金鸡四红点 / 责任鸡黄点）]×N（可跟 X 倍率）
-     2026-11-02 v4 用户口径：明细小图只有 24px 高，冲/横红点已看不清 →
-     普通/打出鸡牌不加点标（旁边的文字与 ×N 已说明）；责任鸡用**黄点**，
-     点数看它是冲锋鸡责任鸡（3）还是横鸡责任鸡（2）。
-     2026-11-04 第十六轮：金鸡取消「金」丝带 → 改**红点**（四倍金鸡 4 红点）。 */
+  /* 一张牌的小片：[牌图]×N（可跟 X 倍率）。
+     2026-11-02 v4：明细小图 24px 太小，冲/横红点看不清 → 打出鸡牌不加点标。
+     2026-11-04 第十六轮：金鸡改红点（四倍金鸡 4 红点）。
+     2026-11-06 早：明细里每张鸡牌都要点标（责任鸡黄 / 金鸡绿 / 其余红）。
+     2026-11-06 晚用户口径（最终，覆盖上面几条）：结算明细行里的小鸡牌
+     **一律不加点装饰** —— ×N 与 title 已说清数量与类别，图面保持干净。
+     tags / kind 形参保留（调用点兼容），不再参与渲染。 */
   const gmOf = t => GOLD_CTX.quad.has(+t) ? GM * 2 : (GOLD_CTX.gold.has(+t) ? GM : 0);
   const chip = (t, n, tags, x, title, kind) => {
-    const quad = GOLD_CTX.quad.has(+t), gold = GOLD_CTX.gold.has(+t);
-    // 2026-11-06：明细里每一张鸡牌都要有点标 —— 责任鸡黄点、金鸡绿点、
-    // 其余（手中鸡 / 翻鸡 / 打出鸡 / 碰杠鸡）统一红点，不再留光板小图。
-    const ctag = (tags || []).find(g => g === "冲锋鸡" || g === "横鸡");
-    const dots = kind === "zr" ? jiDotsHTML(ctag, "zr")
-      : quad ? jiDotsHTML("金鸡", "jin q4")
-        : gold ? jiDotsHTML("金鸡", "jin") : jiDotsHTML(ctag);
     const x2 = (x && x !== 1) ? ` <b class="x2">X${x}</b>` : "";
     return `<span class="jcnt" title="${esc(title)}"><span class="goldwrap">` +
-      `<img src="${tileImg(t)}" alt="">${dots}</span>×${n}${x2}</span>`;
+      `<img src="${tileImg(t)}" alt=""></span>×${n}${x2}</span>`;
   };
   /* 手中鸡牌：逐牌种「牌图 × 张数」，金鸡牌种再加 ×倍率（四倍金鸡 ×2 倍率） */
   const holdChips = seat => {
