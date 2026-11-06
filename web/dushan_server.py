@@ -456,7 +456,11 @@ VERBOSE = False
 HOLD_MAX = 20.0
 
 #: "大师" 别名 → 实际模型 stem（按优先级探测）
-MASTER_CANDIDATES = ["dushan_master", "dushan_s1", "dushan_s2", "dushan_s3", "rl"]
+#: 2026-11-07：ExIt 学生上线。`web_best` 是训练主循环 `exit_best.pt` 的**快照**
+#: （不直接在 models/ 里引用 exit_best，避免训练中途换代让在线对局行为漂移）。
+#: 顺序即优先级：web_best 存在则线上「大师」= ExIt 学生；删除该文件即回退旧网。
+#: 注意：`dushan_master.pt` 同时是闸门 A/C 的冻结基线，**绝不能覆盖它来换代**。
+MASTER_CANDIDATES = ["web_best", "dushan_master", "dushan_s1", "dushan_s2", "dushan_s3", "rl"]
 
 
 #: 未听牌包赔开关的网页默认（与引擎 DushanConfig 默认一致）

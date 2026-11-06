@@ -141,9 +141,10 @@ fn teacher_q(
     ply: u8,
     seed: u64,
     ft: &FanTable,
+    fair: bool,
 ) -> Vec<f64> {
     let mut ds = DeepSearch::new_fair(g, p, legal, n_det, ff_cap, topk, ply, seed, ft,
-                                     true, 0, 1.0, false);
+                                     fair, 0, 1.0, false);
     let mut guard = 0usize;
     while !ds.finished() {
         guard += 1;
@@ -274,6 +275,7 @@ fn worker(
     student_coreml: bool,
     use_coreml: bool,
     threads_per_infer: usize,
+    oracle: bool,
 ) {
     let ft = FanTable::build();
 
@@ -315,7 +317,7 @@ fn worker(
                 let p = g.actor();
                 let o = encode_v3::encode_v3(&g, p, &ft);
                 let q = teacher_q(&mut tea, &g, p, &acts, n_det, ff_cap, topk, ply,
-                                  seed0 + tid as u64 * 7919 + deals as u64, &ft);
+                                  seed0 + tid as u64 * 7919 + deals as u64, &ft, !oracle);
                 let mut q28 = [f32::NAN; N_SLOTS];
                 for (a, &qa) in acts.iter().zip(q.iter()) {
                     if let Some(idx) = encode::head_index(o.head, *a) {
@@ -446,7 +448,7 @@ fn check_q(teacher: &str, states: &str, out: &str, use_coreml: bool) {
             })
             .unwrap_or_default();
         let seed = v["seed"].as_u64().unwrap_or(0);
-        let q = teacher_q(&mut tea, &g, p, &legal, 32, 24, 3, 3, seed, &ft);
+        let q = teacher_q(&mut tea, &g, p, &legal, 32, 24, 3, 3, seed, &ft, true);
         let rec = serde_json::json!({ "q": q });
         writeln!(w, "{rec}").ok();
     }
@@ -546,6 +548,12 @@ fn main() {
         .get("infer-threads")
         .and_then(|x| x.parse().ok())
         .unwrap_or(1);
+    // P2a Oracle Guiding：--oracle 1 让教师搜索跳过 determinize（完美信息），
+    // 产出 Q_oracle 而非 Q_pimc。默认 false ⇒ 与历史行为完全一致。
+    let oracle = m
+        .get("oracle")
+        .map(|v| v != "0" && v != "false")
+        .unwrap_or(false);
 
     // ORT 环境是进程全局的：必须只 init 一次，再把 &Environment 传给各线程
     // （并发 init_from 会死锁 —— 冒烟实测 SIGTERM 无输出）。
@@ -554,6 +562,9 @@ fn main() {
         .build()
         .expect("ORT 环境初始化失败");
     eprintln!("[annotate] ORT ready (teacher_coreml={use_coreml}, student_coreml={student_coreml})");
+    if oracle {
+        eprintln!("[annotate] **ORACLE 模式**：教师搜索跳过 determinize（完美信息 Q）");
+    }
 
     let per = (targets + nthreads - 1) / nthreads;
     std::thread::scope(|scope| {
@@ -581,6 +592,7 @@ fn main() {
                     student_coreml,
                     use_coreml,
                     threads_per_infer,
+                    oracle,
                 );
             });
         }

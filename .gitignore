@@ -33,3 +33,10 @@ models/*_smoke.pt
 # ExIt 训练产物（本地保留，不进 git——每轮 30MB+ 快照）
 models/exit_r*.pt
 models/exit_best.pt
+models/web_best.pt
+
+# Oracle 构建独立目录（在跑二进制 target/release 不动）
+rust_engine/target_oracle/
+
+# 编辑备份
+web/*.bak-*

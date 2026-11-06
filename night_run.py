@@ -42,6 +42,17 @@ NIGHT_LOG_DIR = ROOT / "runs/night_logs"
 LOCK = ROOT / "runs/night_run.lock"
 MAX_ROUND = 60                                    # 7 天约 55~60 轮，留余量
 
+# ---- PPO-lite 分支（docs/14天训练计划.md §6.24）----
+# 依据：8 轮 DAgger 后闸门 A 环比 4 轮为 0、闸门 C≈0、best-val 连续 5 轮落在 ep1
+# ⇒ 瓶颈是教师标签的信息天花板。PPO 用「谁赢」这个 DAgger 拿不到的信号。
+# 设计：**不替换** DAgger 主线，只在每轮闸门之后追加一个 PPO 候选 exit_pNN.pt，
+# 与主候选竞争；晋升要求「比现最佳显著更好」（闸门 D），否则只存档留作终评 best-of。
+# 单轮成本实测 ≈8min（rollout 2min@4进程 + 更新 4~5min@mps），占一轮 4%。
+PPO_FROM = 10                                     # 首个 PPO 轮次（R10）
+PPO_EVERY = 1                                     # 每 N 轮跑一次（1 = 每轮）
+PPO_HANDS = 960                                   # ≈6 万决策，与 max-states 匹配
+PPO_DISABLE = ROOT / "runs/ppo_disabled"          # 存在即停用（远程急停开关）
+
 
 def log(msg: str) -> None:
     line = f"[{dt.datetime.now():%F %H:%M:%S}] {msg}"
@@ -164,6 +175,31 @@ def gate_c_done(r: int) -> bool:
     return _jsonl_rows(ROOT / f"runs/gates/r{r:02d}_gateC.jsonl") >= 200    # 50 seed × 4 座
 
 
+def gate_d_done(r: int) -> bool:
+    return _jsonl_rows(ROOT / f"runs/gates/r{r:02d}_gateD.jsonl") >= 1200   # 300 seed × 4 座
+
+
+def snapshot_prev_best(r: int):
+    """闸门 D 的基线 = 本轮晋升**之前**的 exit_best（规格里的「上轮最佳」）。
+
+    必须在闸门 A 触发 promote 之前调用，否则退化成自己比自己。
+    本轮已晋升过（说明快照窗口已错过）则返回 None，本轮跳过 D。
+    """
+    dst = ROOT / f"runs/gates/r{r:02d}_prevbest.pt"
+    if dst.exists():
+        return dst
+    if (ROOT / f"runs/gates/r{r:02d}.promoted").exists():
+        return None
+    src = ROOT / "models/exit_best.pt"
+    if not src.exists():
+        return None
+    try:
+        shutil.copy2(src, dst)           # 40MB，1s
+        return dst
+    except OSError:
+        return None
+
+
 def first_incomplete_round() -> int:
     """R1 已完成；找第一个「标注/训练/闸门 A/C 未全齐」的轮次。"""
     for r in range(2, MAX_ROUND + 1):
@@ -231,9 +267,10 @@ def _gate_line(text: str) -> str:
 
 
 def gates_round(r: int) -> None:
-    """闸门 A（晋升判据）+ 闸门 C（趋势记录），各自幂等跳过。"""
+    """闸门 A（晋升判据）+ 闸门 C（趋势）+ 闸门 D（环比上轮最佳），各自幂等跳过。"""
     ck = ROOT / f"models/exit_r{r:02d}.pt"
     base = str(ROOT / MASTER_PT)
+    prevb = snapshot_prev_best(r)        # 必须在下面的 promote 之前取快照
     if not gate_a_done(r):
         out_a = ROOT / f"runs/gates/r{r:02d}_gateA.jsonl"
         cmd_a = [PY, "eval_pairs.py", "--a", str(ck), "--b", base,
@@ -256,15 +293,89 @@ def gates_round(r: int) -> None:
             log(f"R{r} 闸门 C(趋势): {_gate_line(txt_c)}")
         else:
             log(f"R{r} 闸门 C 运行失败（不影响晋升）rc={rc_c}")
+    # 闸门 D：与「上轮最佳」的配对对比 —— 这才是真实环比进步，闸门 A 只比 master 恒过
+    if prevb is not None and not gate_d_done(r):
+        out_d = ROOT / f"runs/gates/r{r:02d}_gateD.jsonl"
+        cmd_d = [PY, "eval_pairs.py", "--a", str(ck), "--b", str(prevb),
+                 "--mode", "greedy", "--seeds", "300", "--seed0", "710000",
+                 "--workers", "6", "--out", str(out_d)]
+        rc_d, txt_d = run(cmd_d, f"gateD_r{r:02d}", timeout_s=5400)
+        if rc_d == 0:
+            log(f"R{r} 闸门 D(vs 上轮最佳): {_gate_line(txt_d)}")
+            try:
+                prevb.unlink(missing_ok=True)      # 只在成功后清理快照
+            except OSError:
+                pass
+        else:
+            log(f"R{r} 闸门 D 运行失败（不影响晋升）rc={rc_d}")
 
 
-def promote(r: int) -> None:
-    src = ROOT / f"models/exit_r{r:02d}.pt"
+def promote_ckpt(src: Path, tag: str) -> None:
     dst = ROOT / "models/exit_best.pt"
     shutil.copy2(src, dst)
     export_onnx(dst)                     # 同步 ONNX 缓存 stem
-    (ROOT / f"runs/gates/r{r:02d}.promoted").write_text("ok\n", encoding="utf-8")
+    (ROOT / f"runs/gates/{tag}.promoted").write_text("ok\n", encoding="utf-8")
     log(f"晋升：{src.name} → exit_best.pt")
+
+
+def promote(r: int) -> None:
+    promote_ckpt(ROOT / f"models/exit_r{r:02d}.pt", f"r{r:02d}")
+
+
+def ppo_round(r: int) -> None:
+    """PPO-lite 候选轮（§6.24）：纯策略自对弈 + 终端分差奖励 → exit_p{r:02d}.pt。
+
+    晋升判据 = 闸门 D（vs 现最佳）p<0.05 且均值>0 **同时** 闸门 A（vs master）通过。
+    300 seed 的池分辨率约 0.5 分/SE，因此单轮 PPO 增量多半达不到显著 —— 那就不晋升，
+    但 ckpt 与 jsonl 全部留档，供终评两段式 best-of 在独立池上复赛。
+    异常绝不外泄：主线 DAgger 不受影响。
+    """
+    if PPO_DISABLE.exists():
+        return
+    if r < PPO_FROM or (r - PPO_FROM) % PPO_EVERY:
+        return
+    out = ROOT / f"models/exit_p{r:02d}.pt"
+    if out.exists():
+        log(f"P{r:02d} PPO 已完成（ckpt 在），跳过")
+        return
+    init = latest_pt()
+    cmd = [PY, "train_ppo.py", "--init", str(init), "--out", str(out),
+           "--hands", str(PPO_HANDS), "--workers", "4", "--threads", "2",
+           "--max-states", "60000", "--epochs", "2", "--lr", "5e-5",
+           "--seed0", str(900_000 + r * 10_000)]
+    rc, text = run(cmd, f"ppo_p{r:02d}", timeout_s=5400)
+    if rc != 0 or not out.exists():
+        log(f"P{r:02d} PPO 训练失败 rc={rc}（主线不受影响）")
+        return
+    mt = [ln for ln in text.splitlines() if ln.startswith("[metrics]")]
+    log(f"P{r:02d} PPO 完成 init={init.name} → {out.name} "
+        f"{mt[-1][len('[metrics] '):] if mt else ''}")
+
+    best = str(ROOT / "models/exit_best.pt")
+    # 闸门 D 先跑：基线是「此刻的」exit_best（本轮 DAgger 候选可能刚晋升）
+    out_d = ROOT / f"runs/gates/p{r:02d}_gateD.jsonl"
+    rc_d, txt_d = run([PY, "eval_pairs.py", "--a", str(out), "--b", best,
+                       "--mode", "greedy", "--seeds", "300", "--seed0", "710000",
+                       "--workers", "6", "--out", str(out_d)],
+                      f"gateD_p{r:02d}", timeout_s=5400)
+    d_pass = rc_d == 0 and _gate_pass(txt_d)
+    if rc_d == 0:
+        log(f"P{r:02d} 闸门 D(vs 现最佳): {_gate_line(txt_d)}  → "
+            f"{'通过' if d_pass else '不通过'}")
+    # 闸门 A：绝对强度记录（与 r 轮同池同口径，保证可比）
+    out_a = ROOT / f"runs/gates/p{r:02d}_gateA.jsonl"
+    rc_a, txt_a = run([PY, "eval_pairs.py", "--a", str(out),
+                       "--b", str(ROOT / MASTER_PT), "--mode", "greedy",
+                       "--seeds", "300", "--seed0", "710000",
+                       "--workers", "6", "--out", str(out_a)],
+                      f"gateA_p{r:02d}", timeout_s=5400)
+    a_pass = rc_a == 0 and _gate_pass(txt_a)
+    if rc_a == 0:
+        log(f"P{r:02d} 闸门 A(vs master): {_gate_line(txt_a)}")
+    if d_pass and a_pass and not (ROOT / f"runs/gates/p{r:02d}.promoted").exists():
+        promote_ckpt(out, f"p{r:02d}")
+    elif not d_pass:
+        log(f"P{r:02d} 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of")
 
 
 def main() -> int:
@@ -292,6 +403,12 @@ def main() -> int:
                 gates_round(r)
             else:
                 log(f"R{r} 闸门被时间盒跳过（下次自检补跑）")
+            if can_start(15):
+                try:
+                    ppo_round(r)
+                except Exception as e:       # noqa: BLE001 —— PPO 失败绝不拖累主线
+                    log(f"R{r} PPO 轮次异常（主线不受影响）："
+                        f"{type(e).__name__}: {e}")
             log(f"R{r} 轮次完成  best="
                 f"{'exit_best.pt' if (ROOT/'models/exit_best.pt').exists() else '无（未晋升）'}")
             consecutive_fail = 0
