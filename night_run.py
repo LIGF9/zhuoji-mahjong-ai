@@ -71,6 +71,13 @@ RAPID_HANDS = 1920           # 加速轮局数（×2：CPU 空出来了，批次
 RAPID_MAX_STATES = 120000    # 与 RAPID_HANDS 匹配（≈62 决策/局）
 RAPID_ABORT = ROOT / "runs/rapid_abort"   # 存在即永久回落 DAgger（由 tools/rapid_guard.py 写）
 
+# ---- 提前终评（docs/14天训练计划.md §6.43，用户 2026-11-07 22:1x 口径）----
+# 「不要求强行用完所有时间，一旦发现训练循环无法提升性能即可终评」。
+# 判据由 tools/early_stop_guard.py 在 S 周期边界只读判读，--arm 才写此标记；
+# 存在即让驱动在**下一轮开始前**优雅退出（保留全部已落盘产物，零删除）。
+# 只改停止条件，不动任何配方/超参/闸门判据。
+EARLY_STOP = ROOT / "runs/early_stop"
+
 
 def log(msg: str) -> None:
     line = f"[{dt.datetime.now():%F %H:%M:%S}] {msg}"
@@ -454,6 +461,11 @@ def main() -> int:
     failures = 0
     consecutive_fail = 0
     for r in range(start, MAX_ROUND + 1):
+        # §6.43 早停：只在轮首检查，绝不打断正在跑的标注/训练/闸门，零数据丢失。
+        if EARLY_STOP.exists():
+            log(f"检测到 runs/early_stop（§6.43 训练饱和提前终评）→ 保留全部产物，"
+                f"驱动在 R{r} 开始前优雅退出")
+            break
         try:
             # 加速轮（§6.33）：只跑 PPO + 闸门 D/A，≈13min；失败/停用则回落到 DAgger
             if is_rapid(r) and can_start(45):

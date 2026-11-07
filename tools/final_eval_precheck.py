@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -25,7 +26,10 @@ sys.path.insert(0, str(ROOT))
 PY = "./.venv/bin/python"
 POOL = "3000000"          # 终评独立 500 seed 池（与 710000/720000/标注池完全隔离）
 SEEDS = "500"
-A = "models/exit_best.pt"
+# ⚠ 终评 --a 必须是 best-of 第一段选出的**胜者**，不是 training 链头 exit_best。
+#   exit_best 由闸门 A（vs 冻结 master）决定，结构上每轮都会变；它不等于「最强」。
+#   选模型：./.venv/bin/python tools/bestof_rank.py --md  → 取 #1（并列则取轮次最晚者）
+DEFAULT_A = "models/exit_best.pt"
 B = "models/dushan_master.pt"
 
 
@@ -39,6 +43,12 @@ def ckpt_version(path: str) -> tuple[int, int | None]:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default=DEFAULT_A,
+                    help="A 侧（候选）ckpt；必须是 best-of 第一段胜者，默认 exit_best.pt 仅为占位")
+    args, _unknown = ap.parse_known_args()
+    A = args.model
+
     import dushan_engine as de
     from zhuoji.encoder import GLOBAL_DIM, NUM_CHANNELS
 
@@ -49,6 +59,9 @@ def main() -> int:
     print("=" * 72)
     print("终评编码兼容性预检（只读）")
     print("=" * 72)
+    if A == DEFAULT_A:
+        print("  [!] A 侧用默认 exit_best.pt 占位：正式执行前必须替换为 best-of 胜者")
+        print("      （tools/bestof_rank.py --md 的 #1；并列取轮次最晚者）")
     print(f"  Rust 搜索内核 take_batch : {kern_ch} 通道 / glob {GLOBAL_DIM}（v1 固定）")
     print(f"  A 侧 {A:<28} enc{a_ver} / in_channels={a_ch}")
     print(f"  B 侧 {B:<28} enc{b_ver} / in_channels={b_ch}")

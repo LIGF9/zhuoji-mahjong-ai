@@ -6,6 +6,8 @@
   2. 训练驱动心跳 runs/night_run.lock 超过 120s 未更新 → 拉起 night_run.py
      （驱动自带 driver_alive() 防重复：已有活驱动时第二个实例立即退出，
       所以这里重试是安全的）。
+     **例外（§6.43 提前终评）**：runs/early_stop 存在时不再拉起驱动，
+     但 Web 守护照常继续 —— 用户在线打牌不受影响。
 
 背景：Web/训练进程曾随会话边界被回收（nohup 也保不住），launchd 在本机
 不可用（bootstrap EIO）、crontab 被 TCC 拒绝 → 用受管长驻脚本 + 每小时
@@ -30,6 +32,7 @@ LOCK = ROOT / "runs/night_run.lock"
 PIDFILE = ROOT / "runs/keepalive.pid"
 LOG = ROOT / "runs/night_logs/keepalive.log"
 DEADLINE = dt.datetime(2026, 11, 13, 2, 30, 0)
+EARLY_STOP = ROOT / "runs" / "early_stop"   # §6.43：存在即停止拉起训练驱动
 
 
 def already_running() -> bool:
@@ -111,8 +114,12 @@ def main() -> int:
             WEB_OK = False
             time.sleep(3)
 
-        # 训练驱动（截止时间后不再拉起；驱动正常跑完自动退出）
-        if dt.datetime.now() < DEADLINE:
+        # 训练驱动（早停标记或截止时间后不再拉起；驱动正常跑完自动退出）
+        if EARLY_STOP.exists():
+            if DRV_OK:
+                log("检测到 runs/early_stop（§6.43 提前终评）→ 不再拉起训练驱动，Web 守护继续")
+                DRV_OK = False
+        elif dt.datetime.now() < DEADLINE:
             if driver_alive():
                 if not DRV_OK:
                     log("训练驱动恢复")
