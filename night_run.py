@@ -40,7 +40,7 @@ MASTER_PT = "models/dushan_master.pt"
 LOG = ROOT / "reports/exit_log.md"
 NIGHT_LOG_DIR = ROOT / "runs/night_logs"
 LOCK = ROOT / "runs/night_run.lock"
-MAX_ROUND = 60                                    # 7 天约 55~60 轮，留余量
+MAX_ROUND = 400                                   # 加速模式 13min/轮，需大幅放宽轮数上限
 
 # ---- PPO-lite 分支（docs/14天训练计划.md §6.24）----
 # 依据：8 轮 DAgger 后闸门 A 环比 4 轮为 0、闸门 C≈0、best-val 连续 5 轮落在 ep1
@@ -52,6 +52,24 @@ PPO_FROM = 10                                     # 首个 PPO 轮次（R10）
 PPO_EVERY = 1                                     # 每 N 轮跑一次（1 = 每轮）
 PPO_HANDS = 960                                   # ≈6 万决策，与 max-states 匹配
 PPO_DISABLE = ROOT / "runs/ppo_disabled"          # 存在即停用（远程急停开关）
+
+# ---- PPO 加速模式（docs/14天训练计划.md §6.33，**默认关闭**）----
+# 触发依据：R04~R11 闸门 A 环比 8 轮全为 0（lag-1 自相关 −0.504 = 纯 iid 噪声，
+# 见 tools/plateau_test.py），继续同配方 DAgger 的期望增益 ≈0；PPO 是唯一
+# 「DAgger 拿不到的信息源」（终局胜负），且时间效率高一个量级。
+# 语义：从 RAPID_FROM 起，每 RAPID_DAAGGER_EVERY 轮里只有最后 1 轮跑完整 DAgger
+# （标注+训练+闸门 A/C/D），其余轮**只跑 PPO**（≈13min/轮，含闸门 D/A 监控）。
+# 护栏（2026-11-07 16:28 P12 判读后、加速轮数据产生前预登记，禁止事后改）：
+#   ① PPO 失败/被停用 ⇒ 该轮自动回落 DAgger；
+#   ② 晋升口径一字不改（仍须闸门 D + 闸门 A 同时通过）；
+#   ③ tools/rapid_guard.py 只读检查加速模式前 3 轮闸门 D，若持续为负且无收敛
+#      迹象则写 runs/rapid_abort ⇒ 从下一轮起 is_rapid 恒 False（提前回退，
+#      不必等 12 轮 DAgger 重锚点）。阈值在看到任何加速轮数据之前锁定。
+RAPID_FROM = 13              # P12 预登记 H0 → 开加速模式（判读 16:28:34，见 runs/gates/P12_decision_*.txt）
+RAPID_DAAGGER_EVERY = 12     # 加速模式下每 12 轮插 1 个完整 DAgger 轮（重锚+刷新交付物）
+RAPID_HANDS = 1920           # 加速轮局数（×2：CPU 空出来了，批次更大梯度更稳）
+RAPID_MAX_STATES = 120000    # 与 RAPID_HANDS 匹配（≈62 决策/局）
+RAPID_ABORT = ROOT / "runs/rapid_abort"   # 存在即永久回落 DAgger（由 tools/rapid_guard.py 写）
 
 
 def log(msg: str) -> None:
@@ -200,9 +218,27 @@ def snapshot_prev_best(r: int):
         return None
 
 
+def is_rapid(r: int) -> bool:
+    """该轮是否为「PPO 加速轮」（不标注、不训练，只跑 PPO + 闸门）。
+
+    RAPID_FROM 起的每 RAPID_DAAGGER_EVERY 轮里，最后 1 轮留作完整 DAgger 轮，
+    其余为加速轮。RAPID_FROM=None 或 runs/rapid_abort 存在 ⇒ 恒 False。
+    """
+    if RAPID_FROM is None or r < RAPID_FROM or RAPID_ABORT.exists():
+        return False
+    return (r - RAPID_FROM) % RAPID_DAAGGER_EVERY != RAPID_DAAGGER_EVERY - 1
+
+
+def rapid_done(r: int) -> bool:
+    marker = ROOT / f"runs/gates/r{r:02d}.rapid"
+    return marker.exists() and (ROOT / f"models/exit_p{r:02d}.pt").exists()
+
+
 def first_incomplete_round() -> int:
-    """R1 已完成；找第一个「标注/训练/闸门 A/C 未全齐」的轮次。"""
+    """R1 已完成；找第一个「标注/训练/闸门 A/C 未全齐」的轮次（已完成的加速轮跳过）。"""
     for r in range(2, MAX_ROUND + 1):
+        if rapid_done(r):
+            continue
         if not (data_ready(r) and trained(r) and gate_a_done(r) and gate_c_done(r)):
             return r
     return MAX_ROUND + 1
@@ -340,8 +376,11 @@ def ppo_init(r: int) -> Path:
     return latest_pt()
 
 
-def ppo_round(r: int) -> None:
+def ppo_round(r: int) -> bool:
     """PPO-lite 候选轮（§6.24）：纯策略自对弈 + 终端分差奖励 → exit_p{r:02d}.pt。
+
+    返回 True 表示本轮确实产出了 ckpt（供加速轮判定）；
+    False = 未启用 / 已停用 / 训练失败（调用方据此回落到 DAgger 路径）。
 
     晋升判据 = 闸门 D（vs 现最佳）p<0.05 且均值>0 **同时** 闸门 A（vs master）通过。
     300 seed 的池分辨率约 0.5 分/SE，因此单轮 PPO 增量多半达不到显著 —— 那就不晋升，
@@ -349,23 +388,25 @@ def ppo_round(r: int) -> None:
     异常绝不外泄：主线 DAgger 不受影响。
     """
     if PPO_DISABLE.exists():
-        return
+        return False
     if r < PPO_FROM or (r - PPO_FROM) % PPO_EVERY:
-        return
+        return False
     out = ROOT / f"models/exit_p{r:02d}.pt"
     if out.exists():
         log(f"P{r:02d} PPO 已完成（ckpt 在），跳过")
-        return
+        return True
     init = ppo_init(r)
-    log(f"P{r:02d} PPO 链起点 = {init.name}")
+    hands, max_states = (RAPID_HANDS, RAPID_MAX_STATES) if is_rapid(r) \
+        else (PPO_HANDS, 60000)
+    log(f"P{r:02d} PPO 链起点 = {init.name}  hands={hands} max_states={max_states}")
     cmd = [PY, "train_ppo.py", "--init", str(init), "--out", str(out),
-           "--hands", str(PPO_HANDS), "--workers", "4", "--threads", "2",
-           "--max-states", "60000", "--epochs", "2", "--lr", "5e-5",
+           "--hands", str(hands), "--workers", "4", "--threads", "2",
+           "--max-states", str(max_states), "--epochs", "2", "--lr", "5e-5",
            "--seed0", str(900_000 + r * 10_000)]
     rc, text = run(cmd, f"ppo_p{r:02d}", timeout_s=5400)
     if rc != 0 or not out.exists():
         log(f"P{r:02d} PPO 训练失败 rc={rc}（主线不受影响）")
-        return
+        return False
     mt = [ln for ln in text.splitlines() if ln.startswith("[metrics]")]
     log(f"P{r:02d} PPO 完成 init={init.name} → {out.name} "
         f"{mt[-1][len('[metrics] '):] if mt else ''}")
@@ -395,6 +436,7 @@ def ppo_round(r: int) -> None:
         promote_ckpt(out, f"p{r:02d}")
     elif not d_pass:
         log(f"P{r:02d} 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of")
+    return True
 
 
 def main() -> int:
@@ -412,6 +454,18 @@ def main() -> int:
     consecutive_fail = 0
     for r in range(start, MAX_ROUND + 1):
         try:
+            # 加速轮（§6.33）：只跑 PPO + 闸门 D/A，≈13min；失败/停用则回落到 DAgger
+            if is_rapid(r) and can_start(45):
+                try:
+                    if ppo_round(r):
+                        (ROOT / f"runs/gates/r{r:02d}.rapid").write_text(
+                            "ok\n", encoding="utf-8")
+                        log(f"R{r} 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）")
+                        consecutive_fail = 0
+                        continue
+                    log(f"R{r} 加速轮 PPO 无产出 → 回落到 DAgger 路径")
+                except Exception as e:       # noqa: BLE001 —— 加速轮失败不拖累主线
+                    log(f"R{r} 加速轮异常（回落 DAgger）：{type(e).__name__}: {e}")
             if not can_start(130):
                 break
             annotate_round(r)

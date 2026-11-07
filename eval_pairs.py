@@ -58,8 +58,8 @@ def _load_net(model_path):
     return net
 
 
-def get_agent(model_path, mode, seat, seat_seed, dev):
-    key = (str(model_path), mode, seat)
+def get_agent(model_path, mode, seat, seat_seed, dev, n_det=32):
+    key = (str(model_path), mode, seat, n_det)
     ag = _AG_CACHE.get(key)
     if ag is None:
         net = _load_net(model_path)
@@ -69,7 +69,7 @@ def get_agent(model_path, mode, seat, seat_seed, dev):
         else:
             from zhuoji.rust_search import RustSearchAgent
             ag = RustSearchAgent(net, seed=seat_seed, device=dev, name="s32",
-                                 ply=3, n_det=32, topk=3, ff_cap=24, fair=True)
+                                 ply=3, n_det=n_det, topk=3, ff_cap=24, fair=True)
         _AG_CACHE[key] = ag
     # 复用：重置 RNG 流（NetAgent 用 .rng；RustSearchAgent 用 .seed/._call）
     if hasattr(ag, "rng"):
@@ -81,12 +81,18 @@ def get_agent(model_path, mode, seat, seat_seed, dev):
     return ag
 
 
-def play_deal(a_path, b_path, a_mode, b_mode, seed, cand_seat, dev):
-    """一局：cand_seat 坐 A，其余三家坐 B。返回 record dict。"""
+def play_deal(a_path, b_path, a_mode, b_mode, seed, cand_seat, dev,
+              a_nd=32, b_nd=32):
+    """一局：cand_seat 坐 A，其余三家坐 B。返回 record dict。
+
+    a_nd/b_nd：两侧各自的确定性展开数（默认 32 = 历史口径逐位不变）。
+    只在教师天花板 N64 诊断时使用 A=64 / B=32 做同池配对。
+    """
     agents = []
     for s in range(4):
-        p, m = (a_path, a_mode) if s == cand_seat else (b_path, b_mode)
-        agents.append(get_agent(p, m, s, seed * 131 + s, dev))
+        p, m, nd = ((a_path, a_mode, a_nd) if s == cand_seat
+                    else (b_path, b_mode, b_nd))
+        agents.append(get_agent(p, m, s, seed * 131 + s, dev, nd))
     g = DushanGame(DushanConfig(), seed=seed)
     steps = 0
     t0 = time.perf_counter()
@@ -110,13 +116,15 @@ def play_deal(a_path, b_path, a_mode, b_mode, seed, cand_seat, dev):
     }
 
 
-def worker(wid, a_path, b_path, a_mode, b_mode, seeds, seats, dev, out_path):
+def worker(wid, a_path, b_path, a_mode, b_mode, seeds, seats, dev, out_path,
+           a_nd=32, b_nd=32):
     import torch
     torch.set_num_threads(2)
     lines = []
     for k, seed in enumerate(seeds):
         for cand_seat in seats:
-            rec = play_deal(a_path, b_path, a_mode, b_mode, seed, cand_seat, dev)
+            rec = play_deal(a_path, b_path, a_mode, b_mode, seed, cand_seat, dev,
+                            a_nd, b_nd)
             lines.append(json.dumps(rec, ensure_ascii=False))
         if (k + 1) % 10 == 0:
             print(f"[w{wid}] {k+1}/{len(seeds)}", flush=True)
@@ -178,6 +186,10 @@ def main():
     ap.add_argument("--seeds", type=int, default=300)
     ap.add_argument("--seed0", type=int, default=710_000)
     ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--n-det", type=int, default=32,
+                    help="搜索模式的确定性展开数（默认 32 = 历史口径；64 用于教师天花板诊断）")
+    ap.add_argument("--a-n-det", type=int, default=0, help="候选侧覆盖（0=跟随 --n-det）")
+    ap.add_argument("--b-n-det", type=int, default=0, help="基线侧覆盖（0=跟随 --n-det）")
     ap.add_argument("--device", default="mps")
     ap.add_argument("--out", default=str(ROOT / "runs/gate.jsonl"))
     args = ap.parse_args()
@@ -200,7 +212,7 @@ def main():
             break
         p = mp.Process(target=worker, args=(
             i, args.a, args.b, a_mode, b_mode, seeds, seats, args.device,
-            str(out)))
+            str(out), args.a_n_det or args.n_det, args.b_n_det or args.n_det))
         p.start()
         ps.append(p)
     for p in ps:

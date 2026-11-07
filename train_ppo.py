@@ -238,13 +238,13 @@ def ppo_update(net, st: dict, A: np.ndarray, RT: np.ndarray, device: str, *,
             loss = pg + 0.5 * vl - ent_coef * ent
             opt.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 0.5)
+            gnorm = float(torch.nn.utils.clip_grad_norm_(net.parameters(), 0.5))
             opt.step()
             with torch.no_grad():
                 kl_acc += float((lp_old - lp_new).mean())
                 nb += 1
             hist.append({"loss": float(loss), "pg": float(pg), "vl": float(vl),
-                         "ratio": float(ratio.mean()),
+                         "ratio": float(ratio.mean()), "gnorm": gnorm,
                          "clipfrac": float(((ratio - 1).abs() > clip).float().mean()),
                          "ent": float(ent)})
         kl = kl_acc / max(nb, 1)
@@ -369,6 +369,11 @@ def main() -> int:
                                      "A_std": float(A.std()),
                                      "ret_std": float(rets.std()),
                                      "kl": s.get("kl_epoch"),
+                                     "vl": s.get("vl"), "ent": s.get("ent"),
+                                     "gnorm": s.get("gnorm"),
+                                     "clipfrac": s.get("clipfrac"),
+                                     "ent_rollout": float(np.median(ent_med)),
+                                     "kl_stop": bool(s.get("kl_stop")),
                                      "secs": round(time.perf_counter() - t_all, 1)}),
           flush=True)
     return 0 if ok else 1

@@ -1818,3 +1818,407 @@ a scoped thread panicked
 [2026-11-07 11:03:00] 【时间线】R11 落盘 ≈11:59 → 训练 ≈12:41 → A ≈12:42 → C ≈13:03 → D ≈13:05
                         → P11 ≈13:11 → R12。**下一硬决策点 ≈13:2x**。
 [2026-11-07 11:03:00] ============================================================
+[2026-11-07 11:56:44]   rc=0  7932s  annotate_r11
+[2026-11-07 11:56:45] R11 标注完成 student=exit_best.onnx seed0=710000 → 4×25k
+[2026-11-07 11:56:45] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz runs/exit_r03/exit_w*.npz runs/exit_r04/exit_w*.npz runs/exit_r05/exit_w*.npz runs/exit_r06/exit_w*.npz runs/exit_r07/exit_w*.npz runs/exit_r08/exit_w*.npz runs/exit_r09/exit_w*.npz runs/exit_r10/exit_w*.npz runs/exit_r11/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r11.pt --epochs 30 --window 400000 --batch 256 --seed 20261117 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt  → train_r11.log
+
+[2026-11-07 12:22:00] ============================================================
+[2026-11-07 12:22:00] 【自检 #27】健康、产出符合预期、主线零干预。驱动唯一 PID 23674（PPID=99107
+                        keepalive，5h58m），lock 5.9s，子进程只有 train_exit PID 52339；
+                        阶段 = R11 训练（11:56:45 起、400k 封顶、init=exit_best.pt、
+                        sha 校验 init≡exit_r10.pt b013ed75、seed 20261117）。
+                        ep01 train 1.7672 / val 1.7613 / 510s，ep02 进行中，预计 12:38 结束。
+[2026-11-07 12:22:00] 【R11 标注】11:56:44 rc=0（7932s≈2h12m、11.3k/h·worker），4×25,000=100,000 行，
+                        check_npz 4/4 全合规（tiles(63,27)/glob(130)/q,mask(28)，
+                        NaN↔mask overlap=0 gap=0），r01~r11 累计 **44/44**。
+                        无新闸门（最新仍 R10 09:12）⇒ 本轮属训练窗口巡检。
+[2026-11-07 12:22:00] 【复核】gate_decision / ppo_report / bestof_rank 三工具与 #26 逐位一致：
+                        A 十轮 +0.179→+3.864 全 p≈0.0000；C 十轮 −2.480…+2.227；
+                        R10−R09 A +0.129±0.535 p≈0.8098；P10 A +3.796±0.414、
+                        P10 D −0.097±0.367 p≈0.7924、P10−R10 −0.069±0.419 p≈0.8694；
+                        bestof 第一段 R10/P10/R09/R08/R06 两两 <1SE。
+                        exit_best.pt≡exit_r10.pt（b013ed75）、r10.promoted=ok、r11 未晋升（正常）。
+                        运行态：Web 8770 `/`+`/api/meta` 双 200（models=web_best R8 快照）；
+                        看门狗 99107 活（最近两次拉起 05:59/06:22 均成功）；磁盘 307Gi；
+                        TAU=1.0；06:22 起异常行 0、今日 rc=0 阶段行 29 条。
+[2026-11-07 12:22:00] 【本轮最有价值 · 新增 tools/plateau_test.py】把「最近几轮闸门 A 环比不显著」
+                        升级为**有零假设理论值可比对的漂移检验**，并顺带实测出跨轮 pool 的真实 SE。
+                        模型：若各轮真值相同、只差一份 iid 扰动 δ，则
+                        D_k = M[k+1]−M[k] = δ_{k+1}−δ_k ⇒ Var(D)=2σ²，
+                        **lag-1 相关 = −0.50**；若存在系统性漂移 μ，lag-1 被推向 0 甚至为正。
+                        实测（r01~r10，300 seed 共同池、逐 seed 配对）8 对相邻差分 lag-1：
+                        −0.484 / −0.478 / −0.480 / −0.469 / −0.541 / −0.547 / −0.543 / −0.522，
+                        均值 **−0.508**；非相邻 28 对均值 **+0.004**（≈0，各段独立）。
+                        ⇒ 轮间波动与「固定中心 + iid 扰动」**不可区分** ⇒ R04~R10 无系统性漂移。
+[2026-11-07 12:22:00] 【该检验的意义 · 第 6 条独立证据】前 5 条证据（5 个零边际轮 / 6 轮 best-val@ep01 /
+                        R9、R10 ep01 train loss 四位小数相同 / 教师 top1−top2 间隔中位 0.144 分 /
+                        学生 argmax 与标签 52.5% 但闸门 C≈0）都是「**不显著**」类的阴性结论；
+                        本条第一次给出**可对的阳性理论值**（−0.50），实测 −0.508 ⇒ 平台期由
+                        「未能拒绝无差异」升级为「与无漂移模型定量吻合」。
+                        边界声明：该检验灵敏度受噪声限制（每 seed 单轮 sd≈7.16 分），
+                        只能排除「每轮 ≥0.5 分」量级的漂移，不能排除 0.1 分级微增益；
+                        但 0.1 分本就低于终评交付分辨率，不影响任何决策。
+[2026-11-07 12:22:00] 【pool SE 实测校准 · 影响 P12 判读功效】相邻段共用中间轮扰动 ⇒ 噪声部分相消，
+                        cluster-robust SE（按 seed 聚簇）**小于** naive iid SE：
+                          3 段 pool：mean +0.170、naive SE 0.319（n=900）、cluster SE **0.186**、膨胀 ×0.59
+                          2 段 pool：naive SE 0.391（n=600）、cluster SE **0.271**、膨胀 ×0.69
+                        ⇒ P12 预登记的「累积 n≈900 ⇒ SE≈0.29」是**保守**估计，实际 0.19，
+                        可分辨下限（2σ）±0.37 分。**判读窗口维持预登记的 3 段不变（不做事后放宽）**，
+                        但已知其功效高于预期：真增益 ≥0.4 分/轮 即可在 P12 被检出，P13 降为确认。
+[2026-11-07 12:22:00] 【决策】五项全无变更：①增速三选一不触发（A 第 9 轮后仍 p≈0.0000，
+                        weak=False/False ⇒ TAU / Q-MSE / n_det / lr 一项不改）
+                        ②天花板不确认亦不撤销 A 侧结论（两分支处置一致，不改超参）
+                        ③P2a 维持观察态 ④PPO 维持 960 局 / lr 5e-5 / 闸门 D 不放宽，
+                        P12 前不动预算 ⑤**下一步训练无需启动**——R11 训练已由驱动 11:56:45 自动接续，
+                        随后 12:38→闸门 A→C→D→P11→R12 全自动；零干预、不启第二驱动、
+                        不打断、不并发评估。
+[2026-11-07 12:22:00] 【新增预登记 · 尾部预算再分配备选（§6.31.4）】不现在执行，只在 P12 按数据决定：
+                        若 P10~P12 pool 判 PPO 无净收益（|Σ|<0.37 或 Σ≤0），则剩余 ≈115h 的
+                        40 轮同配方 DAgger 期望增益为 0，而 PPO-only 轮 ≈8~9min/轮（rollout 333s +
+                        双闸门 120s + 导出）⇒ 可容纳 ≈700 轮 ≈67 万局自对弈（现模式仅 3.8 万局）。
+                        触发条件、护栏（每 10 轮从 exit_best 重锚、闸门 A/D 不放宽、
+                        web_best 只走终评 best-of）与回退路径见计划 §6.31.4。
+[2026-11-07 12:22:00] 【时间线】R11 训练 ≈12:38 结束 → A ≈12:39 → C ≈13:01 → D ≈13:03
+                        → P11 ≈13:09 → R12 ≈13:12。**下一硬决策点 ≈13:2x**
+                        （首次捕获 R11 完整 A+C+D + P11）。
+[2026-11-07 12:22:00] ============================================================
+[2026-11-07 12:39:19]   rc=0  2555s  train_r11
+[2026-11-07 12:39:19] R11 训练完成 init=exit_best.pt → exit_r11.pt  (['[done] best val 1.7596 → /Users/ligf9/zhuoji-mahjong-ai/models/exit_r11.pt'])
+[2026-11-07 12:39:19] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r11.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r11_gateA.jsonl  → gateA_r11.log
+[2026-11-07 12:40:12]   rc=0  53s  gateA_r11
+[2026-11-07 12:40:12] R11 闸门 A: [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.199±0.424  z=+9.90  p≈0.0000  符号 212:88  → 通过
+[2026-11-07 12:40:12] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 12:40:13]   rc=0  1s  export_exit_best
+[2026-11-07 12:40:13] 晋升：exit_r11.pt → exit_best.pt
+[2026-11-07 12:40:13] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r11.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --a-mode greedy --b-mode search32 --seeds 50 --seed0 720000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r11_gateC.jsonl  → gateC_r11.log
+[2026-11-07 13:01:51]   rc=0  1297s  gateC_r11
+[2026-11-07 13:01:51] R11 闸门 C(趋势): [summary] seats=[0, 1, 2, 3]  n=50  diff=-0.880±0.831  z=-1.06  p≈0.2897  符号 24:26
+[2026-11-07 13:01:51] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r11.pt --b /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r11_prevbest.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r11_gateD.jsonl  → gateD_r11.log
+[2026-11-07 13:03:56]   rc=0  125s  gateD_r11
+[2026-11-07 13:03:56] R11 闸门 D(vs 上轮最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.430±0.378  z=+1.14  p≈0.2549  符号 149:148
+[2026-11-07 13:03:56] P11 PPO 链起点 = exit_p10.pt
+[2026-11-07 13:03:56] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p10.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p11.pt --hands 960 --workers 4 --threads 2 --max-states 60000 --epochs 2 --lr 5e-5 --seed0 1010000  → ppo_p11.log
+[2026-11-07 13:09:14]   rc=0  318s  ppo_p11
+[2026-11-07 13:09:14] P11 PPO 完成 init=exit_p10.pt → exit_p11.pt {"hands": 960, "states": 57696, "A_std": 8.279669761657715, "ret_std": 12.586057927987884, "kl": [0.00788864276688175, 0.010773299556056581], "secs": 317.5}
+[2026-11-07 13:09:14] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p11.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p11_gateD.jsonl  → gateD_p11.log
+[2026-11-07 13:11:21]   rc=0  127s  gateD_p11
+[2026-11-07 13:11:21] P11 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=-0.378±0.347  z=-1.09  p≈0.2769  符号 141:156  → 不通过
+[2026-11-07 13:11:21] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p11.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p11_gateA.jsonl  → gateA_p11.log
+[2026-11-07 13:12:18]   rc=0  57s  gateA_p11
+[2026-11-07 13:12:18] P11 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.269±0.393  z=+10.86  p≈0.0000  符号 230:67
+[2026-11-07 13:12:18] P11 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-07 13:12:18] R11 轮次完成  best=exit_best.pt
+[2026-11-07 13:12:18] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 13:12:19]   rc=0  1s  export_exit_best
+[2026-11-07 13:12:19] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r12 --seed0 720000  → annotate_r12.log
+[2026-11-07 13:16:00] 【自检 #28 · R11 完整结算（A+C+D）+ P11 双闸门 · 硬决策点】
+                        结论：健康、产出符合预期、主线零干预。驱动唯一 PID 23674
+                        （PPID=99107 keepalive，06:22:33 起已 6h50m），lock 17.7s；
+                        子进程唯一 annotate_r12；02:33:57 切片无 panic/NaN/超时；
+                        磁盘 307Gi；TAU=1.0；Web 8770 `/`+`/api/meta` 双 200；
+                        看门狗 99107 活；44/44 npz 合规。
+[2026-11-07 13:16:00] 【R11 全流程（整轮 3h16m）】标注 11:56:44 rc=0（7932s、11.3k/h·worker、
+                        4×25k）→ 训练 12:39:19 rc=0（2555s、400k 封顶、init=exit_best、
+                        seed 20261117，train 1.7672→1.7425、**best val 1.7596@ep02**、
+                        ep05 早停）→ **闸门 A +4.199±0.424 p≈0.0000（212:87）第 10 轮通过
+                        → 12:40:13 晋升 exit_r11（md5 4251dd26…）**、r11.promoted=ok、
+                        onnx 12:40 同步（三件套一致）→ 闸门 C −0.880±0.831 p≈0.2897
+                        → 闸门 D +0.430±0.378 p≈0.2549（ns）→ P11 → 13:12:19 自动接续 R12。
+[2026-11-07 13:16:00] 【本轮最重要 · R10 闸门 C 的「首次名义显著」被反向同量级完全回吐】
+                        R10 C = +2.227±1.009 p=0.0273；R11 C = −0.880±0.831；
+                        **环比 C R11−R10 = −3.107±1.255 p≈0.0133**（反向且同量级，同池同 seed）。
+                        这不是"退步"，是**教科书式的回归均值**：R10 那个点是 10 次里挑出的最大值。
+                        ⇒ #25 当时判「族系不显著（仿真 P(max|z|≥2.213,10)=0.239）、
+                        拒绝宣布 §4 达成、拒绝把该点写入交付结论」的纪律**已被数据完整验证**。
+                        若当时据 +2.227 宣布"搜索已蒸进网络"，今天必须公开撤稿。
+                        固化：**闸门 C 的任何单轮值永久不得单独作证据**（含本轮 −0.880）；
+                        C 的族系显著性只能由终评独立池 500 seed 一次性检验。
+[2026-11-07 13:16:00] 【第二次最有价值 · 闸门 D 与 P−R 两个估计量的口径差首次被量化】
+                        P11 两个数看着矛盾，实为**不同 estimand**，均已独立复算（300 seed 全交集）：
+                          · p11_gateD  head-to-head：p11 坐庄 vs r11×3，−0.378±0.347
+                          · P11−R11    vs-master 差分：+0.070±0.541
+                        差的 0.448 ≈ 0.64(合并 SE) 的 0.7σ，属噪声内，**不是 bug**
+                        （我逐 seed 用 `deltas[cand]−mean(其余三家)` 四座平均重算，两数逐位复现）。
+                        根因：gateD 是同一副牌里两模型互相对打；P−R 是两场"各自 vs master×3"
+                        的游戏相减 ⇒ 对手语境不同，估计量本来就不同。
+                        **新判读纪律（收紧方向，预登记于 P12）**：P12 起两个估计量并报，
+                        若符号相反且均不显著 ⇒ 直接判「PPO 无净收益」，不因 P−R 为正面放行。
+                        理由：P−R 在"双方都远超 master"时会向 0 压缩（天花板效应），
+                        head-to-head 才是"谁更强"的直问；两者打架时取保守。
+[2026-11-07 13:16:00] 【P11 结果】960 局 / 57,696 状态 / 317.5s；kl [0.0079, 0.0108]
+                        （较 P10 的 [0.0113, 0.0133] **下降 30%**，更新更保守，健康）、
+                        A_std 8.28、ret_std 12.59。**闸门 A +4.269±0.393（231:68）=
+                        历史最高绝对强度**，但闸门 D −0.378 → 不晋升（预期内，非失败）。
+                        PPO 两轮累积：P10−R10 −0.069、P11−R11 +0.070 ⇒ **Σ≈+0.001，完全抵消**。
+                        这不是"PPO 学会了"，是两轮各 ±0.07 的噪声；按预登记 P12 才够 n≈900。
+[2026-11-07 13:16:00] 【平台期第 7 条证据】plateau_test 扩到 9 对：lag-1 = −0.484/−0.478/
+                        −0.480/−0.469/−0.541/−0.547/−0.543/−0.522/−0.469，**均值 −0.504**
+                        （理论值 −0.50），非相邻 28→36 对均值 +0.002。3 段 pool
+                        mean +0.168、cluster SE 0.174、2σ=±0.348 分。
+                        ⇒ R04~R11 与「固定中心 + iid 扰动」**继续不可区分**；第 7 个零边际轮
+                        （A R11−R10 +0.334±0.522 p=0.5219）。best-of 第一段：R11 居首但与
+                        R10/R09/R08/P10/R06 **全部并列(<1SE)** ⇒ 交付维度仍未拉开。
+[2026-11-07 13:16:00] 【决策五项】①增速三选一**不触发**（A 最近两轮弱=False/False，
+                        p≈0.0000 ⇒ TAU/Q-MSE/n_det/lr 一项不改）
+                        ②天花板按工具规则**不确认**（C 平台=False，因 R10 的 +2.227 仍在带外），
+                        但本轮 −3.107 p=.0133 已**证伪 R10 那个点**，实质支持"平台"；
+                        按预登记不因单轮改判，顺延 R12 复核，**仍不改超参**
+                        ③P2a 维持观察态（C 正增量 1/2，R11 回落）
+                        ④PPO 维持 960 局/lr 5e-5/闸门 D 不放宽，**P12 前不动预算**
+                        ⑤**下一步训练无需启动** —— R12 已由驱动 13:12:19 自动接续
+                        （seed0=720000，起步 10.7k/h·worker）。零干预、不启第二驱动。
+[2026-11-07 13:16:00] 【事实纠正 · 低影响】`models/web_best.pt` 实为 **exit_r07** 快照
+                        （md5 1418f1fb ≡ exit_r07.pt），**不是此前记忆所写的 R08**
+                        （R08 是 11846758）。线上跑的是 R07 权重（A +3.353），
+                        较现最佳 R11 差 +0.846±0.533 p=0.1127（不显著）。
+                        ⇒ 玩家体验无可测损失，**维持"终评 best-of 后一次性蓝绿刷新"不改**
+                        （线上有真人，无统计可证收益就不动）。终评报告须按 R07 标注。
+[2026-11-07 13:16:00] 【时间线/预算】R12 标注 13:12:19 起（10.7k/h）⇒ 落盘 ≈15:25
+                        → 训练 ≈16:07 → A 16:08 → C 16:30 → D 16:32 → P12 16:38 → R13。
+                        **P12 硬判读点 ≈16:4x**（自检 ≈72min 间隔：14:2x/15:3x/16:4x）。
+                        剩余 133.2h ÷ 202min ⇒ **≈39 轮（R12~R50）**，DEADLINE 唯一硬约束。
+                        终评另留 4.5h（含 §10.3 末轮补闸门），终评起始不晚于 11-12 22:00。
+[2026-11-07 13:16:00] ============================================================
+[2026-11-07 14:34:00] 【自检 #29 · 7×24 第 29 次 · R12 标注期巡检 + PPO 加速模式工程化（默认关闭）】
+                        结论：**健康、产出符合预期、主线零干预**。驱动唯一 PID 23674
+                        （PPID=99107 keepalive，06:22 起 8h09m），lock 0.5~29s；
+                        R12 标注 62%（15.4~15.6k/25k·worker），11.7k/h·worker，
+                        ETA ≈15:24（上限 16:42）；42 阶段 rc=0、panic/NaN 0；
+                        44/44 npz；TAU=1.0；磁盘 307Gi；Web 双 200（models=web_best=r07）；
+                        看门狗 99107 活。未启第二驱动/未打断/未并发评估。
+[2026-11-07 14:34:00] 【本轮新测量 · PPO 链内配对（低噪声估计量）】同池 300 seed 逐 seed 配对：
+                        P11−P10 = **+0.473±0.363 p=0.1923**（单轮 PPO 链内推进）
+                        R11−R10 = +0.334±0.522 p=0.5219（单轮 DAgger 推进）
+                        P11−R11 = +0.070±0.541 p=0.8971（PPO 链 vs DAgger 链）
+                        **SE 结构本身是信息**：PPO 两代只差 960 局、高度相关 ⇒ 配对 SE 0.363
+                        低于 DAgger 两代的 0.522。这是独立于 P−R 的「PPO 有没有在推进」估计量。
+                        诚实限定：+0.473 仅 1.30σ，与 0 不可区分；8min vs 202min 的 25× 时间比
+                        **没有推断意义**（两个噪声估计量之比），只能作「预算向 PPO 倾斜是
+                        零风险探索」的理由，不得写成强度结论。
+[2026-11-07 14:34:00] 【本轮落地 · PPO 加速模式（night_run.py，默认 RAPID_FROM=None）】
+                        动机：DAgger 闸门 A 环比连续 8 轮为 0、lag-1 自相关 −0.504（纯 iid 噪声）
+                        ⇒ 剩余 125h 同配方 DAgger 期望增益≈0，PPO 是唯一非零方差项。
+                        设计：从 RAPID_FROM 起，每 12 轮里 11 轮只跑 PPO（≈13min，含闸门 D/A），
+                        第 12 轮跑完整 DAgger（重锚+刷新交付物+维持 A/C 序列）。
+                        安全：PPO 停用/失败 ⇒ ppo_round 返回 False ⇒ 该轮自动回落 DAgger；
+                        加速轮写 rNN.rapid 标记，first_incomplete_round 跳过 ⇒ 断点续跑安全；
+                        晋升口径一字不改（闸门 D + 闸门 A 双通过）。
+                        验证：py_compile ✓；模块级单测（默认态 is_rapid 全 False、
+                        first_incomplete_round=12 与改动前一致；RAPID_FROM=13 时
+                        加速轮=R13~23/25~35/37~…、DAgger 轮=R24/R36）；train_ppo --dry 端到端 ✓。
+                        **运行中的 PID 23674 不重载源码 ⇒ 行为逐位不变，零影响。**
+[2026-11-07 14:34:00] 【预登记 · P12 决策规则（P12 数据尚未生成，先锁死）】
+                        主判据（不变）：Σ=Σ_{r=10,11,12}(P_r−R_r)，三段落 cluster SE。
+                        辅判据（新增、仅支持不得覆盖）：链内 D 池化 = mean(P11−P10, P12−P11)。
+                        H1（Σ≥+0.30 且 p<0.10 或 D池化≥+0.25）→ 开加速模式；
+                        H0（|Σ|<2σ 且 P 的 A 无退化）→ **同样开加速**（DAgger 期望 0）；
+                        H−1（Σ≤−0.30 且 p<0.10 或 P 最新 A 掉 >2σ）→ 不加速、PPO_EVERY=2。
+                        冻结：TAU/Q-MSE/n_det/lr/闸门判据一字不改；web_best 仍待终评一次性刷新。
+[2026-11-07 14:34:00] 【切换协议（不武装任何触发器，§6.26.10 教训）】在 ≈16:46 自检
+                        （R13 标注刚起 ≈5min）手工执行：先杀 annotate 再杀驱动 → 确认
+                        runs/exit_r13 无已落盘分片 → 改 RAPID_FROM=13 且 MAX_ROUND 60→400
+                        （否则 2h 内跑满 60 轮空转 5 天）→ py_compile → keepalive ≤120s 拉起
+                        → 复核新 PID/lock/「R13 加速轮」字样。禁止日志文本触发器、禁止
+                        标注中途重启、禁止同时改 PPO_HANDS 与 RAPID_HANDS。
+[2026-11-07 14:34:00] 【时间线】R12 落盘 ≈15:24 → 训练 16:06 → A 16:07 → C 16:29 → D 16:31
+                        → P12 16:38 → R13 16:41。剩余 132.5h：现状口径 ≈39 轮（R12~R50）；
+                        若 16:46 切加速模式 ≈570 轮≈110 万局 PPO。终评起始不晚于 11-12 22:00。
+[2026-11-07 14:34:00] ============================================================
+[2026-11-07 15:20:25]   rc=0  7686s  annotate_r12
+[2026-11-07 15:20:25] R12 标注完成 student=exit_best.onnx seed0=720000 → 4×25k
+[2026-11-07 15:20:25] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz runs/exit_r03/exit_w*.npz runs/exit_r04/exit_w*.npz runs/exit_r05/exit_w*.npz runs/exit_r06/exit_w*.npz runs/exit_r07/exit_w*.npz runs/exit_r08/exit_w*.npz runs/exit_r09/exit_w*.npz runs/exit_r10/exit_w*.npz runs/exit_r11/exit_w*.npz runs/exit_r12/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r12.pt --epochs 30 --window 400000 --batch 256 --seed 20261118 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt  → train_r12.log
+[2026-11-07 15:54:17]   rc=0  2032s  train_r12
+[2026-11-07 15:54:17] R12 训练完成 init=exit_best.pt → exit_r12.pt  (['[done] best val 1.7527 → /Users/ligf9/zhuoji-mahjong-ai/models/exit_r12.pt'])
+[2026-11-07 15:54:17] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r12.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r12_gateA.jsonl  → gateA_r12.log
+[2026-11-07 15:55:10]   rc=0  53s  gateA_r12
+[2026-11-07 15:55:10] R12 闸门 A: [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.100±0.408  z=+10.05  p≈0.0000  符号 218:76  → 通过
+[2026-11-07 15:55:10] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 15:55:11]   rc=0  1s  export_exit_best
+[2026-11-07 15:55:11] 晋升：exit_r12.pt → exit_best.pt
+[2026-11-07 15:55:11] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r12.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --a-mode greedy --b-mode search32 --seeds 50 --seed0 720000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r12_gateC.jsonl  → gateC_r12.log
+[2026-11-07 16:17:02]   rc=0  1311s  gateC_r12
+[2026-11-07 16:17:02] R12 闸门 C(趋势): [summary] seats=[0, 1, 2, 3]  n=50  diff=-0.340±0.765  z=-0.44  p≈0.6567  符号 20:29
+[2026-11-07 16:17:02] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r12.pt --b /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r12_prevbest.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r12_gateD.jsonl  → gateD_r12.log
+[2026-11-07 16:19:05]   rc=0  123s  gateD_r12
+[2026-11-07 16:19:05] R12 闸门 D(vs 上轮最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.401±0.398  z=+1.01  p≈0.3138  符号 154:142
+[2026-11-07 16:19:05] P12 PPO 链起点 = exit_p11.pt
+[2026-11-07 16:19:05] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p11.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p12.pt --hands 960 --workers 4 --threads 2 --max-states 60000 --epochs 2 --lr 5e-5 --seed0 1020000  → ppo_p12.log
+[2026-11-07 16:24:02]   rc=0  297s  ppo_p12
+[2026-11-07 16:24:02] P12 PPO 完成 init=exit_p11.pt → exit_p12.pt {"hands": 960, "states": 54453, "A_std": 8.732075691223145, "ret_std": 13.361636626301934, "kl": [0.006081004927105362, 0.009022425029955875], "secs": 295.7}
+[2026-11-07 16:24:02] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p12.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p12_gateD.jsonl  → gateD_p12.log
+[2026-11-07 16:26:09]   rc=0  127s  gateD_p12
+[2026-11-07 16:26:09] P12 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.596±0.407  z=+1.46  p≈0.1438  符号 158:141  → 不通过
+[2026-11-07 16:26:09] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p12.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p12_gateA.jsonl  → gateA_p12.log
+[2026-11-07 16:27:06]   rc=0  57s  gateA_p12
+[2026-11-07 16:27:06] P12 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+3.957±0.441  z=+8.97  p≈0.0000  符号 212:85
+[2026-11-07 16:27:06] P12 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-07 16:27:06] R12 轮次完成  best=exit_best.pt
+[2026-11-07 16:27:06] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 16:27:07]   rc=0  1s  export_exit_best
+[2026-11-07 16:27:07] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r13 --seed0 730000  → annotate_r13.log
+[2026-11-07 16:35:16] ============================================================
+[2026-11-07 16:35:16] 7×24 ExIt 驱动启动：R13 起，截止 2026-11-13 02:30（R1 已完成；断点续跑 + 每小时自检自动化）
+[2026-11-07 16:35:16] P13 PPO 链起点 = exit_p12.pt  hands=1920 max_states=120000
+[2026-11-07 16:35:16] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p12.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p13.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1030000  → ppo_p13.log
+[2026-11-07 16:45:04]   rc=0  588s  ppo_p13
+[2026-11-07 16:45:04] P13 PPO 完成 init=exit_p12.pt → exit_p13.pt {"hands": 1920, "states": 106698, "A_std": 8.880213737487793, "ret_std": 13.379827789125937, "kl": [0.00633978738245159, 0.008732129231053997], "vl": 1.1985846178280077, "ent": 1.4788974483522008, "gnorm": 1.421008334171286, "clipfrac": 0.08727000454525581, "ent_rollout": 1.8204447467242617, "kl_stop": false, "secs": 587.0}
+[2026-11-07 16:45:04] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p13.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p13_gateD.jsonl  → gateD_p13.log
+[2026-11-07 16:47:10]   rc=0  127s  gateD_p13
+[2026-11-07 16:47:10] P13 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.369±0.414  z=+0.89  p≈0.3728  符号 147:151  → 不通过
+[2026-11-07 16:47:10] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p13.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p13_gateA.jsonl  → gateA_p13.log
+[2026-11-07 16:48:15]   rc=0  64s  gateA_p13
+[2026-11-07 16:48:15] P13 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.218±0.403  z=+10.45  p≈0.0000  符号 218:79
+[2026-11-07 16:48:15] P13 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-07 16:48:15] R13 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-07 16:48:15] P14 PPO 链起点 = exit_p13.pt  hands=1920 max_states=120000
+[2026-11-07 16:48:15] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p13.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p14.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1040000  → ppo_p14.log
+[2026-11-07 16:47:00] 【自检 #30 · 7×24 第 30 次 · R12 结算 + P12=H0 → PPO 加速模式已生效 + 首个加速轮 R13】
+                        结论：**健康、产出符合预期、主线零干预**。驱动唯一 PID 74896
+                        （PPID=99107 keepalive，16:35:11 起），lock 16.5s；阶段 = **R14 加速轮**
+                        （PPO-only，train_ppo 76141 + 4 workers，16:48:15 起）；
+                        R13 加速轮 16:35:16→16:48:15 **13min 整**，已写 runs/gates/r13.rapid；
+                        48/48 npz 全合规；磁盘 306Gi；TAU=1.0/lr=1e-3/PPO_HANDS=960 未改；
+                        Web 8770 双 200（models=web_best=r07）；看门狗 99107 活。
+                        未启第二驱动/未打断/未并发评估（唯一的 1 核探针为只读代理探测，nice 10）。
+[2026-11-07 16:47:00] 【R12 结算 · 整轮 3h15m】标注 13:12:19→15:20:25（7686s、11.7k/h·worker、4×25k）
+                        → 训练 15:20:25→15:54:17（2032s、400k、init=exit_best、best val 1.7527、
+                        ep04 早停）→ **闸门 A +4.100±0.408（220:76）p≈0.0000 第 11 轮通过
+                        → 15:55:11 晋升 exit_r12（md5 332ba6d2 ≡ exit_best，onnx 同步）**
+                        → 闸门 C −0.340±0.765 p≈0.6567 → 闸门 D +0.401±0.398 p≈0.3138
+                        → P12 960 局/54,453 状态/kl[0.0061,0.0090]/D +0.596±0.407 p=.1438 不晋升
+                        → A +3.957±0.441。环比 A R12−R11 **−0.099±0.521 p=.8494 = 第 8 个零边际轮**。
+[2026-11-07 16:47:00] 【P12 判读（预登记 §6.33.3 口径，16:28:34 已执行）】Σ_{10..12}(P−R) =
+                        **−0.142±1.050（cluster SE）z=−0.14 p=0.8923**；各段 −0.069/+0.070/−0.143；
+                        链内 D 池化 +0.081（辅，仅支持）⇒ **H0 无差别 ⇒ 按预登记同样开加速模式**
+                        （DAgger 期望已 ≈0，PPO 是唯一非零方差项）。输出
+                        runs/gates/P12_decision_20261107_162834.txt，阈值在看数据前锁死。
+[2026-11-07 16:47:00] 【切换已生效 · 本节补记缺失文档】16:27 旧驱动按 DAgger 起 R13 标注 →
+                        16:33~16:34 kill annotate+驱动 → keepalive 16:35:15 拉起 / 16:35:48 恢复
+                        → 新驱动首轮直接走加速分支。**数据零损失**：runs/exit_r13/ 不存在（已核），
+                        48/48 npz 完好，损失=8min 标注 + 停机 76s。配置：RAPID_FROM=13、
+                        MAX_ROUND 60→400、RAPID_HANDS=1920、RAPID_DAAGGER_EVERY=12；
+                        **PPO_HANDS 保持 960 未动**（单变量）。断点续跑安全性实测：
+                        加速轮无 npz/无 exit_rNN.pt，靠 rNN.rapid + exit_pNN.pt 双条件跳过，R13 已正确跳过。
+                        **流程缺口**：该次执行会话在写 docs/日志前结束 ⇒ 本次补齐 §6.34。
+                        此后任何切换必须在同一会话内落文档。
+[2026-11-07 16:47:00] 【R13 首个加速轮实测 · 13min/轮】PPO 1920 局/106,698 状态/588s/
+                        A_std 8.88/kl[0.0063,0.0087]/clipfrac 0.0872/kl_stop=false ⇒ 四项健康判据全过；
+                        闸门 D **+0.369±0.414 p=.3728（147:151）不晋升**（单轮分辨率不足，预期内）；
+                        闸门 A **+4.218±0.403 p≈0.0000（218:79）历史第 2 高**（仅次 P11 +4.269）。
+                        成本拆解：PPO 588s + D 127s + A 64s + 开销 ≈ 13min（DAgger 整轮 202min）。
+                        经济性：12 轮周期 = 11×13min + 3h15m = **5h38m**；剩余 129h ⇒ **≈23 周期 ≈275 轮
+                        ≈2,930 万决策状态**（纯 DAgger 同时间仅 ≈38 轮 / 380 万目标）。经验量放大约 7.7×，
+                        但性质不同（无教师标签），**不得换算成「学得更多」**。
+[2026-11-07 16:47:00] 【新事实 · 榜单头两名已是 PPO 候选】best-of 第一段：
+                        P11 +4.269 > R11 +4.199 > R12 +4.100 > P12 +3.957 > R10 +3.864 > P10 +3.796 >
+                        R09 +3.736…；top1−top2 = +0.070±0.541 **<1SE ⇒ 仍全并列**（R04 及以后全并列）。
+                        P13 +4.218 vs R12 +4.100 差 +0.118±0.57 ns ⇒ **PPO 链绝对强度已与 DAgger 链持平**。
+                        平台期第 8 条证据：lag-1 10 对均值 −0.501、非相邻 +0.001；3 段 pool +0.121
+                        cluster SE 0.164 ⇒ 可分辨下限 ±0.328 分。
+[2026-11-07 16:47:00] 【教师-学生差距分解 tools/ts_gap.py（3,200 状态，in-sample 偏差已知）】
+                        agree@1 0.568 / regret 0.128 分 / top3 覆盖 0.880 / 价值 RMSE 1.335 分。
+                        分头：discard 0.509（n=2722，85%）、self_kong 0.774（53）、respond 0.920（425）；
+                        分阶段：early 0.486 / mid 0.568 / late 0.644，regret late 0.176 > early 0.090，
+                        价值 RMSE early 0.42 → late 2.04（终局波动更大，符合预期）。
+                        预登记裁决 = **③ 证据不足/混合（rare 1%、head spread 41pp）⇒ 不改配方**。
+                        可读结论：差距**不在稀有局面**，而在主决策头 discard 且全阶段均匀；
+                        regret 仅 0.14 分 ⇒ 分歧绝大多数落在近平局，与 #18「top1−top2 中位 0.144 分、
+                        63.6% 状态 <0.25 分」一致。想突破只能换信息源（PPO/更强搜索/更强网络），
+                        不是调 τ、Q-MSE、n_det。
+[2026-11-07 16:47:00] 【N64 教师代理探测 tools/n64_probe.py（32 状态，本次新跑）】
+                        同 seed/ply3/topk3/ff_cap24，只改 n_det 32→64（N64 前 32 个 determinization
+                        与 N32 完全相同 ⇒ 配对噪声最小）。**性质限定：决策级差异上界代理，不是强度判定，
+                        不进任何闸门**。预登记：①一致率≥0.95 且 mean|ΔQ|<0.30 ⇒ 天花板已到；
+                        ②一致率<0.85 或 mean|ΔQ|≥0.50 ⇒ 含实质新信息（R24 重锚点考虑切 N64）；
+                        ③其余 ⇒ 按排期跑正式 50-seed，不据代理改配方。结果由下次自检读
+                        runs/night_logs/n64_probe.log 判定（写本行时仍在跑）。
+[2026-11-07 16:47:00] 【新登记风险 P2 · 加速模式 267 次闸门 D 的多重比较】剩余 129h 约 267 次
+                        检验，α=.05 下**期望约 13 次假晋升**。不定级 P0/P1 的理由：exit_best 本就被
+                        「A vs master 每轮必过」不断覆盖（#18 已降 P2）；web_best 不跟随 PPO（零线上风险）；
+                        终评两段式 best-of 才是交付判定。**处置=事件式审计**（不改代码、不重启）：
+                        自检发现新增 pNN.promoted 时用独立池 730000+300 复核，若 |Δ|<1SE 或 Δ≤0
+                        ⇒ 从 exit_r{最近 DAgger}.pt 恢复 exit_best（p ckpt 保留仍可 best-of）。
+[2026-11-07 16:47:00] 【下一硬决策点（预登记，看数据前锁死）≈19:00 · P23 vs R12】R13~R23 是同锚
+                        链式续训 ⇒ 天然剂量-反应，**不做「11 次 D 谁先过 0.05」**（多重比较必假阳性），
+                        只做**一次**累积检验 P23−R12（同池 300 seed 配对）。判据：Δ≥+1.5 且 p<.05 ⇒ 有累积
+                        增益，下一周期维持 1920 局（不加预算）；|Δ|<1.5 ns ⇒ 无累积，第二周期同配方继续；
+                        Δ≤−1.5 且 p<.05 ⇒ 写 runs/ppo_disabled 停用 PPO，DAgger-only 至 DEADLINE，
+                        剩余预算转终评扩容（1000 seed 第二段）+ 产品打磨。
+[2026-11-07 16:47:00] 【决策五项】①增速三选一**不触发**（A 最近两轮弱=False/False，p≈0.0000
+                        ⇒ TAU/Q-MSE/n_det/lr 一项不改）②天花板按工具规则**不确认**（C 平台=False），
+                        但 §6.34.6 差距分解与 lag-1 证据实质支持「平台」，**仍不改超参**
+                        ③P2a 维持观察态（C 正增量 1/2）④PPO 已升级为加速模式，判据改为
+                        P23−R12 单次累积检验 + rapid_guard 三轮 D 负向护栏，**闸门 D 判据不放宽**
+                        ⑤**下一步无需启动** —— R14 已由驱动 16:48:15 自动接续，零干预。
+[2026-11-07 16:47:00] 【时间线】R14 16:48 起，每 13min ⇒ R23 收口 ≈18:58；R24 完整 DAgger：
+                        18:58 标注 → ≈21:05 落盘 → 训练 ≈21:47 → A 21:48 → C ≈22:10 → D ≈22:12
+                        → P24 ≈22:20 → R25（第二周期）。剩余 129h。终评仍留 4.5h，起始不晚于 11-12 22:00。
+[2026-11-07 16:47:00] ============================================================
+[2026-11-07 16:59:49]   rc=0  695s  ppo_p14
+[2026-11-07 16:59:49] P14 PPO 完成 init=exit_p13.pt → exit_p14.pt {"hands": 1920, "states": 102286, "A_std": 9.026036262512207, "ret_std": 13.36069133378459, "kl": [0.006836862885465962, 0.008937923765915911], "vl": 1.2439688631147146, "ent": 1.3949881824851036, "gnorm": 1.419979564845562, "clipfrac": 0.08480895136483013, "ent_rollout": 1.7031686187398762, "kl_stop": false, "secs": 693.2}
+[2026-11-07 16:59:49] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p14.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p14_gateD.jsonl  → gateD_p14.log
+[2026-11-07 17:02:24]   rc=0  155s  gateD_p14
+[2026-11-07 17:02:24] P14 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.220±0.402  z=+0.55  p≈0.5846  符号 144:156  → 不通过
+[2026-11-07 17:02:24] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p14.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p14_gateA.jsonl  → gateA_p14.log
+[2026-11-07 17:03:32]   rc=0  67s  gateA_p14
+[2026-11-07 17:03:32] P14 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.032±0.421  z=+9.59  p≈0.0000  符号 214:85
+[2026-11-07 17:03:32] P14 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-07 17:03:32] R14 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-07 17:03:32] P15 PPO 链起点 = exit_p14.pt  hands=1920 max_states=120000
+[2026-11-07 17:03:32] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p14.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p15.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1050000  → ppo_p15.log
+[2026-11-07 17:05:00] 【补记 · N64 教师代理探测结果（32 状态，seed0=2400000，17:02 完成）】
+                        平均合法动作 7.7；**top1 一致率 0.781（25/32）**；**mean|Q32−Q64| = 0.143 分/动作**
+                        （max 1.745）；7 例换动作中 N64 所选动作在 N32 口径下**平均落后 top1 0.201 分**。
+                        预登记机械触发 ②（一致率<0.85），但三条实测把措辞往下压：
+                        ①Q 差异 0.143 比 ② 的另一阈值（≥0.50）低 3.5 倍；
+                        ②若 N64 真更强，换动作后应在 N32 口径下领先/持平，实测平均**落后 0.201 分**
+                        ⇒ 一致的读法是「两个噪声估计在近平局附近抖」，不是「N64 找到 N32 没找到的好棋」；
+                        ③**成本硬约束**：N64 教师让标注教师算力翻倍 ⇒ 100k 从 2.2h 变 ≈4.4h **超过 3.5h 超时线**，
+                        超时会整轮丢数据 ⇒ **N64 教师在本轮主循环事实上不可用**（除非每轮砍到 50k，
+                        那会让每周期唯一一次 DAgger 重锚的信息量减半）。
+                        **处置（含对预登记行动项的显式修正）**：①不改任何阈值（② 触发条件留档可审计）；
+                        ②正式 50-seed 对局判定（--a-n-det 64 --b-n-det 32，35~40min）从「R24 前」推迟到
+                        **DEADLINE 后终评窗口**（训练已停、零机会成本；且它不可能改变剩余 129h 的任何动作）；
+                        ③提前条件：若 ≈19:00 P23−R12 |Δ|<1.5，说明「换信息源」是唯一剩下的杠杆，
+                        则在下一周期 PPO 窗口内提前跑（4 workers ≈55min）；
+                        ④**禁止**据此宣称「已验证 N64 更强 / 已验证天花板」——这是 n=32 的决策级代理。
+                        另：本次发现 16:53 起有**另一个会话在并行跑 n64_probe --states 80**（PID 76661），
+                        与本探测写同一输出文件；下一自检读到的 JSON 可能是 80 状态版本，**以文件内容为准、记 n**。
+[2026-11-07 17:05:00] 【R14 实测（加速轮节奏确认）】PPO 16:48:15→16:59:49 = **694s**（比 R13 的 588s 慢 18%，
+                        原因是两个 1 核代理探测并发占核，非 PPO 本身退化）；闸门 D **+0.220±0.402 p=.5846
+                        （144:156）不通过**（第 2 个加速轮，仍在 ±1SE 内）；闸门 A 17:02 开跑。
+                        结论：13min/轮 的估计在**无外部探测**时成立，自检期若跑探针会把单轮拉长到 ~15~18min，
+                        规划时间线时按 13min 排、不按 18min 排（探针是偶发）。
+[2026-11-07 17:05:00] ============================================================
+[2026-11-07 17:06:00] 【R14 收口】P14 闸门 A **+4.032±0.421 p≈0.0000（214:85）**（历史第 4 高，次于 P11 4.269 /
+                        P13 4.218 / R11 4.199）；不晋升；R14 加速轮 16:48:15→17:03:32 ≈ **15min**
+                        （含探测并发拖慢 2min），17:03:32 驱动自动接续 **R15**。
+                        两个加速轮 D 汇总：R13 +0.369±0.414、R14 +0.220±0.402 —— **均为正、均不可分辨**
+                        （vs 冻结 R12），符合「单轮分辨率不足」预登记；rapid_guard 需 R13~R15 三轮才判读。
+                        下一硬点仍为 ≈19:00 的 **P23−R12 单次累积检验**（不在 11 次 D 里挑显著）。
+[2026-11-07 17:14:16]   rc=0  644s  ppo_p15
+[2026-11-07 17:14:16] P15 PPO 完成 init=exit_p14.pt → exit_p15.pt {"hands": 1920, "states": 101538, "A_std": 8.843988418579102, "ret_std": 13.099031850356981, "kl": [0.0067509579254075025, 0.009254365626626392], "vl": 1.2027166072157227, "ent": 1.3048329617574774, "gnorm": 1.4060331426129233, "clipfrac": 0.08697835279051543, "ent_rollout": 1.5682381191605004, "kl_stop": false, "secs": 643.1}
+[2026-11-07 17:14:16] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p15.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p15_gateD.jsonl  → gateD_p15.log
+[2026-11-07 17:16:58]   rc=0  162s  gateD_p15
+[2026-11-07 17:16:58] P15 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.750±0.393  z=+1.91  p≈0.0566  符号 160:137  → 不通过
+[2026-11-07 17:16:58] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p15.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p15_gateA.jsonl  → gateA_p15.log
+[2026-11-07 17:18:18]   rc=0  79s  gateA_p15
+[2026-11-07 17:18:18] P15 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.880±0.435  z=+11.22  p≈0.0000  符号 219:80
+[2026-11-07 17:18:18] P15 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-07 17:18:18] R15 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-07 17:18:18] P16 PPO 链起点 = exit_p15.pt  hands=1920 max_states=120000
+[2026-11-07 17:18:18] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p15.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p16.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1060000  → ppo_p16.log
+[2026-11-07 17:28:29]   rc=0  611s  ppo_p16
+[2026-11-07 17:28:29] P16 PPO 完成 init=exit_p15.pt → exit_p16.pt {"hands": 1920, "states": 97527, "A_std": 8.724430084228516, "ret_std": 12.63110413489916, "kl": [0.005468159043422614, 0.008332580858884315], "vl": 1.1677942581846332, "ent": 1.2298695348066295, "gnorm": 1.3742068782253216, "clipfrac": 0.08112335310676905, "ent_rollout": 1.436437017032301, "kl_stop": false, "secs": 610.0}
+[2026-11-07 17:28:29] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p16.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p16_gateD.jsonl  → gateD_p16.log
+[2026-11-07 17:31:04]   rc=0  155s  gateD_p16
+[2026-11-07 17:31:04] P16 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+1.073±0.410  z=+2.62  p≈0.0088  符号 168:130  → 通过
+[2026-11-07 17:31:04] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p16.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p16_gateA.jsonl  → gateA_p16.log
+[2026-11-07 17:32:11]   rc=0  67s  gateA_p16
+[2026-11-07 17:32:11] P16 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.191±0.410  z=+10.21  p≈0.0000  符号 218:80
+[2026-11-07 17:32:11] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 17:32:12]   rc=0  1s  export_exit_best
+[2026-11-07 17:32:12] 晋升：exit_p16.pt → exit_best.pt
+[2026-11-07 17:32:12] R16 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-07 17:32:12] P17 PPO 链起点 = exit_p16.pt  hands=1920 max_states=120000
+[2026-11-07 17:32:12] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p16.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p17.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1070000  → ppo_p17.log
