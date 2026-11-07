@@ -5689,9 +5689,10 @@ el("ji-mask").addEventListener("click", (ev) => {
      · 🤖 大师（贪心，2 ms）      ← 三家对手的默认
      · 🔍 深算 · 32 路推演        ← 搜索 Agent 默认（实测强于大师 +3.9 分/副）
      · ⚡ 极算 · 128 路推演       ← 保留（240 副实测与 32 路同级，更便宜）
-   下线的：简算 n8、教师 6 种、随机出牌、bc、小网 s7。服务端 /api/meta 也只
-   下发大师一个模型，前端再列旧网就等于给用户递一个早已停更的选项。
-   权重换代只覆盖 models/dushan_master.pt，文案按 mtime 自动跟随。 */
+   下线的：简算 n8、教师 6 种、随机出牌、bc、小网 s7。服务端 /api/meta 只下发
+   「主力 + 注册过的冠军」，前端再列旧网就等于给用户递一个早已停更的选项。
+   2026-11-07 起主力恒为 models/dushan_master.pt（冻结基线，绝不覆盖），
+   训练产物通过 models/champions.json 只增不替，详见 registerChampionOptions()。 */
 const OPP_OPTIONS = [
   { v: "model:master", label: "🤖 大师（贪心·2ms）", dyn: "master" },
   { v: "search32:master", label: "🔍 深算 · 32 路推演" },
@@ -5700,19 +5701,42 @@ const OPP_OPTIONS = [
 const OPP_ALLOWED = OPP_OPTIONS.map(o => o.v);
 const DEFAULT_STRATEGY = "search128:master";  // 2026-11-06：推荐默认升到极算 n128
 const DEFAULT_OPP = "model:master";           // 所有玩家默认：大师
+/* 2026-11-07「只增不替」：服务端 /api/meta 下发的附加冠军模型在拿到 META 后
+   由 registerChampionOptions() 追加到这里（贪心 + 极算 128 两个档位/模型）。
+   主力恒为 master，默认值一字不改；冠军只作为可选追加项。 */
+const CHAMP_STEM_RE = /^(web_best|champ_[A-Za-z0-9_-]+)$/;
+function isChampionValue(v) {
+  const parts = String(v || "").split(":");
+  return parts.length === 2 && ["model", "search32", "search128"].includes(parts[0])
+      && CHAMP_STEM_RE.test(parts[1]);
+}
+function registerChampionOptions() {
+  const list = (META && META.models) || [];
+  list.filter(m => m && m.champion && m.stem).forEach(m => {
+    const name = m.label || m.stem;
+    [["model", "🤖", "（贪心）"], ["search128", "⚡", " · 极算128"]].forEach(([kind, icon, tail]) => {
+      const v = `${kind}:${m.stem}`;
+      if (OPP_ALLOWED.includes(v)) return;
+      OPP_OPTIONS.push({ v, label: `${icon} ${name}${tail}`, champion: true, stem: m.stem });
+      OPP_ALLOWED.push(v);
+    });
+  });
+}
 /* 旧配置收敛：把 localStorage 里存着的已下线档位挪进白名单。
    对手位（含教师/随机/bc/s7）→ 大师；我的推荐策略 → 深算 n32。
    返回是否改动过，调用方据此决定要不要 saveSet()。 */
 function migrateModelOptions() {
   let dirty = false;
-  if (!OPP_ALLOWED.includes(String(SET.strategy || ""))) {
+  if (!OPP_ALLOWED.includes(String(SET.strategy || "")) && !isChampionValue(SET.strategy)) {
     SET.strategy = DEFAULT_STRATEGY;
     dirty = true;
   }
   const oms = Array.isArray(SET.oppModels) ? SET.oppModels.slice(0, 3) : [];
   while (oms.length < 3) { oms.push(DEFAULT_OPP); dirty = true; }
   SET.oppModels = oms.map(v => {
-    if (OPP_ALLOWED.includes(String(v || ""))) return v;
+    // 冠军选项要等 /api/meta 回来才注册，这里先放行合法冠军值，别把用户上次
+    // 的选择误判成「已下架」而悄悄回落大师。真正下架的由 renderPickers 兜底。
+    if (OPP_ALLOWED.includes(String(v || "")) || isChampionValue(v)) return v;
     dirty = true;
     return DEFAULT_OPP;
   });
@@ -5738,6 +5762,7 @@ function modelIdent(stem) {
 /* 选项文案：master 取 META.master_info，其余按 stem 取 META.models[].ident */
 function oppLabel(o) {
   if (!o) return "";
+  if (o.champion && o.label) return o.label;   // 附加冠军用注册表展示名
   if (o.dyn === "master") {
     const mi = META && META.master_info;
     return "🤖 " + ((mi && mi.label) || o.label.replace(/^🤖\s*/, ""));
@@ -5777,6 +5802,7 @@ async function boot() {
   META = await api("/api/meta");
   META.tiles.forEach(t => TILES[t.id] = t);
   PAGE_VER = META.page_ver || null;
+  registerChampionOptions();   // 只增不替：把 /api/meta 里的冠军模型追加为可选档位
   fillOppSelects();
   fillBootFanji();                 // 开局页翻鸡策略下拉回填（与设置面板同源）
   renderPickers("boot-players");   // 开局页：玩家与模型（含模型下拉，沿用上次设置）
@@ -5808,11 +5834,11 @@ async function boot() {
 el("startBtn").onclick = async () => {
   const specs = SET.oppModels.map(v => {
     const [kind, stem = "master"] = String(v || "").split(":");
-    // 2026-11-02：只剩 大师 / 深算 n32 / 极算 n128。任何残余旧值（教师、随机、
-    // bc、s7、简算 n8）一律按大师出牌 —— 宁可弱，也不静默换成别的档。
+    // 2026-11-07：大师 / 深算 n32 / 极算 n128 三个默认档 + 注册表追加的冠军档。
+    // 任何残余旧值（教师、随机、bc、s7、简算 n8）仍按大师出牌。
     if (kind === "search32") return { type: "search", model: stem || "master", ply: 3, ndet: 32 };
     if (kind === "search128") return { type: "search", model: stem || "master", ply: 1, ndet: 128 };
-    return { type: "model", model: "master", temperature: 0 };
+    return { type: "model", model: stem || "master", temperature: 0 };
   });
   const ms = parseInt(el("my-seat").value, 10);
   SET.speed = clampSetting(el("speed").value, 0, 5, 0.45);   // 开局页与设置面板共用同一份节奏值

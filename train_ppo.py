@@ -86,10 +86,15 @@ def save_ckpt(net, cfg, out: Path, extra: dict) -> None:
 # ---------------- rollout（子进程） ----------------
 
 def rollout_shard(ckpt: str, device: str, hands: int, seed0: int,
-                  max_states: int, threads: int) -> str:
-    """纯策略自对弈一个分片，写 npz 到临时文件并返回路径（避免大数组走 pickle）。"""
-    import tempfile
+                  max_states: int, threads: int, wid: int = 0) -> str:
+    """纯策略自对弈一个分片，写 npz 到**固定路径**并返回路径（避免大数组走 pickle）。
 
+    2026-11-07 P21 事故：原先每片用 tempfile.mkstemp 生成随机名，主进程合并后
+    os.unlink 删除。WorkBuddy 的 safe-delete 批量守卫（50 次/turn 阈值）会拦截
+    os.unlink 并让子进程 rc=1 ⇒ P21 静默失败、R21 回落到 2.4h 完整 DAgger。
+    现改为 runs/ppo_shards/shard_<wid>.npz 固定名覆盖写，全链路**零删除**：
+    每轮只有 workers 个文件，旧轮次自动被覆盖，不会堆积。
+    """
     import torch
     from zhuoji.dushan import DushanConfig, DushanGame
     from zhuoji.encoder import encode, index_to_action
@@ -144,10 +149,9 @@ def rollout_shard(ckpt: str, device: str, hands: int, seed0: int,
         rets.append([float(x) for x in d])
 
     el = time.perf_counter() - t0
-    fd, path = tempfile.mkstemp(prefix="ppo_shard_", suffix=".npz",
-                                dir=str(ROOT / "runs"))
-    import os
-    os.close(fd)
+    shard_dir = ROOT / "runs" / "ppo_shards"
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    path = str(shard_dir / f"shard_{wid}.npz")
     np.savez_compressed(
         path,
         T=np.stack(T) if T else np.zeros((0, 63, 27), np.float16),
@@ -301,13 +305,13 @@ def main() -> int:
     # 1) 并行 rollout
     import concurrent.futures as cf
     import multiprocessing as mp
-    import os
     t0 = time.perf_counter()
     paths = []
     ctx = mp.get_context("spawn")
     with cf.ProcessPoolExecutor(max_workers=n_w, mp_context=ctx) as ex:
         futs = [ex.submit(rollout_shard, a.init, a.rollout_device, per[i],
-                          a.seed0 + i * 100_000, cap, a.threads) for i in range(n_w)]
+                          a.seed0 + i * 100_000, cap, a.threads, i)
+                for i in range(n_w)]
         for f in cf.as_completed(futs):
             paths.append(f.result())
     roll_s = time.perf_counter() - t0
@@ -325,7 +329,7 @@ def main() -> int:
                       "logp": d["logp"], "val": d["val"], "seat": d["seat"],
                       "hand": hand, "mask": d["mask"]})
         rets_all.append(d["rets"])
-        os.unlink(p)
+        # 不删除：分片固定路径下轮覆盖写，删除会触发 safe-delete 守卫（见函数头）
     st = {k: np.concatenate([q[k] for q in parts]) for k in parts[0]}
     rets = np.concatenate(rets_all)
     st["rets"] = rets

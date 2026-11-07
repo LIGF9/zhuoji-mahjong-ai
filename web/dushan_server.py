@@ -456,11 +456,41 @@ VERBOSE = False
 HOLD_MAX = 20.0
 
 #: "大师" 别名 → 实际模型 stem（按优先级探测）
-#: 2026-11-07：ExIt 学生上线。`web_best` 是训练主循环 `exit_best.pt` 的**快照**
-#: （不直接在 models/ 里引用 exit_best，避免训练中途换代让在线对局行为漂移）。
-#: 顺序即优先级：web_best 存在则线上「大师」= ExIt 学生；删除该文件即回退旧网。
-#: 注意：`dushan_master.pt` 同时是闸门 A/C 的冻结基线，**绝不能覆盖它来换代**。
-MASTER_CANDIDATES = ["web_best", "dushan_master", "dushan_s1", "dushan_s2", "dushan_s3", "rl"]
+#: 2026-11-07 18:4x 用户口径：**线上主力切回原 master**。
+#: `dushan_master.pt` 同时是闸门 A/C 的冻结基线，主力恒定为它，
+#: 训练产物再强也**不得覆盖它、不得把 master 别名指向它、不得改前端默认值**。
+#: 后续测试通过的更强模型走「只增不替」：注册到 models/champions.json，
+#: 作为附加可选模型下发给前端（见 tools/register_champion.py）。
+MASTER_CANDIDATES = ["dushan_master", "rl"]
+CHAMPIONS_FILE = MODEL_DIR / "champions.json"
+
+
+def load_champions() -> list[dict]:
+    """附加冠军模型注册表（只增不替的唯一入口）。
+
+    新增一个通过测试的模型 = 往 champions.json 追加一条；**不**写 dushan_master.pt、
+    **不**改 master 别名、**不**改默认档位。缺权重 / 非法 stem / 与主力同名一律跳过。
+    """
+    try:
+        data = json.loads(CHAMPIONS_FILE.read_text(encoding="utf-8"))
+        rows = data.get("champions", []) if isinstance(data, dict) else []
+    except (OSError, ValueError):
+        return []
+    out, seen = [], set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        stem = str(row.get("stem") or "")
+        if (not re.fullmatch(r"[A-Za-z0-9_-]+", stem) or stem in seen
+                or stem in MASTER_CANDIDATES
+                or not (MODEL_DIR / f"{stem}.pt").exists()):
+            continue
+        seen.add(stem)
+        item = dict(row)
+        item["stem"] = stem
+        item["champion"] = True
+        out.append(item)
+    return out
 
 
 #: 规则开关的网页默认（与引擎 DushanConfig 默认一致）
@@ -571,14 +601,28 @@ def warm_ort_backend(stem: str | None = None) -> None:
     threading.Thread(target=_run, name="ort-warm", daemon=True).start()
 
 def resolve_model_stem(name: str) -> str | None:
-    """把前端传来的模型名解析成实际存在的 stem。"""
+    """把前端传来的模型名解析成实际存在的 stem。
+
+    master/best **恒指向冻结主力**（2026-11-07 用户口径）；冠军模型只能用
+    显式 stem 选中。显式名做字符集白名单，防路径穿越。
+    """
     if name in ("master", "best"):
         for cand in MASTER_CANDIDATES:
             if (MODEL_DIR / f"{cand}.pt").exists():
                 return cand
         return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", str(name)):
+        return None
     if (MODEL_DIR / f"{name}.pt").exists():
         return name
+    return None
+
+
+def champion_label(stem: str) -> str | None:
+    """注册表里的展示名（对手名字用）；未注册返回 None。"""
+    for c in load_champions():
+        if c["stem"] == stem:
+            return str(c.get("label") or stem)
     return None
 
 
@@ -795,21 +839,31 @@ def warm_search_pool(stem: str | None = None) -> None:
 
 
 def available_models() -> list[dict]:
-    """线上模型清单：**只保留大师一个**（2026-11-02 用户口径）。
+    """线上模型清单：首位恒为冻结主力，其后是注册表里的「附加冠军」。
 
-    磁盘上其余 .pt（bc / s7 / s4~s12 / 各种实验权重）留给训练与对拍脚本，
-    但不再下发给前端 —— 只要前端能看见，就迟早有人选中一个早已停更的旧网，
-    再用它的水平去评价整个 AI。权重换代只需覆盖 ``dushan_master.pt``
-    （= 当前 s11），前端按 mtime 自动跟随，不需要改任何选项文案。
+    2026-11-02 口径曾只下发一个模型；2026-11-07 改为「只增不替」：
+    主力固定 dushan_master，训练产物通过 champions.json **追加**为可选项，
+    前端据此动态生成下拉，但默认档位（大师 / 极算·master）一字不改。
+    权重换代绝不覆盖 dushan_master.pt —— 它同时是闸门 A/C 的冻结基线。
     """
-    out = []
-    stem = resolve_model_stem("master")
-    for p in ([MODEL_DIR / f"{stem}.pt"] if stem else []):
+    rows = [{"stem": resolve_model_stem("master"), "champion": False}]
+    rows += load_champions()
+    out, seen = [], set()
+    for row in rows:
+        stem = row.get("stem")
+        if not stem or stem in seen:
+            continue
+        p = MODEL_DIR / f"{stem}.pt"
+        if not p.exists():
+            continue
+        seen.add(stem)
         peek = peek_checkpoint(p)
         info = {"stem": p.stem, "size_kb": round(p.stat().st_size / 1024, 1),
                 "mtime": time.strftime("%m-%d %H:%M", time.localtime(p.stat().st_mtime)),
                 "iter": peek.get("iter"), "net": peek.get("net"),
-                "params": peek.get("params")}
+                "params": peek.get("params"),
+                "champion": bool(row.get("champion")),
+                "label": str(row.get("label") or "")}
         try:
             info["ident"] = model_identity(p.stem)
         except Exception:
@@ -865,8 +919,9 @@ def make_opponent(spec: dict, seed: int) -> tuple[Bot, str]:
             return RandomBot(seed=seed), name
         entry = get_model(stem)
         temp = float(spec.get("temperature", 0.0))
-        label = {"dushan_master": "大师", "dushan_s1": "大师S1", "dushan_s2": "大师S2",
-                 "dushan_s3": "大师S3"}.get(stem, f"模型·{stem}")
+        label = ({"dushan_master": "大师", "dushan_s1": "大师S1",
+                  "dushan_s2": "大师S2", "dushan_s3": "大师S3"}.get(stem)
+                 or champion_label(stem) or f"模型·{stem}")
         name = label if temp <= 1e-6 else f"{label}(T{temp:g})"
         return NetAgent(entry["net"], seed=seed, temperature=temp, name=name), name
     if kind == "search":
@@ -881,7 +936,8 @@ def make_opponent(spec: dict, seed: int) -> tuple[Bot, str]:
         if stem is None:
             return RandomBot(seed=seed), "随机(无模型)"
         entry = get_model(stem)
-        base = {"dushan_master": "大师"}.get(stem, f"模型·{stem}")
+        base = ({"dushan_master": "大师"}.get(stem)
+                or champion_label(stem) or f"模型·{stem}")
         name = f"搜索·{base}"
         has_mps = torch.backends.mps.is_available()
         dev = str(spec.get("device") or ("mps" if has_mps else "cpu"))
@@ -2608,8 +2664,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/meta":
             return self._json({
                 "page_ver": _page_ver(),
-                # 2026-11-02 模型精简：只下发大师一个（s11）。
-                # 教师/随机/bc/s7 等旧策略选项已从线上撤除，这里不再提供名单。
+                # 2026-11-07：主力固定 dushan_master + 注册表追加的冠军模型
+                # （只增不替）；前端按 champion 标记动态追加可选档位。
                 "models": available_models(),
                 "tiles": [{"id": t, "name": tile_name(t), "cn": tile_cn(t),
                            "suit": t // 9, "rank": t % 9 + 1}

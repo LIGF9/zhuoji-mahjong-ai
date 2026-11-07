@@ -1,0 +1,13 @@
+{
+  "_note": "线上附加冠军模型：只增不替；主力恒为 dushan_master.pt",
+  "champions": [
+    {
+      "stem": "web_best",
+      "label": "ExIt 学生（R07 快照）",
+      "source": "models/web_best.pt",
+      "gate": "历史线上快照：原主力，现降级为附加可选模型",
+      "note": "2026-11-07 主力切回 dushan_master；本权重保留不删除",
+      "added": "2026-11-07 18:58:59"
+    }
+  ]
+}

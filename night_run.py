@@ -262,8 +262,11 @@ def annotate_round(r: int) -> None:
     # 4 线程聚合实测 4~5 万/h → 100k 需 2~2.5h；给 3.5h 余量，避免超时丢数据
     rc, text = run(cmd, f"annotate_r{r:02d}", timeout_s=12600)
     if rc != 0:                          # 瞬时故障重试一次
-        log(f"R{r} 标注失败（rc={rc}），清理残留后重试一次")
-        shutil.rmtree(out_dir, ignore_errors=True)
+        log(f"R{r} 标注失败（rc={rc}），把残留目录改名后重试一次")
+        # 不删除：safe-delete 批量守卫会拦截批量 unlink 并中断子进程
+        # （2026-11-07 P21 事故）。改名让本轮从头写，残留留待人工清理。
+        if out_dir.exists():
+            out_dir.rename(out_dir.with_name(f"{out_dir.name}_failed_{int(time.time())}"))
         rc, text = run(cmd, f"annotate_r{r:02d}_retry", timeout_s=12600)
     assert rc == 0 and data_ready(r), text[-2000:]
     log(f"R{r} 标注完成 student={stu.name} seed0={seed0} → 4×25k")
@@ -338,10 +341,8 @@ def gates_round(r: int) -> None:
         rc_d, txt_d = run(cmd_d, f"gateD_r{r:02d}", timeout_s=5400)
         if rc_d == 0:
             log(f"R{r} 闸门 D(vs 上轮最佳): {_gate_line(txt_d)}")
-            try:
-                prevb.unlink(missing_ok=True)      # 只在成功后清理快照
-            except OSError:
-                pass
+            # 快照不删：safe-delete 守卫会拦截 os.unlink（P21 事故）；
+            # 保留 rNN_prevbest.pt 还能让重跑该轮时复用同一「晋升前最佳」基线。
         else:
             log(f"R{r} 闸门 D 运行失败（不影响晋升）rc={rc_d}")
 
