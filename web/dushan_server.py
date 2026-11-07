@@ -1109,7 +1109,7 @@ class Session:
         # 本手是否调用过 /api/hint（模型大师推荐）。每手开头重置，终局写进记录：
         # 「本人胡牌 / 本人累计」两个统计量的分母 = 全程没看过推荐的局（真·自己打）。
         self.hint_used = False
-        self.dealer = 0
+        self.dealer = self.rng.randrange(4)   # 2026-11-08: 随机庄家，不再恒 0
         self.dealer_streak = 0
         self.my_seat = my_seat if my_seat is not None else self.rng.randrange(4)
         self.stop = False
@@ -1329,7 +1329,7 @@ class Session:
             # 提前结束：不计分、不更新统计、不入历史（庄家不变，连庄清零）
             with self.lock:
                 self.dealer_streak = 0
-                self.dealer = int(res.get("next_dealer", game.dealer))
+                self.dealer = int(game.next_dealer)   # 2026-11-08: 从 game 属性读
             self._publish(game)
             return
         deltas = res.get("deltas") or [0.0] * 4
@@ -1343,7 +1343,10 @@ class Session:
                 self.dealer_streak += 1
             else:
                 self.dealer_streak = 0
-            self.dealer = int(res.get("next_dealer", game.dealer))
+            self.dealer = int(game.next_dealer)   # 2026-11-08: 从 game 属性读，修恒 0 bug
+            # 2026-11-08 四座轮转：每手结束后 my_seat 顺时针 +1（mod 4），
+            # 让四家在连续局中均匀占据各绝对座位，消除座位/庄家结构性偏差。
+            self.my_seat = (self.my_seat + 1) % 4
         self._publish(game)
         if self.on_hand_end is not None:
             try:

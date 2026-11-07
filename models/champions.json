@@ -8,6 +8,22 @@
       "gate": "历史线上快照：原主力，现降级为附加可选模型",
       "note": "2026-11-07 主力切回 dushan_master；本权重保留不删除",
       "added": "2026-11-07 18:58:59"
+    },
+    {
+      "stem": "champ_exit_p32",
+      "label": "ExIt P32（双闸门冠军）",
+      "source": "models/champ_exit_p32.pt",
+      "gate": "闸门 A +4.573±0.392 p≈0；闸门 D vs p16 +0.728±0.345 p=0.035",
+      "note": "2026-11-08 注册；exit_best 快照，防训练覆盖",
+      "added": "2026-11-08 07:02:00"
+    },
+    {
+      "stem": "champ_exit_p35",
+      "label": "ExIt P35（绝对分最高）",
+      "source": "models/champ_exit_p35.pt",
+      "gate": "闸门 A +4.696±0.431 p≈0（最高）；D vs p32 +0.108 ns",
+      "note": "2026-11-08 注册；绝对强度最高但环比 ns",
+      "added": "2026-11-08 07:02:01"
     }
   ]
 }

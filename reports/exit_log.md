@@ -2998,3 +2998,62 @@ p≈0) 已落盘 ⇒ 用户线上选不到当前最强权重，建议复制成�
 **防腐（自检必读）**：这批 519 局**不构成**模型弱 / 配方失败 / 早停证据，**禁止**据此改配方、
 加重训练、触发 §6.43 早停或写 `rapid_abort`/`ppo_disabled`。归档时 R36 标注在跑，本轮零对局、
 零 CPU 探针、主链与线上配置零改动。
+
+## 2026-11-08 06:39（自检 #40 · S3 前夜：R36 完整 DAgger 标注 60%，主线零干预）
+
+**结论：健康，产出符合预期（S2 平台期 + 弱阳性延续），无异常、无动作。** 本轮只做体检 + 修两处执行口径风险。
+
+### 运行事实
+- 驱动 19488（PPID 19486=看门狗）单实例；lock mtime <1s；阶段 = **R36 完整 DAgger annotate**（PID 41925，05:23:02 起，`--targets 100000`=4×25000，`--student-enc 3 --student-device cpu`，seed0=960000）。
+- 进度 **15,039/25,000（60.2%）@4575s**，四片齐头 11,794–11,834 标注/h·w（R24 的 10.5k / R21 的 11.0k 同档，落在 10~12.5k 规格内）。**ETA 落盘 ≈07:30**（余 ~50min）。
+- 链 p22→p35 连续（p21 缺号属历史已知）；`exit_best ≡ exit_p32`（04:38 晋升，exit_best.pt 与 exit_p32.pt mtime 均 04:34）。
+- Web `/`=200，`master=dushan_master`、`models[0].champion=false`、champion 表仅 web_best；用户在线（sid 3b834f05，`search128:web_best`）⇒ **未重启 Web**。web_server.log 的 Traceback 全为 `ConnectionResetError [Errno 54]`（浏览器断连）⇒ 客户端行为，非服务故障。磁盘 304Gi 可用。
+- `early_stop` / `plan_b_enabled` / `ppo_disabled` / `rapid_abort` 均无。switch_at_train.log 的 Traceback 是 11-07 切换历史归档，非新事件。
+
+### 健康（health_watch --last 12，12/12 在阈值内）
+kl 0.0059–0.0087 ｜ clip 0.061–0.092 ｜ gnorm 1.30–1.38 ｜ states 86k–108k ｜ secs 631–791（<2×中位）｜ klStop 全 False。
+唯一 WARN：**P35 vl 三轮 +1.3%**（1.0034→1.0057→1.0169）—— 幅度极小、同期 A 门为 S2 最高，与 P24/P25 同型（后被 P27 自解）⇒ 仅观察。
+
+### S2（P25–P35，n=11）复核（与 §6.50.2 一致，此处按逐轮实测重算）
+闸门 A 均值 **+4.472**（SD 0.169 / SE 0.051），vs S1 +4.323 ⇒ **+0.149**；OLS slope **+0.0151/轮**；峰值 P35 **+4.696**。
+闸门 D 11 轮 9 正，均值 **+0.317**，3 次晋升（P26/P27/P32）。P33/P34 为仅有的两次负值（−0.227/−0.218，均 ns）——**D 门只作环比，单轮 ns 不算异常**。
+熵：ent_rollout 1.984→**0.964**（−51.4%），最近 6 轮 **−29.6%** ⇒ **S2 辅证不成立** ⇒ R36 预期 verdict=continue（仍须到场执行，不得据预测跳过）。
+
+### 【更正】一处口径错误（防后人不当引用）
+05:5x 的 519 局线上复盘块把 `exit_best` 写成「p35, A +4.696」——**错**。事实：`exit_best ≡ exit_p32`（A +4.573，D +0.728 p=0.0348 晋升）；p35 虽 A 门最高（+4.696）但 D 门 +0.108 ns，**未晋升**。R36 标注学生用的是 `exit_best.onnx`=**p32**，不是 p35。
+⇒ 该块 P1 建议（把当前最强权重复制快照后 register_champion）**须改为 "exit_best=p32 + S2 最高 A 的 p35 两个候选都进终评 best-of"**，且仍须先做冻结头对头才能宣称强弱。判据与主线不受影响。
+
+### 本轮动作（只改执行口径，零判据改动）
+1. **修 07:47 一次性任务（40361146）的冲突判定**：原文写「发现 annotate 在跑直接放弃」，但 `run_fresh_pool_measure.py --wait-log train_r36.log --wait-max-min 25` 的设计本就是「等标注退出、训练日志出现再开跑」。若 07:47 时 annotate 因吞吐波动晚 10~20min，原口径会白丢这次**预登记一次性测量**（方案 B 条件①就永久缺失）。改为：annotate 在跑**不算冲突**（由 --wait-log 兜住），只有 eval_pairs 在跑或产物已存在才放弃/不重跑。命令、池（740000+600）、判据一字未改。
+2. **修 09:08 一次性任务（38266e6d）的候选选择**：原文让人手传 `--a models/exit_p36.pt`（该文件不存在，DAgger 轮产物是 exit_r36.pt）来"辅助确认候选"，有把守卫带偏的风险。改为**先跑无参守卫** `early_stop_guard.py --boundary 36`，由 `pick_strongest()` 自选（R25–R36 / R13–R24）并输出确切 `measure_cmd`，再执行该命令。已现场预演验证：
+   `边界合法性=False（缺 gateD_r36.log，不得提前判读）｜本周期最强=P35 4.6956 (SE .4306)｜上周期最强=P20 4.9622 (SE .4127)｜verdict=not_ready rc=2` ✅ 与预期一致。
+3. 13:0x 之后未做任何其他动作：未重启任何进程、未改超参、未跑探针（唯一执行的命令是只读的 guard 预演，零对局、零 CPU 争抢）、未注册冠军、未动 dushan_master.pt、未碰 E1。
+
+### 待办（时间线，供下一轮核）
+- ≈07:30 annotate 落盘（4×25k、check_npz 4/4）→ ≈07:32 train 起跑（≈40min）
+- **07:47** 复现测量 p20 vs r12（740000+600）→ `runs/gates/p20_vs_r12_repl600.jsonl`
+- ≈08:14 gateA_r36 → ≈08:16–08:42 gateC → ≈08:44 gateD → **≈08:45–09:15 边界判读**
+- **09:08** M 测量（750000+600，守卫自选 A/B）→ guard → 方案 B 三项 → 必要时写 plan_b_enabled
+- E1：维持 §6.47.4，终评窗口补跑；早停：R36 预期 continue，**R48 是更可能的边界**
+
+
+---
+
+## [07:0x 追加 · 用户批准 P0①/P1 线上改善]
+
+用户 06:55「按你的推荐直接做」⇒ 直接执行 519 局复盘的 P0① 与 P1。
+
+**P0① 四座旋转 + 修 dealer 恒 0**（web/dushan_server.py）：
+- 根因：`_finalize()` 写 `game.next_dealer` 属性，但 `game.result` dict 无该字段，
+  服务端 `res.get("next_dealer", game.dealer)` 永远回退当前 dealer（=0）。
+- 修复：① `self.dealer = int(game.next_dealer)`（两处）；② 初始庄家 `rng.randrange(4)`；
+  ③ 每手结算后 `my_seat = (my_seat+1) % 4`（四座轮转）。
+- 验证：selftest PASS、29/29、6 手模拟 my_seat 序列 1→2→3→0、dealer 跟随赢家。
+
+**P1 冠军注册**：
+- 复制 `champ_exit_p32.pt`（=exit_best，A +4.573 D +0.728 p=.035）与
+  `champ_exit_p35.pt`（A +4.696 最高，D ns），register_champion 就地登记。
+- 8770 蓝绿切换：master=dushan_master 不变、3 冠军可见、建局 ok。
+
+**待排**：web_best vs champ_exit_p32 冻结头对头（300 seed×四座 greedy，池 760000），
+排 R36 train CPU 空闲窗口，由自检触发。
