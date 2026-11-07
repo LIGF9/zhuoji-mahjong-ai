@@ -2539,3 +2539,462 @@ gnorm 1.215、ent 1.825、ent_rollout 2.179、vl 0.819 —— 重锚后熵由 1.
    13.3 vs 11.0、窗口长度不同），不触发事故、不重启、不改配置。
    完整数据与测量限制（未直读 ANE/GPU 硬件计数器，结论为间接证据）见
    `docs/python_rust_usage_audit.md` §7。自检 automation prompt 已加资源利用率口径。
+
+## [自检 #34 · 2026-11-07 23:29] S1 收官轮 R24 标注中 · P22/P23 双零边际 · 两处预登记澄清
+
+**结论：健康、产出符合预期（平台期延续）、主线零干预。** 唯一驱动 PID 3078（PPID=6189 keepalive），
+单实例（1 driver + 1 annotate 5941），lock 1~2s；R24 = 完整 DAgger 轮，标注 12,995/25,000·worker
+（52.0%）@4,190s、11,166/h·worker、ETA ≈00:33；panic/NaN/超时 0；npz 59；磁盘 305Gi；
+health_watch --last 12 全绿；Web `/`=200 + `/api/meta` master=dushan_master + models[0].champion=false；
+看门狗 6189 活、22:20 重启后无新拉起；PPO 链 p22→p23 连续。
+
+**R22/R23 结算**：P22(init=exit_best≡r21 重锚) 120,000 状态/703.6s，D −0.024±0.350 p=.9442，
+A +4.169±0.439，ent 由 1.03 回升 1.825（重锚预期）；P23 117,755 状态/696.7s，D −0.122±0.360
+p=.7341，A +4.393±0.418；两轮均不晋升 ⇒ exit_best 仍 = exit_r21。重锚后两轮 D 为负但 <1SE，
+不触发 rapid_abort（rapid_guard 未写标记）。
+
+**best-of 不变**：P20 +4.962 仍 #1，P20−P23 +0.569±0.513 p=.267、P20−R11 +0.763±0.539 p=.157
+⇒ top1 与其后全部 ns，交付强度自 R08 冻结。
+
+**新登记（均在看 R36 数据之前锁定）**：
+① 方案 B 条件②「链无缺号」改按**段**判定：当前段 = p22…p36（重锚点 exit_r21），p21 缺口属上一段
+   已归档事故、不重复计入；其余两项条件不放松（docs §6.44.3）。
+② E1 窗口按小时巡检会结构性错过 R24 train 段（00:34–01:08）⇒ 单建一次性 automation 于 00:45
+   触发 `shadow_lab.py --e1`；守卫 rc=2/3 则不重试、顺延 R36；判据一字不改（docs §6.44.4）。
+
+**早停状态：未到边界（最早 R36）**，`runs/early_stop` 不存在，`early_stop_guard --boundary 24`
+按设计 not_ready（R24 不检查）。
+
+**下一步**：R24 train 段内跑 E1（00:45）→ 捕 r24_gateD/三件套/4×25k → R25 起 S2 同配方 →
+**R36 边界（≈07:0x）三件事**：740000+600 复现测量（p20 vs r12）、boundary=36 早停判读、方案 B 三项判定。
+未改任何超参/判据/线上档。
+
+## [自检 #35 · 2026-11-08 00:31] S1 收官轮标注末段 · 平台期定量证据入库 · 排期实测修订
+
+**结论：健康、主线零干预、产出符合「平台期」预期。** 唯一驱动 PID 3078（PPID=6189 看门狗），
+单实例（1 driver + 1 annotate 5941），`runs/night_run.lock` mtime 1s；阶段 = **R24 = S1 收官轮
+（完整 DAgger）**，annotate 23,100/25,000·worker（92.4%）@7,930s、10,500/h·worker，
+**落盘 ETA ≈00:42~00:45**（比 §6.44.5 预估 00:33 慢 ~9min，吞吐从 R21 的 11.2k/h 降到 10.5k/h）。
+panic/NaN/Traceback 0；npz 70；磁盘 305Gi；`health_watch --last 12` 12/12 全绿
+（kl .0117、clip .107、gnorm 1.30、ent 1.708、vl 1.004、states 117,755、secs 697）；
+Web `/`=200、`/api/meta` master=dushan_master、models=[dushan_master(false), web_best(true)]；
+看门狗 6189 活、22:20 后无新拉起；PPO 链 p22→p23 连续（p21 缺号为已归档事故）。
+
+**平台期定量证据（新入库，供 R36 判读对照）**：自 P16（17:32 D +1.073 p=.0088 晋升）之后
+**8 个决策轮无一在闸门 D 上通过**：P17 +0.056(.86) / P18 +0.391(.25) / P19 +0.166(.62) /
+P20 +0.212(.52) / r21 −0.464(.24，零边际读法) / P22 −0.024(.94) / P23 −0.122(.73)。
+闸门 A 在 4.15~4.96 横盘（P20 +4.962 为区间最高，P22 +4.169、P23 +4.393 无趋势）。
+⇒ 与 §6.43 早停语义一致，但**不是结论**：M 判据只能由 600-seed 独立池在 R36 边界裁决。
+
+**附带观测（仅登记，不改规则）**：`exit_best ≡ exit_r21`(A +3.717) 而 A 均值最高的是
+`exit_p20`(+4.962) —— `exit_best` 语义为「最近一次 A 门通过者」，非「A 最高者」；这解释 P22 起
+重锚后 ent 1.03→1.825。交付侧无风险（终评 best-of 覆盖全部 ckpt）；**晋升规则不动**。
+
+**早停：未到边界**。`runs/early_stop` 无、`runs/gates/plan_b_enabled` 无；
+`early_stop_guard --boundary 24` = `not_ready`（R24 按设计不检查，最早 R36）。
+本周期最强=P20 +4.962±0.413，上周期最强=R11 +4.269±0.393（守卫自动选出，仅展示）。
+
+**E1：仍待执行**。`runs/shadow/` 只有 early_stop_check.json / early_stop_mock.jsonl /
+exploitability.json / grp_probe.json，无 `e1.done`、无结果文件。一次性定时器
+85e191d7（11-08 **00:45**）ACTIVE，将自动撞 R24 train 段；若守卫在 train_r24.log 落盘前触发
+⇒ rc=3/2 不重试、顺延 R36。**本轮不手动触发**（避免与定时器双跑抢核）。
+
+**排期实测修订（已写入 docs §6.45.3）**：R24 train 段 ≈00:45–01:22 → R24 收口 ≈01:50~02:05 →
+R25 起 S2 → R36 annotate 起跑 ≈04:30、落盘 ≈06:40、train 段 ≈06:41–07:15、
+**R36 三件事（740000+600 复现测量 / boundary=36 早停判读 / 方案 B 三项）≈07:2x~07:5x**。
+
+**下一硬决策点 = R36 边界**。未改任何超参、判据、线上档；无重启、无 kill、无编译、无并发探针。
+[2026-11-08 00:44:31]   rc=0  8749s  annotate_r24
+[2026-11-08 00:44:31] R24 标注完成 student=exit_best.onnx seed0=840000 → 4×25k
+[2026-11-08 00:44:31] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz runs/exit_r03/exit_w*.npz runs/exit_r04/exit_w*.npz runs/exit_r05/exit_w*.npz runs/exit_r06/exit_w*.npz runs/exit_r07/exit_w*.npz runs/exit_r08/exit_w*.npz runs/exit_r09/exit_w*.npz runs/exit_r10/exit_w*.npz runs/exit_r11/exit_w*.npz runs/exit_r12/exit_w*.npz runs/exit_r21/exit_w*.npz runs/exit_r24/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r24.pt --epochs 30 --window 400000 --batch 256 --seed 20261130 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt  → train_r24.log
+[2026-11-08 00:44:31]   rc=1  0s  train_r24
+[2026-11-08 00:44:31] R24 阶段异常：AssertionError: Fatal Python error: init_sys_streams: can't initialize sys standard streams
+Python runtime state: core initialized
+OSError: [Errno 9] Bad file descriptor
+
+Current thread 0x00000001efd4a1c0 (most recent call first):
+  <no Python frame>
+
+[2026-11-08 00:44:31] P25 PPO 链起点 = exit_best.pt  hands=1920 max_states=120000
+[2026-11-08 00:44:31] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p25.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1150000  → ppo_p25.log
+[2026-11-08 00:44:31]   rc=1  0s  ppo_p25
+[2026-11-08 00:44:31] P25 PPO 训练失败 rc=1（主线不受影响）
+[2026-11-08 00:44:31] R25 加速轮 PPO 无产出 → 回落到 DAgger 路径
+[2026-11-08 00:44:31] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-08 00:44:31]   rc=1  0s  export_exit_best
+[2026-11-08 00:44:31] R25 阶段异常：AssertionError: Fatal Python error: init_sys_streams: can't initialize sys standard streams
+Python runtime state: core initialized
+OSError: [Errno 9] Bad file descriptor
+
+Current thread 0x00000001efd4a1c0 (most recent call first):
+  <no Python frame>
+
+[2026-11-08 00:44:31] P26 PPO 链起点 = exit_best.pt  hands=1920 max_states=120000
+[2026-11-08 00:44:31] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p26.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1160000  → ppo_p26.log
+[2026-11-08 00:44:31]   rc=1  0s  ppo_p26
+[2026-11-08 00:44:31] P26 PPO 训练失败 rc=1（主线不受影响）
+[2026-11-08 00:44:31] R26 加速轮 PPO 无产出 → 回落到 DAgger 路径
+[2026-11-08 00:44:31] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-08 00:44:32]   rc=1  0s  export_exit_best
+[2026-11-08 00:44:32] R26 阶段异常：AssertionError: Fatal Python error: init_sys_streams: can't initialize sys standard streams
+Python runtime state: core initialized
+OSError: [Errno 9] Bad file descriptor
+
+Current thread 0x00000001efd4a1c0 (most recent call first):
+  <no Python frame>
+
+[2026-11-08 00:44:32] 连续 3 轮失败 → 退出，等待每小时自检定位后重启
+[2026-11-08 00:44:32] 7×24 驱动结束 failures=3  best=exit_best.pt
+[2026-11-08 00:51:10] ============================================================
+[2026-11-08 00:51:10] 7×24 ExIt 驱动启动：R24 起，截止 2026-11-13 02:30（R1 已完成；断点续跑 + 每小时自检自动化）
+[2026-11-08 00:51:10] R24 标注已完成（4×25k 分片齐），跳过
+[2026-11-08 00:51:10] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz runs/exit_r03/exit_w*.npz runs/exit_r04/exit_w*.npz runs/exit_r05/exit_w*.npz runs/exit_r06/exit_w*.npz runs/exit_r07/exit_w*.npz runs/exit_r08/exit_w*.npz runs/exit_r09/exit_w*.npz runs/exit_r10/exit_w*.npz runs/exit_r11/exit_w*.npz runs/exit_r12/exit_w*.npz runs/exit_r21/exit_w*.npz runs/exit_r24/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r24.pt --epochs 30 --window 400000 --batch 256 --seed 20261130 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt  → train_r24.log
+
+## [自检 #35b · 2026-11-08 00:55] 事故处置：R24 训练段瞬时崩溃 → 已修复并恢复（零数据损失）
+
+**触发**：00:44:31 R24 annotate 落盘 4×25k 后，驱动启动 `train_exit.py` **0s 内 rc=1**，报
+`Fatal Python error: init_sys_streams / OSError: [Errno 9] Bad file descriptor`；R25/R26 同因 1 秒内连锁失败，
+`consecutive_fail>=3` ⇒ 驱动 00:44:32 自退；看门狗每 30s 拉起仍瞬崩（12 行「仍无心跳」）。
+
+**根因**：驱动/看门狗进程的 **fd 0 已失效**（会话边界回收继承流），而 `subprocess` 未显式指定 stdin ⇒
+子进程继承坏 fd ⇒ CPython `init_sys_streams` dup 失败 EBADF 直接 abort。与训练代码、数据、权重无关。
+
+**修复（只动可靠性，零配方变更）**：
+1. `night_run.py::run()` 与 `tools/keepalive.py::start_driver/start_web` 一律 `stdin=subprocess.DEVNULL`；
+2. `night_run.py::main()` 增启动探针（`python -c` 子进程自检，失败则 `return 2` 不进轮次循环）；
+3. 轮次异常且墙钟 <60s ⇒ 记「疑似环境故障」并退避 180s（不再 1 秒烧 3 轮）。
+4. 看门狗以干净 stdin 重启 **PID 19486**（旧 6189 已 TERM，Web 进程未受影响）。
+5. 驱动 00:51:10 断点续跑：`R24 标注已完成（4×25k 分片齐），跳过` → 直接进 train 段（**PID 19488**，
+   单实例：1 driver + 1 train_exit 19489；lock 心跳 1s；无第二个驱动）。
+
+**损失**：数据 0（R24 4×25k 完好、exit_p22/p23/exit_best/冠军表/线上档位全未动）；轮号 0（R25/R26 无任何
+ckpt/闸门产物，`first_incomplete_round()` 仍为 24，p24/p25/p26 将正常生成，无链缺口）；墙钟 ≈7min
+（00:44–00:51，占剩余 121h 的 0.1%）。
+
+**复核**：Web `/`=200 全程未断（88725 独立于驱动）；看门狗 19486 活、30s 一轮；`health_watch` 12/12 绿；
+磁盘 305Gi。**未触碰早停判据、闸门、候选规则、线上默认档。**
+
+**排期（实测）**：R24 train 00:51–01:27 → A/C/D ≈01:27–02:10 → **R24 收口 ≈02:10** → R25 起 S2；
+R36 三件事（740000+600 复现测量 / boundary=36 早停 / 方案 B 三项）顺延至 **≈07:3x–08:0x**。
+
+**E1**：00:45 定时器到点未执行（当时窗口实为空窗）；现窗口 = R24 train 段 00:51–01:27，定时器若在窗口内
+补触发即正常执行，否则按预登记顺延 R36。**不手动双跑。**
+
+[E1] 2026-11-08 01:38 rc=3 硬上限中止（30min 上限；实测 42.9min，其中 rollout 161s、双更新各 118 步）→ 闸门 A 未跑、无 e1_result.json、结果作废不得判读；e1.done 未写，一次性机会未被消耗；R24 窗口未捕获，顺延 R36/R48，判据不变
+[2026-11-08 01:47:12]   rc=0  3363s  train_r24
+[2026-11-08 01:47:12] R24 训练完成 init=exit_best.pt → exit_r24.pt  (['[done] best val 1.7366 → /Users/ligf9/zhuoji-mahjong-ai/models/exit_r24.pt'])
+[2026-11-08 01:47:12] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r24.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r24_gateA.jsonl  → gateA_r24.log
+[2026-11-08 01:48:36]   rc=0  83s  gateA_r24
+[2026-11-08 01:48:36] R24 闸门 A: [summary] seats=[0, 1, 2, 3]  n=300  diff=+3.501±0.406  z=+8.63  p≈0.0000  符号 206:91  → 通过
+[2026-11-08 01:48:36] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-08 01:48:37]   rc=0  1s  export_exit_best
+[2026-11-08 01:48:37] 晋升：exit_r24.pt → exit_best.pt
+[2026-11-08 01:48:37] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r24.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --a-mode greedy --b-mode search32 --seeds 50 --seed0 720000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r24_gateC.jsonl  → gateC_r24.log
+[2026-11-08 02:14:28]   rc=0  1551s  gateC_r24
+[2026-11-08 02:14:28] R24 闸门 C(趋势): [summary] seats=[0, 1, 2, 3]  n=50  diff=+3.053±0.998  z=+3.06  p≈0.0022  符号 32:17
+[2026-11-08 02:14:28] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r24.pt --b /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r24_prevbest.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r24_gateD.jsonl  → gateD_r24.log
+[2026-11-08 02:17:31]   rc=0  183s  gateD_r24
+[2026-11-08 02:17:31] R24 闸门 D(vs 上轮最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=-0.037±0.404  z=-0.09  p≈0.9276  符号 128:169
+[2026-11-08 02:17:31] P24 PPO 链起点 = exit_p23.pt  hands=960 max_states=60000
+[2026-11-08 02:17:31] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p23.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p24.pt --hands 960 --workers 4 --threads 2 --max-states 60000 --epochs 2 --lr 5e-5 --seed0 1140000  → ppo_p24.log
+
+## [自检 #36 · 2026-11-08 02:2x] S1 收官结算：R24 全通过（A +3.501 / C +3.053 / D ns）+ DAgger 重锚低于链末端 + E1 rc=3 处置
+
+**健康**：驱动 19488（PPID 19486，00:51:10 起）单实例；lock<120s；Web `/`=200、`master=dushan_master`、
+`models[0].champion=false`、冠军表仅 `web_best`；磁盘 305Gi；`health_watch` 12/12 绿；00:51 起 panic/NaN/超时 0。
+
+**R24（S1 收官 · 完整 DAgger）**：annotate 4×25k（97k 张，10.5k/h·w，`check_npz` 4/4）→ train 3363s
+（init=exit_best、window 400k、**best val 1.7366 项目最低**、ep05 早停）→ **A +3.501±0.406**（206:91，p≈0）
+⇒ 晋升 `exit_r24`≡`exit_best`(52ad219f) → **C +3.053±0.998**（32:17，p=0.0022，26min）→
+**D(vs exit_p23) −0.037±0.404**（128:169，p=0.9276，ns ⇒ §6.41.2 只记零边际）→ 02:17:31 起 P24
+（init=exit_p23、hands=960，链 p23→p24 连续）→ **R25 起 S2**。
+
+**S1 结算**：gate A 均值 **+4.323**（上一周期 +3.226），内部 OLS slope **−0.034 分/轮**（§6.43.2 S1 辅证成立）。
+S1 是一次**水平跃迁**（R13–R20 PPO 链 4.03→4.96），不是逐轮爬升。best-of 仍是 **P20 +4.962**，与
+P18/P15/P19/P23 全部 <1SE 并列 ⇒ 交付强度仍冻结在 R08 以来的水平（终评 best-of 覆盖）。
+
+**新证据（第三处，支持方案 B 但不显著）**：同池配对 **R24−P23 = −0.892±0.548（p=.104）**、
+R24−R21 −0.216±0.524、P23−R21 +0.677±0.450 ⇒ 点估计「exit_best 重锚的 DAgger 比链末端低 ≈0.9 分」，
+与 §6.40 结构性损失一致。**不改 R36 三项条件、不提前启用方案 B。**
+
+**E1 rc=3**：00:45 定时器在 R24 train 段触发，rollout 320 局/15,020 状态 161s，双更新各 118 步，
+**01:38:54 达 30min 硬上限 abort** ⇒ 闸门未跑、无结果、`e1.done` 未写，**本次机会未消耗且不得判读**。
+副作用：抢 MPS 使 R24 train 3363s（正常 2032–2555s）。**处置**：E1 重跑窗口改到训练停止后的终评窗口
+（零机会成本），判据一字不改；不在 R36 train 段与复现测量抢资源。
+
+**早停**：未到边界（最早 R36），`runs/early_stop` 与 `plan_b_enabled` 均无。**R36 三件事执行手册见计划 §6.47.5**
+（含新发现的口径冲突：M 的 A 候选含 R36 自身 gateA ⇒ M 不可能落在 R36 train 段；锁死「先复现 740000+600、
+后 M 750000+600、严禁并发」）。
+
+**排期（实测重算）**：R24 收口 02:17 → P24 ≈02:27 → R25–R35 11 加速轮 ≈143min → R36 annotate ≈04:50 →
+落盘 ≈07:10 → train ≈07:10–07:45 → A ≈07:47 → C ≈08:15 → **边界判读 ≈08:2x–08:4x**。
+
+**未动**：TAU/Q-MSE/n_det/lr/PPO_HANDS/Φ/对手分布/闸门判据/线上默认档/`dushan_master.pt`/冠军表。
+[2026-11-08 02:24:31]   rc=0  420s  ppo_p24
+[2026-11-08 02:24:31] P24 PPO 完成 init=exit_p23.pt → exit_p24.pt {"hands": 960, "states": 55181, "A_std": 8.641499519348145, "ret_std": 13.15833069453214, "kl": [0.006066428264333539, 0.008663322808354645], "vl": 1.1389570861226983, "ent": 1.6037212974495358, "gnorm": 1.4115479841000504, "clipfrac": 0.08563737440164443, "ent_rollout": 1.984221621133959, "kl_stop": false, "secs": 419.2}
+[2026-11-08 02:24:31] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p24.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p24_gateD.jsonl  → gateD_p24.log
+[2026-11-08 02:27:30]   rc=0  179s  gateD_p24
+[2026-11-08 02:27:30] P24 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=-0.027±0.389  z=-0.07  p≈0.9454  符号 139:160  → 不通过
+[2026-11-08 02:27:30] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p24.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p24_gateA.jsonl  → gateA_p24.log
+[2026-11-08 02:28:49]   rc=0  79s  gateA_p24
+[2026-11-08 02:28:49] P24 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+3.972±0.408  z=+9.73  p≈0.0000  符号 213:84
+[2026-11-08 02:28:49] P24 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-08 02:28:49] R24 轮次完成  best=exit_best.pt
+[2026-11-08 02:28:49] P25 PPO 链起点 = exit_p24.pt  hands=1920 max_states=120000
+[2026-11-08 02:28:49] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p24.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p25.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1150000  → ppo_p25.log
+
+[P24 · 2026-11-08 02:28] A +3.972±0.408（213:84，通过）/ D −0.027±0.389（139:160，ns 不晋升）；960 局、55,181 状态、420s，
+kl[.0061,.0087]、clipfrac .086、ent 1.604、ent_rollout 1.984（重锚后熵回落属预期）；链 p23→p24 连续。
+**R24 轮次完成 → 02:28:49 起 R25 = S2 第一个加速轮**（P25 init=exit_p24、hands=1920）⇒ 下一步训练已自动接续，零干预。
+[2026-11-08 02:42:01]   rc=0  792s  ppo_p25
+[2026-11-08 02:42:01] P25 PPO 完成 init=exit_p24.pt → exit_p25.pt {"hands": 1920, "states": 108270, "A_std": 8.803433418273926, "ret_std": 13.195475471413172, "kl": [0.006101539146719857, 0.00843485102253409], "vl": 1.1795306290295107, "ent": 1.489754940460196, "gnorm": 1.359075913122078, "clipfrac": 0.09188638887330713, "ent_rollout": 1.8405747562265509, "kl_stop": false, "secs": 791.3}
+[2026-11-08 02:42:01] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p25.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p25_gateD.jsonl  → gateD_p25.log
+[2026-11-08 02:44:57]   rc=0  175s  gateD_p25
+[2026-11-08 02:44:57] P25 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.081±0.387  z=+0.21  p≈0.8339  符号 144:153  → 不通过
+[2026-11-08 02:44:57] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p25.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p25_gateA.jsonl  → gateA_p25.log
+[2026-11-08 02:46:13]   rc=0  76s  gateA_p25
+[2026-11-08 02:46:13] P25 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.620±0.410  z=+11.26  p≈0.0000  符号 211:87
+[2026-11-08 02:46:13] P25 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-08 02:46:13] R25 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-08 02:46:13] P26 PPO 链起点 = exit_p25.pt  hands=1920 max_states=120000
+[2026-11-08 02:46:13] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p25.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p26.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1160000  → ppo_p26.log
+[2026-11-08 02:58:57]   rc=0  764s  ppo_p26
+[2026-11-08 02:58:57] P26 PPO 完成 init=exit_p25.pt → exit_p26.pt {"hands": 1920, "states": 103594, "A_std": 8.772665023803711, "ret_std": 13.038884154712012, "kl": [0.006814566495638616, 0.008438087108453023], "vl": 1.1778702677032094, "ent": 1.404359851943122, "gnorm": 1.3765516682171528, "clipfrac": 0.08663092321819729, "ent_rollout": 1.7183167492113238, "kl_stop": false, "secs": 762.7}
+[2026-11-08 02:58:57] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p26.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p26_gateD.jsonl  → gateD_p26.log
+[2026-11-08 03:01:51]   rc=0  174s  gateD_p26
+[2026-11-08 03:01:51] P26 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.861±0.371  z=+2.32  p≈0.0203  符号 152:143  → 通过
+[2026-11-08 03:01:51] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p26.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p26_gateA.jsonl  → gateA_p26.log
+[2026-11-08 03:03:10]   rc=0  79s  gateA_p26
+[2026-11-08 03:03:10] P26 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.294±0.390  z=+11.03  p≈0.0000  符号 216:81
+[2026-11-08 03:03:10] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-08 03:03:11]   rc=0  1s  export_exit_best
+[2026-11-08 03:03:11] 晋升：exit_p26.pt → exit_best.pt
+[2026-11-08 03:03:11] R26 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-08 03:03:11] P27 PPO 链起点 = exit_p26.pt  hands=1920 max_states=120000
+[2026-11-08 03:03:11] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p26.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p27.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1170000  → ppo_p27.log
+[2026-11-08 03:15:30]   rc=0  739s  ppo_p27
+[2026-11-08 03:15:30] P27 PPO 完成 init=exit_p26.pt → exit_p27.pt {"hands": 1920, "states": 100785, "A_std": 8.5932035446167, "ret_std": 12.750306368868161, "kl": [0.0051467257614193134, 0.007122264162998949], "vl": 1.135447898643271, "ent": 1.320854568239396, "gnorm": 1.3254595399659297, "clipfrac": 0.08192527297940956, "ent_rollout": 1.60227934046844, "kl_stop": false, "secs": 737.6}
+[2026-11-08 03:15:30] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p27.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p27_gateD.jsonl  → gateD_p27.log
+[2026-11-08 03:18:25]   rc=0  176s  gateD_p27
+[2026-11-08 03:18:25] P27 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.698±0.308  z=+2.26  p≈0.0236  符号 153:121  → 通过
+[2026-11-08 03:18:25] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p27.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p27_gateA.jsonl  → gateA_p27.log
+[2026-11-08 03:19:43]   rc=0  77s  gateA_p27
+[2026-11-08 03:19:43] P27 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.414±0.402  z=+10.98  p≈0.0000  符号 217:82
+[2026-11-08 03:19:43] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-08 03:19:44]   rc=0  1s  export_exit_best
+[2026-11-08 03:19:44] 晋升：exit_p27.pt → exit_best.pt
+[2026-11-08 03:19:44] R27 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-08 03:19:44] P28 PPO 链起点 = exit_p27.pt  hands=1920 max_states=120000
+[2026-11-08 03:19:44] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p27.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p28.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1180000  → ppo_p28.log
+
+[自检 #37 · 2026-11-08 03:35]  S2 中段：P26/P27 连续通过闸门 D 并晋升 exit_best（S1 以来首次）
+├ 健康：绿。P27 kl .0071 / clip .082 / gnorm 1.325 / ent 1.321 / ent_rollout 1.602 / states 100,785 / 738s；
+│  P24/P25 的 vl 三连升 WARN（0.819→1.180）已由 P27 vl 1.135 自发解除；链 p24→p27 连续；rapid_abort/ppo_disabled 无。
+├ 闸门：P24 A +3.972 D −0.027（不晋升）｜P25 A +4.620 D +0.081（不晋升）
+│  P26 A +4.294 D **+0.861±0.371 p=.0203** → 晋升 exit_best=p26（03:03）
+│  P27 A +4.414 D **+0.698±0.308 p=.0236** → 晋升 exit_best=p27（03:19，md5 382cf726）
+├ S2 gateA 均值 +4.325（SE .136）vs S1 +4.323；ent_rollout 三轮 −19.3%（1.984→1.602）。
+├ 解释（弱阳性待确认）：D 固定池十余次比较，α=.05 期望假阳 0.5~0.75 个，两连正超出期望但不足以定论；
+│  **禁止**据此改配方/加预算/挑显著/宣称可累积。确认路径只有三条已预登记的全新池：740000+600 复现（R36 train 段）、
+│  750000+600（M，gateA_r36 之后）、终评 best-of + 1000-seed 复赛。阈值一字不改。
+├ 结构含义：exit_best 已从 r24 重锚点移到 PPO 链末端 p27 ⇒ §6.40「重锚丢弃链增益」被 D 门机制自动部分修复；
+│  若边界时 exit_best 仍=链末端，方案 B 的 1 行改动在 R36 等价 no-op（仍按预登记判定留档，不改判据）。
+├ 早停：**未到边界**（最早 R36），runs/early_stop 与 plan_b_enabled 均无。预测 verdict=continue（S2 辅证不成立：
+│  熵仍在下降通道），但必须到场执行 guard，不得据预测跳过。
+├ 排期修正：实测 16.7min/加速轮（PPO 740-790s + D 176s + A 78s）⇒ R36 annotate ≈05:35、落盘 ≈08:0x、
+│  边界判读 ≈09:2x–09:4x（原 08:2x 估计作废）。复现测量窗口挪到 ≈08:05–08:45。
+└ 零干预：未重启/未改超参/未注册冠军/未跑 E1（rc=3 已作废，窗口=终评）/未跑吃 CPU 探针。
+[2026-11-08 03:31:32]   rc=0  708s  ppo_p28
+[2026-11-08 03:31:32] P28 PPO 完成 init=exit_p27.pt → exit_p28.pt {"hands": 1920, "states": 96199, "A_std": 8.615372657775879, "ret_std": 12.551539580200245, "kl": [0.005436735338236681, 0.007204608200984868], "vl": 1.1399171067837706, "ent": 1.2476772136510688, "gnorm": 1.3382236428875873, "clipfrac": 0.0770438952975847, "ent_rollout": 1.4807058967491065, "kl_stop": false, "secs": 707.5}
+[2026-11-08 03:31:32] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p28.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p28_gateD.jsonl  → gateD_p28.log
+[2026-11-08 03:34:31]   rc=0  179s  gateD_p28
+[2026-11-08 03:34:31] P28 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.262±0.268  z=+0.98  p≈0.3288  符号 135:129  → 不通过
+[2026-11-08 03:34:31] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p28.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p28_gateA.jsonl  → gateA_p28.log
+[2026-11-08 03:35:48]   rc=0  77s  gateA_p28
+[2026-11-08 03:35:48] P28 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.519±0.426  z=+10.61  p≈0.0000  符号 220:79
+[2026-11-08 03:35:48] P28 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-08 03:35:48] R28 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-08 03:35:48] P29 PPO 链起点 = exit_p28.pt  hands=1920 max_states=120000
+[2026-11-08 03:35:48] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p28.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p29.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1190000  → ppo_p29.log
+[2026-11-08 03:47:44]   rc=0  716s  ppo_p29
+[2026-11-08 03:47:44] P29 PPO 完成 init=exit_p28.pt → exit_p29.pt {"hands": 1920, "states": 96933, "A_std": 8.537837028503418, "ret_std": 12.213327334651002, "kl": [0.004848265157745891, 0.007120465743048289], "vl": 1.1206384152567166, "ent": 1.177596491842597, "gnorm": 1.333793732059977, "clipfrac": 0.07216555603575896, "ent_rollout": 1.3700389497750902, "kl_stop": false, "secs": 714.8}
+[2026-11-08 03:47:44] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p29.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p29_gateD.jsonl  → gateD_p29.log
+[2026-11-08 03:50:40]   rc=0  175s  gateD_p29
+[2026-11-08 03:50:40] P29 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.511±0.303  z=+1.68  p≈0.0920  符号 142:135  → 不通过
+[2026-11-08 03:50:40] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p29.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p29_gateA.jsonl  → gateA_p29.log
+[2026-11-08 03:51:56]   rc=0  76s  gateA_p29
+[2026-11-08 03:51:56] P29 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.107±0.398  z=+10.31  p≈0.0000  符号 223:74
+[2026-11-08 03:51:56] P29 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-08 03:51:56] R29 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-08 03:51:56] P30 PPO 链起点 = exit_p29.pt  hands=1920 max_states=120000
+[2026-11-08 03:51:56] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p29.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p30.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1200000  → ppo_p30.log
+[2026-11-08 04:03:21]   rc=0  686s  ppo_p30
+[2026-11-08 04:03:21] P30 PPO 完成 init=exit_p29.pt → exit_p30.pt {"hands": 1920, "states": 93725, "A_std": 8.277425765991211, "ret_std": 11.866499150268934, "kl": [0.005759253620064744, 0.007628280181743519], "vl": 1.0559105257572206, "ent": 1.121682475795538, "gnorm": 1.3195482460776857, "clipfrac": 0.07049949938172541, "ent_rollout": 1.2862200794650416, "kl_stop": false, "secs": 684.7}
+[2026-11-08 04:03:21] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p30.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p30_gateD.jsonl  → gateD_p30.log
+[2026-11-08 04:06:18]   rc=0  177s  gateD_p30
+[2026-11-08 04:06:18] P30 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.378±0.295  z=+1.28  p≈0.2003  符号 149:135  → 不通过
+[2026-11-08 04:06:18] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p30.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p30_gateA.jsonl  → gateA_p30.log
+[2026-11-08 04:07:35]   rc=0  77s  gateA_p30
+[2026-11-08 04:07:35] P30 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.634±0.396  z=+11.71  p≈0.0000  符号 224:74
+[2026-11-08 04:07:35] P30 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-08 04:07:35] R30 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-08 04:07:35] P31 PPO 链起点 = exit_p30.pt  hands=1920 max_states=120000
+[2026-11-08 04:07:35] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p30.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p31.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1210000  → ppo_p31.log
+[2026-11-08 04:18:48]   rc=0  673s  ppo_p31
+[2026-11-08 04:18:48] P31 PPO 完成 init=exit_p30.pt → exit_p31.pt {"hands": 1920, "states": 90651, "A_std": 8.243407249450684, "ret_std": 11.713974026776736, "kl": [0.004563244704557189, 0.005867220863247369], "vl": 1.0454724352964213, "ent": 1.0746011097666244, "gnorm": 1.304388032916566, "clipfrac": 0.066964169276852, "ent_rollout": 1.21096595738899, "kl_stop": false, "secs": 671.8}
+[2026-11-08 04:18:48] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p31.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p31_gateD.jsonl  → gateD_p31.log
+[2026-11-08 04:21:43]   rc=0  175s  gateD_p31
+[2026-11-08 04:21:43] P31 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.301±0.311  z=+0.97  p≈0.3327  符号 149:138  → 不通过
+[2026-11-08 04:21:43] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p31.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p31_gateA.jsonl  → gateA_p31.log
+[2026-11-08 04:22:59]   rc=0  75s  gateA_p31
+[2026-11-08 04:22:59] P31 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.389±0.371  z=+11.84  p≈0.0000  符号 216:81
+[2026-11-08 04:22:59] P31 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-08 04:22:59] R31 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-08 04:22:59] P32 PPO 链起点 = exit_p31.pt  hands=1920 max_states=120000
+[2026-11-08 04:22:59] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p31.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p32.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1220000  → ppo_p32.log
+[2026-11-08 04:34:06]   rc=0  667s  ppo_p32
+[2026-11-08 04:34:06] P32 PPO 完成 init=exit_p31.pt → exit_p32.pt {"hands": 1920, "states": 89591, "A_std": 8.113615989685059, "ret_std": 11.62476478256657, "kl": [0.00451033119195407, 0.006647277711558023], "vl": 1.0158315122979027, "ent": 1.031415219306946, "gnorm": 1.3215753912074226, "clipfrac": 0.06532540033438376, "ent_rollout": 1.1477663933523166, "kl_stop": false, "secs": 665.8}
+[2026-11-08 04:34:06] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p32.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p32_gateD.jsonl  → gateD_p32.log
+
+## 2026-11-08 04:36（自检 #38，7×24 第 38 次 · S2 中后段：D 门 7/7 符号全正，链上边际仍在爬）
+- 结论：**健康、产出符合预期（平台期 + 弱阳性延续）、主线零干预**。唯一驱动 PID 19488（PPID 19486，00:51:10 起）单实例，
+  lock 心跳 1~2s；当前阶段 = **R32（S2 第 8 个加速轮，P32 init=exit_p31，04:22:59 起，ep1/2 steps=350）**；panic/NaN/超时 0；
+  磁盘 304Gi；Web `/`=200、`/api/meta` master=dushan_master、models[0].champion=false、冠军表仅 web_best；
+  看门狗 19486 活（00:51 后无新拉起）；`runs/early_stop`/`plan_b_enabled`/`ppo_disabled`/`rapid_abort` 全部不存在。
+- **S2 部分结算（P25–P31，n=7）**：gateA 均值 **+4.425（SE 0.151）** vs S1 +4.323 ⇒ **+0.102（<1SE，噪声内）**；
+  S2 内部 OLS slope **−0.0114/轮**（|slope|<0.10 ⇒ §6.43.2 S1 辅证成立）。
+- **D 门 7/7 点估计全为正**：+0.081 / **+0.861(p=.0203)** / **+0.698(p=.0236)** / +0.262 / +0.511 / +0.378 / +0.301，
+  均值 **+0.442**；其中 P28–P31 是**对晋升后的 p27** 比（+0.363 均值）⇒ 链上仍在缓慢上爬而非停滞。
+  符号检验 7/7 单侧 p≈0.0078，但**固定池 710000 已比较十余次、且 exit_best 为移动靶**（winner's curse），
+  **不得据此改配方/加预算/挑显著/宣称可累积**；确认路径仍只有三条预登记全新池（740000+600 / 750000+600 / 终评 1000-seed）。
+- **熵通道（重要观察，非判据改动）**：ent_rollout **1.984→1.211（P24→P31，−39.0%）**，最近 6 轮相对变化 −29.5%，
+  仍远未触及 §6.43.2 的 S2 辅证阈值（<0.80 或 <5%）⇒ **R36 预期 verdict=continue**（与 §6.48.5 预测一致）。
+  若按当前斜率（≈−5%/轮）继续，ent_rollout 将在 R44–R48 逼近 0.80 ⇒ **R48 是比 R36 更可能的早停边界**（预测，不是判读）。
+- 早停：**未到边界**（最早 R36）。`early_stop_guard --boundary 36` 需 gateA_r36 落盘后才能判，本轮不执行、不 --arm。
+- **E1：仍无结果，按 §6.47 处置维持「终评窗口补跑」**，本轮不重跑（rc=3 机会已用掉一次，判据不变）。
+- 排期（实测 16.7min/轮仍成立）：R32 收口 ≈04:36 → R33 04:36 / R34 04:53 / R35 05:09 → **R36 annotate 起 ≈05:25** →
+  4×25k 落盘 ≈07:45 → train ≈07:45–08:25（复现测量窗口）→ A ≈08:26 → C ≈08:27–08:53 → D ≈08:55 ⇒ **边界判读 ≈09:0x–09:2x**。
+- **动作（按最优推荐，已执行）**：新建一次性 automation 于 **07:47** 触发 §6.39.5 复现测量（`--wait-log train_r36.log --wait-max-min 25`
+  兜住窗口漂移；annotate 未退则等日志，天然避免并发），只跑该测量、判据一字不改、错过则按 §6.47.5 在 gateD_r36 后补跑并标注偏差。
+- 零干预：未重启驱动/看门狗/Web、未改超参、未注册冠军、未动 dushan_master.pt、未跑任何吃 CPU 的探针。
+
+**[04:36 补记]** P32 已收口：states **89,591**、665.8s、kl[.0045,.0066]、clip .065、gnorm 1.322、ent 1.031、ent_rollout **1.148**、vl 1.016 —— 全部在预登记阈值内，链 p31→p32 连续；熵仍在 −5%/轮通道内下行（与本节 6.49.3 外推一致）。R32 闸门 D/A 随后 ~4min 落盘，R33 自动接续。
+[2026-11-08 04:37:07]   rc=0  182s  gateD_p32
+[2026-11-08 04:37:07] P32 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.728±0.345  z=+2.11  p≈0.0348  符号 148:134  → 通过
+[2026-11-08 04:37:07] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p32.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p32_gateA.jsonl  → gateA_p32.log
+[2026-11-08 04:38:22]   rc=0  74s  gateA_p32
+[2026-11-08 04:38:22] P32 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.573±0.392  z=+11.66  p≈0.0000  符号 222:75
+[2026-11-08 04:38:22] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-08 04:38:23]   rc=0  1s  export_exit_best
+[2026-11-08 04:38:23] 晋升：exit_p32.pt → exit_best.pt
+[2026-11-08 04:38:23] R32 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-08 04:38:23] P33 PPO 链起点 = exit_p32.pt  hands=1920 max_states=120000
+[2026-11-08 04:38:23] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p32.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p33.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1230000  → ppo_p33.log
+[2026-11-08 04:49:15]   rc=0  653s  ppo_p33
+[2026-11-08 04:49:15] P33 PPO 完成 init=exit_p32.pt → exit_p33.pt {"hands": 1920, "states": 88414, "A_std": 8.05906867980957, "ret_std": 11.502456712227465, "kl": [0.004696490332407532, 0.006019176908222301], "vl": 1.0033501917227154, "ent": 0.9854615660588866, "gnorm": 1.3126961137518027, "clipfrac": 0.0660808893092881, "ent_rollout": 1.078852163993056, "kl_stop": false, "secs": 651.5}
+[2026-11-08 04:49:15] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p33.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p33_gateD.jsonl  → gateD_p33.log
+[2026-11-08 04:52:04]   rc=0  168s  gateD_p33
+[2026-11-08 04:52:04] P33 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=-0.227±0.277  z=-0.82  p≈0.4134  符号 124:139  → 不通过
+[2026-11-08 04:52:04] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p33.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p33_gateA.jsonl  → gateA_p33.log
+[2026-11-08 04:53:18]   rc=0  74s  gateA_p33
+[2026-11-08 04:53:18] P33 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.474±0.391  z=+11.44  p≈0.0000  符号 219:79
+[2026-11-08 04:53:18] P33 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-08 04:53:18] R33 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-08 04:53:18] P34 PPO 链起点 = exit_p33.pt  hands=1920 max_states=120000
+[2026-11-08 04:53:18] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p33.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p34.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1240000  → ppo_p34.log
+[2026-11-08 05:04:03]   rc=0  645s  ppo_p34
+[2026-11-08 05:04:03] P34 PPO 完成 init=exit_p33.pt → exit_p34.pt {"hands": 1920, "states": 87821, "A_std": 8.080801010131836, "ret_std": 11.44331591658059, "kl": [0.004713738582511216, 0.00596971830592063], "vl": 1.005685661854439, "ent": 0.9456876231314137, "gnorm": 1.328430472764858, "clipfrac": 0.06883542739981136, "ent_rollout": 1.0217064913933525, "kl_stop": false, "secs": 644.1}
+[2026-11-08 05:04:03] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p34.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p34_gateD.jsonl  → gateD_p34.log
+[2026-11-08 05:06:51]   rc=0  168s  gateD_p34
+[2026-11-08 05:06:51] P34 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=-0.218±0.295  z=-0.74  p≈0.4596  符号 125:148  → 不通过
+[2026-11-08 05:06:51] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p34.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p34_gateA.jsonl  → gateA_p34.log
+[2026-11-08 05:08:08]   rc=0  77s  gateA_p34
+[2026-11-08 05:08:08] P34 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.471±0.446  z=+10.02  p≈0.0000  符号 215:84
+[2026-11-08 05:08:08] P34 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-08 05:08:08] R34 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-08 05:08:08] P35 PPO 链起点 = exit_p34.pt  hands=1920 max_states=120000
+[2026-11-08 05:08:08] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_p34.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p35.pt --hands 1920 --workers 4 --threads 2 --max-states 120000 --epochs 2 --lr 5e-5 --seed0 1250000  → ppo_p35.log
+[2026-11-08 05:18:40]   rc=0  632s  ppo_p35
+[2026-11-08 05:18:40] P35 PPO 完成 init=exit_p34.pt → exit_p35.pt {"hands": 1920, "states": 85967, "A_std": 8.121204376220703, "ret_std": 11.30183659484894, "kl": [0.0044513235713696175, 0.006250985642206312], "vl": 1.0169307028963452, "ent": 0.9108734478553137, "gnorm": 1.316216304188683, "clipfrac": 0.061332960635246264, "ent_rollout": 0.9640558700586014, "kl_stop": false, "secs": 631.2}
+[2026-11-08 05:18:40] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p35.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p35_gateD.jsonl  → gateD_p35.log
+[2026-11-08 05:22:01]   rc=0  201s  gateD_p35
+[2026-11-08 05:22:01] P35 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.108±0.305  z=+0.35  p≈0.7240  符号 132:149  → 不通过
+[2026-11-08 05:22:01] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p35.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p35_gateA.jsonl  → gateA_p35.log
+[2026-11-08 05:23:01]   rc=0  60s  gateA_p35
+[2026-11-08 05:23:01] P35 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+4.696±0.431  z=+10.91  p≈0.0000  符号 222:75
+[2026-11-08 05:23:01] P35 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-08 05:23:01] R35 加速轮完成（PPO-only：无标注/无训练，含闸门 D/A）
+[2026-11-08 05:23:01] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-08 05:23:02]   rc=0  1s  export_exit_best
+[2026-11-08 05:23:02] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r36 --seed0 960000  → annotate_r36.log
+
+## 2026-11-08 05:36（自检 #39，7×24 第 39 次 · S2 收官前最后一轮已完成：P35 为 S2 最高 A 门；R36 完整 DAgger 标注中）
+- 结论：**健康、产出符合预期（S2 平台期 + 弱阳性延续）、主线零干预**。驱动 19488（PPID 19486 看门狗）单实例，
+  lock 心跳 <2s；当前阶段 = **R36 完整 DAgger 的 annotate**（05:23:02 起，`--targets 100000`＝4 分片×25000，
+  现 ~2.7k/25k 每片、吞吐 **11.72–11.82k/h·worker**，四片齐头）；panic/NaN/超时 0；磁盘 304Gi；
+  `runs/early_stop`、`runs/gates/plan_b_enabled`、`runs/ppo_disabled`、`runs/rapid_abort` 全部不存在。
+- **S2（P25–P35，n=11）部分结算**：闸门 A 均值 **+4.472**（轮间 SD 0.169 / SE 0.051；单轮 SE≈0.40），
+  vs S1 +4.323 ⇒ **+0.149**；OLS slope **+0.0151/轮**（|slope|<0.10 ⇒ §6.43.2 S1 辅证成立）。
+  注意：轮间 SD 只有 0.17 而单轮 SE 是 0.40 ⇒ **同一 300-seed 池共用导致的强相关**，+0.149 只能表述为
+  「平台中心略抬升」，**不得当显著性或当增益幅度引用**（真正的增益幅度只能由全新池测量给）。
+- **闸门 D（P25–P35，11 轮）**：+0.081 / **+0.861(p=.0203)** / **+0.698(p=.0236)** / +0.262 / +0.511 / +0.378 /
+  +0.301 / **+0.728(p=.0348)** / −0.227 / −0.218 / +0.108 ⇒ **9/11 点估计为正、3 次晋升**（P26/P27/P32），
+  均值 **+0.317**；对晋升后 p27 的 8 轮均值 **+0.230**。`exit_best ≡ exit_p32`（04:38:23 晋升，md5 待终评核）。
+  统计纪律不变：固定池 + 移动靶（winner's curse）⇒ 只记「弱阳性延续」，**不作决策依据**、不据此改配方。
+- **健康度**（`health_watch --last 12`）：12/12 在预登记阈值内 —— kl .0059–.0087、clip .061–.092、gnorm 1.30–1.38、
+  ent .911–1.604、states 85,967–108,270、secs 631–791（≈同配置中位 1.0×）。
+  新增 1 条 **WARN：P35 vl 连续三轮上升 1.0034→1.0057→1.0169（+1.3%）** ⇒ 幅度极小、同期 A 门 +4.696 为 S2 最高，
+  与此前 P24/P25 同类告警（P27 自行解除）同型 ⇒ **仅观察、零动作**（不改 lr/τ、不重启）。
+- **熵通道**：ent_rollout 1.984→0.964（P24→P35，**−51.4%**），最近 6 轮 **−29.6%** ⇒ 距 §6.43.2 的 S2 阈值
+  （<0.80 **或** 最近 6 轮 <5%）**仍远** ⇒ **R36 预期 verdict=continue**（预测，不是判读）。
+  按 ≈−5.4%/轮 斜率，0.80 将在 **P39–P40** 触及；但只要仍在快速下降，S2 就不成立 ⇒
+  「熵触底后横盘」才会让 S2 成立，**R48 仍是比 R36 更可能的早停边界**。
+- Web/看门狗：`/`=200；`/api/meta` master=**dushan_master**、models[0].champion=**false**、冠军表仍仅 web_best；
+  用户在线（sid 3b834f05，search128:web_best）⇒ **未重启 Web**；看门狗 19486 活、05:23 后无新拉起。
+- **排期（本次实测重算，比 §6.49.4 提前约 1h）**：annotate 05:23:02 起 + 11.76k/h·片 ⇒ 4×25k 落盘
+  **≈07:30–07:32** → train_exit ≈**07:32–08:12**（R24 为 3363s 但含 E1 抢 MPS；无争抢按历史 2032–2555s）
+  → gateA_r36 ≈**08:14** → gateC_r36 ≈08:16–08:42（26min）→ gateD_r36 ≈**08:44** ⇒ **边界判读窗口 ≈08:45–09:15**。
+- **下一步（已锁定，判据一字不改）**：① **07:47 一次性 automation** 已在册，跑 §6.39.5 复现测量
+  （`p20 vs r12`，池 740000+600，`--wait-log train_r36.log --wait-max-min 25` 兜窗口漂移；07:35 巡检**不得重复跑**）；
+  ② `gateA_r36` 落盘后 M 测量（池 750000+600，A=S2 最强〔当前 P35 +4.696，R36 若更高则改 R36〕、B=S1 最强 P20 +4.962），
+  **必须避开 gateC/gateD 的 eval_pairs**（6 worker 互斥）；③ `early_stop_guard.py --boundary 36`，**仅 verdict=early_stop 才 `--arm`**；
+  ④ 方案 B 三项（复现同号 p<0.10 / 段内 p25…p36 无缺号 / 链末端存在）⇒ 全过才写 `plan_b_enabled`，最早边界自动推 R48。
+- **E1**：维持 §6.47.4 处置 —— **终评窗口补跑**，判据不变；本轮不重跑、R36 train 段只留给复现测量。
+- 零干预：未重启驱动/看门狗/Web、未改超参、未注册冠军、未动 `dushan_master.pt`、未跑任何吃 CPU 的探针。
+
+
+---
+
+## [06:2x 追加 · 用户线上 519 局复盘，纯只读诊断] 详见 `docs/python_rust_usage_audit.md` §8
+
+用户问「为什么一名 N128 玩家得分远超我（最强模型）与另两个同模型玩家？是不是没用相对
+名次作训练目标？」**结论：不是训练目标问题，也不是模型弱，是评估口径 + 零和随机游走。**
+数据源 `web/history/records.jsonl`（519 局，23:39→05:21，稳定配置 518 局），全程离线读记录。
+
+**配置**：我方 `search128:web_best`（R07 冠军快照），三家对手 `search128:master`（同 N128 档）；
+`dealer=0` 恒 519/519 局，494/518 局身份→座位固定 ⇒ **身份与座位共线，结构上测不出强弱**；
+519/519 局 `sum(deltas)=0` 严格零和。
+
+**关键数字**：按身份累计 王昭君(seat0) +606 / 云天明(seat1) +171 / 大乔 −295 / 妲己 −482。
+- 王−我 逐局配对 **+0.768±1.019, p=0.451 不显著**（435 分差仅 0.82 SD）；
+- 按权重 web_best vs 三家 master 均值 +0.440±0.824 p=0.593（方向为正、ns）；
+- **唯一显著量**：同策略同档的 seat0 − (seat2+seat3)/2 = **+1.967±0.855, p=0.0214** ⇒ 座位效应；
+- 反事实 2000 次随机四座旋转：「对手最高 − 我」中位数 **+299**，5~95% [−461,+1022]，
+  观测 435 分在第 61.7 百分位，**P(纯随机≥435)=0.384** ⇒ 零和四玩家取极值的统计常态；
+- 前 24 局我方坐庄家位则我方领先(+40)，后 494 局换成王昭君坐庄家位则王领先(+606)。
+
+**名次目标问题**：训练目标确实全是 cardinal 分差（教师 Q / Φ=8·V_θ / 闸门 Δ±SE），但本作
+严格零和**按分结算**（番数/鸡分/杠分/跟打赔付），非日麻顺位点 ⇒ 分差是信息更全的正确目标；
+名次是分差的秩变换，本数据名次排序与分差排序一致，换目标不改变结论。厚尾 SD 14.0 vs 均分
+0.3~1.2 ⇒ 名次/裁剪可作**辅助降方差**方向，登记 **D3 之后 E2 影子对照**（同 §6.38 E1 规格），
+**S2/D2 配方一字不改**。
+
+**改善清单**：P0 四座旋转 + 修 dealer 恒 0（需动服务端并蓝绿重启，等用户点头）、改看逐局
+配对 Δ±SE 而非累计分、走 `eval_pairs.py` 冻结池（300 seed×四座 SE≈0.55，线上随机池需 ~1.1
+万局）；P1 `champions.json` 只有 R07 的 web_best，而 `exit_best`(p35, 闸门 A +4.696±0.431
+p≈0) 已落盘 ⇒ 用户线上选不到当前最强权重，建议复制成固定快照后 `register_champion.py`
+只增不替（无需重启 Web；须先做 web_best vs exit_best 冻结头对头才能宣称更强）；P2 终评定最强。
+
+**防腐（自检必读）**：这批 519 局**不构成**模型弱 / 配方失败 / 早停证据，**禁止**据此改配方、
+加重训练、触发 §6.43 早停或写 `rapid_abort`/`ppo_disabled`。归档时 R36 标注在跑，本轮零对局、
+零 CPU 探针、主链与线上配置零改动。
