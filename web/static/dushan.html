@@ -3976,6 +3976,16 @@ html.mob .scoregrid input { width: 42px; }
       </div>
     </div>
 
+    <h4 class="setsec">第一巡同轮跟打<span class="sechint">下一局生效</span></h4>
+    <div class="setgrid">
+      <div class="setrow">
+        <div class="lbl">同轮跟打规则<span class="q" data-q="第一巡庄家打的第一张牌被另外三家同轮跟打（四家第一张牌牌种相同）时：庄家赔付每家 3 只鸡；这 4 张牌视为庄家的通行证（可吃胡），结算计鸡时算作庄家手中的鸡。默认启用">?</span></div>
+        <select id="set-first-round-follow">
+          <option value="1">启用（默认）</option><option value="0">关闭</option>
+        </select>
+      </div>
+    </div>
+
         </section>
 
         <section data-pane="score">
@@ -4295,7 +4305,8 @@ function loadScores() {
 }
 /* 未听牌包赔默认口径（与引擎 DushanConfig 默认一致） */
 const RULE_DEFAULT = { end_baoji: true, end_baogang: false,
-  huang_baoji: false, huang_baogang: false, huang_baodapai: true };
+  huang_baoji: false, huang_baogang: false, huang_baodapai: true,
+  first_round_follow: true };   // 2026-11-07 新规则：第一巡同轮跟打（默认开）
 function loadRules() {
   try { return Object.assign({}, RULE_DEFAULT, JSON.parse(localStorage.getItem("dushan_rules") || "{}")); }
   catch (e) { return Object.assign({}, RULE_DEFAULT); }
@@ -6283,6 +6294,15 @@ function meldCells(m, rc, ownerSeat, mirror, dots) {
     `<span class="mc${rc || ""}${src === MELD_BACK ? "" : " fc"}${extra}">` +
     `<img src="${src}" alt=""></span>`;
   const normal = tileImg(m.tile);
+  // 2026-11-07 修复「两侧玩家部分杠牌（横摆指向）渲染有误」：
+  // 横置指示牌（指向来源玩家那一端）的格子必须是**默认竖版**，不能带座位旋转 rc。
+  // 左右两家组内普通牌是 .mc.rot（格子宽高互换 44×28、img ±90°）；横置牌若也带
+  // rc，格子仍被换成 44×28，而 .mc.vz.fc img 又把 img 压成不旋转的 28×44 竖图
+  // → 竖图塞进横格，上下各溢出 8px、整组错位。鸡牌横置走 jiCell（本来就不带 rc）
+  // 所以一直正常，只有「明杠·非鸡牌」走 c(normal, " vz") 多带了 rc —— 正是用户
+  // 说的「部分杠牌」有误。现在所有横置牌统一用无 rc 的格子几何。
+  const flatCell = (extra = "") =>
+    `<span class="mc fc${extra}"><img src="${normal}" alt=""></span>`;
   // 副露吃进冲锋鸡/横鸡：真实牌面 + 统一角标（冲=红/横=蓝）；普通幺鸡/翻鸡鸡牌用普通牌面
   // 2026-11-06：普通鸡牌（幺鸡/开局翻鸡种/结算翻鸡种）常常没有 m.ji 丝带标签，
   // 只按牌种判断；否则碰杠中的这些鸡牌会是光板（用户报「漏加点」）。
@@ -6321,7 +6341,7 @@ function meldCells(m, rc, ownerSeat, mirror, dots) {
     // 但本局鸡牌是五条/幺鸡）→ 非鸡牌杠改走普通牌面格，红点只属于鸡牌。
     const hengCls = rc ? " vz" : " heng";
     const cells = [c(normal), c(normal), c(normal), c(normal)];
-    cells[srcPos(4)] = isJi ? jiCell(hengCls) : c(normal, hengCls);
+    cells[srcPos(4)] = isJi ? jiCell(hengCls) : flatCell(hengCls);
     return cells.join("");
   }
   if (m.type === 3) {
@@ -6786,6 +6806,9 @@ function renderLog(events) {
       } else if (e.kind === "baojiao") {
         // 报叫 = 独山关键公开信息（其弃牌点胡免通行证），单独提示一次
         toast(`${logToastName(e.rel)} 报叫`, 1800);
+      } else if (e.kind === "follow") {
+        // 2026-11-07：第一巡同轮跟打（庄家赔付 + 4 张通行证/手中鸡）
+        toast(e.text || "第一巡同轮跟打", 3600);
       }
     }
     // 水位线只进不退：LAST_STATE 重绘可能拿到旧快照，倒退会让新事件重播一遍
@@ -8143,6 +8166,12 @@ function settlementCtx(st) {
     res, relOf, nameOfSeat, fanBySeat,
     wSet: new Set(winSeats(res)),                                   // 赢家集合（一炮多响可多家）
     voidName: res.void_name || null,                                // 鸡分全烧者（放热炮 / 被抢杠）
+    // 2026-11-07 修复「放热炮后不显示鸡分全烧标签」：按**座位号**判定。
+    // 旧写法拿 nameOfSeat(p.seat) 与 void_name 比字符串，但 nameOfSeat 走
+    // playerName → 派生名「头像名(模型缩写)」，服务端 void_name 是开局名，
+    // 两者对不上 → 标签永远不显示；四家重名时还会误标。旧回放无座位字段时
+    // 才退回名字比较（回放名与 void_name 同源）。
+    voidSeat: Number.isInteger(res.void_seat) ? +res.void_seat : null,
     loseTag: res.rob_kong ? "被抢杠" : (res.how === "热炮" ? "放热炮" : "放炮"),
     winTag: winHowTag(res),
     jiSet: st.ji_tiles && st.ji_tiles.length ? new Set(st.ji_tiles) : new Set([YAOJI]),
@@ -8157,7 +8186,9 @@ function playerHandBlock(st, rel, ctx) {
   const p = st.players[rel];
   const res = ctx.res, jiSet = ctx.jiSet;
   const isWin = res.type === "win" && ctx.wSet.has(p.seat);
-  const isVoid = res.type === "win" && ctx.voidName != null && ctx.nameOfSeat(p.seat) === ctx.voidName;
+  const isVoid = res.type === "win" &&
+    (ctx.voidSeat != null ? +p.seat === ctx.voidSeat
+      : (ctx.voidName != null && ctx.nameOfSeat(p.seat) === ctx.voidName));
   const meta = [];
   // 状态标签：胡牌局标「胡牌方式 / 被抢杠·放热炮·点炮（+ 全烧）」
   // （听牌状态由下方「听 …」承载，不再重复打标签）
@@ -8173,6 +8204,12 @@ function playerHandBlock(st, rel, ctx) {
     } else if (isVoid) {
       meta.push(`<span class="tag lose">鸡分全烧</span>`);
     }
+  }
+  // 2026-11-07：第一巡同轮跟打（胡牌/黄庄都在庄家卡片上标注）
+  if (res.follow_dealer && st.dealer != null && +p.seat === +st.dealer) {
+    const pay = Number(res.follow_pay) || 3;
+    const tcn = res.follow_tile_cn || "";
+    meta.push(`<span class="tag lose" title="第一巡四家首张同牌跟打：庄家赔每家 ${pay} 只鸡；这 4 张牌视为庄家通行证（可吃胡），结算计鸡时算作庄家手中的鸡">同轮跟打 ${tcn}×4 · 赔每家 ${pay} 鸡</span>`);
   }
   // 听牌：直接显示听什么牌（已包含「听牌」信息）
   if (p.ting_tiles && p.ting_tiles.length) {
@@ -9405,6 +9442,7 @@ function fillSetSelects() {
   el("set-huang-baoji").value = SET.rule.huang_baoji ? "1" : "0";
   el("set-huang-baogang").value = SET.rule.huang_baogang ? "1" : "0";
   el("set-huang-baodapai").value = SET.rule.huang_baodapai ? "1" : "0";
+  el("set-first-round-follow").value = SET.rule.first_round_follow === false ? "0" : "1";
   checkTimeoutLink();        // 超时 × 策略联动：打开设置页就先校验一次
   checkOppSpeedLink();       // 对手节奏 × 对手模型联动：同上（2026-11-02）
   renderPickers("set-players");
@@ -9605,6 +9643,7 @@ function applySettings() {
     huang_baoji: el("set-huang-baoji").value === "1",
     huang_baogang: el("set-huang-baogang").value === "1",
     huang_baodapai: el("set-huang-baodapai").value === "1",
+    first_round_follow: el("set-first-round-follow").value === "1",
   });
   SET.score = Object.assign({}, SET.score);
   for (const k of Object.keys(SCORE_DEFAULT)) {

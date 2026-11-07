@@ -193,6 +193,13 @@ class DushanConfig(RulesConfig):
     huang_baoji: bool = False        # 流局（黄庄）：未听牌者包鸡（默认关）
     huang_baogang: bool = False      # 流局（黄庄）：未听牌者包杠（默认关）
     huang_baodapai: bool = True      # 流局：未听牌者包听牌者的非平胡牌面（默认开）
+    # ---- 第一巡同轮跟打（2026-11-07 用户口径，默认开）----
+    # 庄家第一张牌被另外三家「同轮跟打」（全场前 4 次弃牌恰是四家各第一张，
+    # 且四张牌种相同）时：庄家赔付每家 ``follow_pay`` 只鸡；这 4 张牌视为
+    # 庄家的通行证（可吃胡），且结算计鸡时算作庄家手中的鸡（4 张）。
+    first_round_follow: bool = True
+    follow_pay: float = 3.0
+    follow_hold_chickens: int = 4    # 被跟打的 4 张牌 = 庄家手中 4 只鸡
     # ---- 追加鸡牌种（2026-10-12 新功能：开局/设置里手动增加，如贵阳玩的八筒） ----
     # 元组形式（dataclass 字段）；元素是 0..26 的牌种索引，幺鸡（YAOJI）自动忽略。
     # 追加种与开局翻鸡新增种同权：参与冲锋鸡/横鸡轮/手中鸡/包鸡全套结算。
@@ -217,6 +224,17 @@ class DushanGame(ZhuojiGame):
     def _init_dushan_state(self) -> None:
         self.baojiao = [False] * 4              # 报叫标记
         self.first_discard_done = [False] * 4   # 是否已打过第一张牌
+        # ---- 第一巡同轮跟打（2026-11-07 新规则）----
+        # first_discard_tiles[p]：p 的第一张弃牌牌种（None=还没打过）
+        # first_discard_order：四家首弃牌的打出顺序（座位），只记首张
+        # total_discards：全场弃牌次数（含非首张），用来严格判定「同轮」——
+        #   只有全场前 4 次弃牌恰好是四家各自第一张（中间没有碰/杠后补打），
+        #   才算「第一巡同轮跟打」，否则只是碰巧四家首张相同。
+        self.first_discard_tiles: list[int | None] = [None] * 4
+        self.first_discard_order: list[int] = []
+        self.total_discards = 0
+        self.follow_dealer = False              # 是否已触发（庄家拿到 4 张通行证/鸡）
+        self.follow_tile: int | None = None     # 被跟打的牌种
         self.hengji_opened = False              # 全场第一张鸡（横鸡）是否已出现
         self.hengji_starter: int | None = None  # 本局第一个开出横鸡轮的玩家
         self.ji_events: list[tuple[int, float, str]] = []   # (打出者, 基础分, 类型名)
@@ -387,6 +405,9 @@ class DushanGame(ZhuojiGame):
         4万平胡/5万大对子 的混合听牌无豆也能平胡点炮）。
         ``hand14`` 为 None 时保留旧口径（按是否存在非平胡听张），供兼容调用。
         """
+        # 第一巡同轮跟打：被跟打的 4 张牌视为庄家的通行证（可吃胡）
+        if self.follow_dealer and p == int(self.dealer):
+            return True
         if any(meld_is_kong(mt) for mt, _, _ in self.melds[p]):
             return True
         if self.baojiao[p]:
@@ -439,6 +460,9 @@ class DushanGame(ZhuojiGame):
             out.append("抢杠")
         h = list(self.hands[p])
         h[tile] += 1
+        # 第一巡同轮跟打：庄家凭被跟打的 4 张牌获得通行证
+        if self.follow_dealer and p == int(self.dealer):
+            out.append("同轮跟打·通行证")
         if any(meld_is_kong(mt) for mt, _, _ in self.melds[p]):
             out.append("杠·通行证")
         if self.baojiao[p]:
@@ -501,6 +525,8 @@ class DushanGame(ZhuojiGame):
             self._settle_win(p, -1, is_tsumo=True)
             return
         t = action.tile
+        # 全场弃牌计数（第一巡同轮跟打判定「同轮」用）
+        self.total_discards += 1
         # 热炮 = 杠后第一张弃牌（复用基类 gang_discard 标记）
         self.repao_discard = self.gang_discard[p]
         self.hands[p][t] -= 1
@@ -544,6 +570,9 @@ class DushanGame(ZhuojiGame):
         # 自动报叫：第一张打出后已听牌
         if not self.first_discard_done[p]:
             self.first_discard_done[p] = True
+            self.first_discard_tiles[p] = int(t)
+            self.first_discard_order.append(int(p))
+            self._check_first_round_follow()
             if self.cfg.baojiao_auto and is_tenpai(self.hands[p], self.melds[p]):
                 self.baojiao[p] = True
                 self.log.append((p, "报叫"))
@@ -553,6 +582,67 @@ class DushanGame(ZhuojiGame):
         self.gang_discard[p] = False
         self.last_discard = (p, t)
         self._begin_respond(p, t)
+
+    def _check_first_round_follow(self) -> bool:
+        """第一巡同轮跟打（2026-11-07 用户口径）。
+
+        触发条件（必须全部满足，避免把「碰巧四家首张同牌」误判为同轮）：
+          * 开关 ``cfg.first_round_follow`` 打开；
+          * 全场弃牌恰好 4 次，且这 4 次就是四家各自的第一张弃牌
+            （中间没有碰/杠后的补打，也没有任何人多打一张）；
+          * 第一张由庄家打出（庄家先手是「被跟打」的前提）；
+          * 四张牌的牌种完全相同。
+
+        触发后：庄家获得由这 4 张牌构成的通行证（可吃胡），4 张牌在结算
+        计鸡时算作庄家手中的鸡；庄家另向每家赔付 ``cfg.follow_pay`` 只鸡
+        （后两项在 ``_settle_*`` 里落地，见 ``_follow_payout``）。
+        返回本次是否**新触发**（已触发过则 False，保证只记一次流水）。
+        """
+        if self.follow_dealer or not getattr(self.cfg, "first_round_follow", True):
+            return False
+        if self.total_discards != 4 or len(self.first_discard_order) != 4:
+            return False
+        if self.first_discard_order[0] != int(self.dealer):
+            return False
+        if len(set(self.first_discard_order)) != 4:
+            return False
+        tiles = self.first_discard_tiles
+        if any(x is None for x in tiles):
+            return False
+        t0 = int(tiles[int(self.dealer)])
+        if any(int(x) != t0 for x in tiles if x is not None):
+            return False
+        self.follow_dealer = True
+        self.follow_tile = t0
+        self.log.append((int(self.dealer), "第一巡同轮跟打"))
+        return True
+
+    def _follow_payout(self, pflow) -> None:
+        """庄家因第一巡同轮跟打，向其余三家各赔 ``follow_pay`` 只鸡。
+
+        两类终局（胡牌 / 黄庄）都要赔：这是首巡已成立的即时约定，
+        与后续是否有人胡牌无关。``pflow(a, b, val, label, info, who)``
+        为调用方（``_settle_win_multi`` / ``_settle_huangzhuang``）的记账闭包。
+        """
+        if not self.follow_dealer:
+            return
+        cfg: DushanConfig = self.cfg  # type: ignore[assignment]
+        pay = float(getattr(cfg, "follow_pay", 3.0))
+        if pay <= 0:
+            return
+        d = int(self.dealer)
+        info = f"{tile_cn(self.follow_tile)}×4" if self.follow_tile is not None else "同轮跟打"
+        for q in range(4):
+            if q != d:
+                pflow(q, d, pay, "第一巡同轮跟打", info, who=d)
+
+    def _follow_result(self) -> dict:
+        """结算结果里附带的第一巡同轮跟打信息（结算页展示 + 历史回放）。"""
+        return {
+            "follow_dealer": bool(self.follow_dealer),
+            "follow_tile": int(self.follow_tile) if self.follow_tile is not None else None,
+            "follow_pay": float(getattr(self.cfg, "follow_pay", 3.0)),
+        }
 
     def _gang_draw(self, p: int) -> None:  # noqa: D102
         super()._gang_draw(p)
@@ -865,6 +955,20 @@ class DushanGame(ZhuojiGame):
             v = float(val) * (jin * 2.0 if int(tile) in quad
                               else (jin if int(tile) in gold else 1.0))
             add(w, v, "捉炮鸡", f"{tag}·{tile_cn(tile)}")
+        # 6) 第一巡同轮跟打：被跟打的 4 张牌在结算计鸡时算作庄家手中的鸡。
+        #    与「手中鸡」同口径（只在庄家听牌时计入，金鸡牌种按倍率计），
+        #    且放在全烧清零之前 —— 若庄家恰是全烧者，其自身鸡分仍一律作废。
+        #    黄庄不翻鸡、不计鸡（chickens 全 0），故这 4 张自然也不参与，
+        #    但庄家的 3 鸡赔付由 _follow_payout 在两类终局都照付。
+        if self.follow_dealer and self.follow_tile is not None:
+            d = int(self.dealer)
+            if tenpai[d]:
+                ft = int(self.follow_tile)
+                n = max(0, int(getattr(cfg, "follow_hold_chickens", 4)))
+                mult = jin * 2.0 if ft in quad else (jin if ft in gold else 1.0)
+                val = float(n) * float(cfg.ji_hold) * mult
+                add(d, val, "同轮跟打鸡", f"{tile_cn(ft)}×{n}")
+                hold_bd[d].append([ft, n])
         # 全烧：该玩家自身鸡分一律作废（仍照付他人）
         if void is not None and 0 <= int(void) < 4:
             v0 = int(void)
@@ -1112,6 +1216,9 @@ class DushanGame(ZhuojiGame):
             pair[a][b] += val
             pair_det.setdefault((a, b), []).append(
                 (label, info, val, a if who is None else int(who)))
+
+        # 第一巡同轮跟打：庄家向其余三家各赔 follow_pay 只鸡（与终局类型无关）
+        self._follow_payout(pflow)
 
         # 终局听牌（胡牌者视为叫牌）
         tenpai = [self._tenpai_flag(p) for p in range(4)]
@@ -1387,6 +1494,7 @@ class DushanGame(ZhuojiGame):
                                        for it in items_]}
                             for (a, b), items_ in pair_det.items()],
             "wall_left": self.wall_left,
+            **self._follow_result(),
         }
         self._finalize(delta, next_dealer=primary)
 
@@ -1415,6 +1523,9 @@ class DushanGame(ZhuojiGame):
             pair[a][b] += val
             pair_det.setdefault((a, b), []).append(
                 (label, info, val, a if who is None else int(who)))
+
+        # 第一巡同轮跟打：即时约定，流局也照赔
+        self._follow_payout(pflow)
 
         tenpai = [self._tenpai_flag(p) for p in range(4)]
         baodapai: list[dict] = []
@@ -1491,5 +1602,6 @@ class DushanGame(ZhuojiGame):
                                        for it in items_]}
                             for (a, b), items_ in pair_det.items()],
             "wall_left": 0,
+            **self._follow_result(),
         }
         self._finalize(delta, next_dealer=self.dealer)

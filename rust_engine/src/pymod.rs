@@ -192,7 +192,24 @@ fn game_from_py_legacy(d: &Bound<'_, PyDict>) -> PyResult<Game> {
     }
     g.hengji_starter = g_i64(d, "hengji_starter", -1).clamp(-1, 3) as i8;
     g.hengji_event_n = g_i64(d, "hengji_event_n", 0).max(0) as u32;
+    // 2026-11-07：第一巡同轮跟打（与 snap.rs 保持同源；本函数已停用，仅作对照）
+    g.follow_dealer = g_bool(d, "follow_dealer", g.follow_dealer);
+    g.follow_tile = g_i64(d, "follow_tile", 255).clamp(0, 255) as u8;
+    let fdt = g_vec(d, "first_discard_tiles");
+    for (i, v) in fdt.iter().enumerate().take(4) {
+        g.first_discard_tiles[i] = if (0..27).contains(v) { *v as u8 } else { 255 };
+    }
+    let fdo = g_vec(d, "first_discard_order");
+    g.first_discard_n = fdo.len().min(4) as u8;
+    for (i, v) in fdo.iter().enumerate().take(4) {
+        g.first_discard_order[i] = (*v).clamp(0, 3) as u8;
+    }
+    g.total_discards = g_i64(d, "total_discards", 0).clamp(0, u16::MAX as i64) as u16;
     // 结算配置（网页可调值表 + 开关）
+    g.cfg.first_round_follow = g_bool(d, "cfg_first_round_follow", g.cfg.first_round_follow);
+    g.cfg.follow_pay = g_f64(d, "cfg_follow_pay", g.cfg.follow_pay as f64) as f32;
+    g.cfg.follow_hold = g_i64(d, "cfg_follow_hold_chickens", g.cfg.follow_hold as i64)
+        .clamp(0, 255) as u8;
     g.cfg.mantiangji = g_bool(d, "cfg_mantiangji", g.cfg.mantiangji);
     g.cfg.jin_mult = g_f64(d, "cfg_jin_mult", g.cfg.jin_mult as f64) as f32;
     g.cfg.end_baoji = g_bool(d, "cfg_end_baoji", g.cfg.end_baoji);

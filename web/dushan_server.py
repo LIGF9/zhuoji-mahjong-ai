@@ -463,13 +463,15 @@ HOLD_MAX = 20.0
 MASTER_CANDIDATES = ["web_best", "dushan_master", "dushan_s1", "dushan_s2", "dushan_s3", "rl"]
 
 
-#: 未听牌包赔开关的网页默认（与引擎 DushanConfig 默认一致）
+#: 规则开关的网页默认（与引擎 DushanConfig 默认一致）
 RULE_DEFAULTS: dict[str, bool] = {
     "end_baoji": True,        # 有人胡牌结束：未听者包鸡
     "end_baogang": False,     # 有人胡牌结束：未听者包杠
     "huang_baoji": False,     # 流局：未听者包鸡
     "huang_baogang": False,   # 流局：未听者包杠
     "huang_baodapai": True,   # 流局：未听者包大牌面（非平胡）
+    # 2026-11-07：第一巡同轮跟打（庄家首牌被三家跟打）默认开
+    "first_round_follow": True,
 }
 
 #: 翻鸡策略 → 流水文案（2026-10-12 #85：开局/结束翻鸡写进流水）
@@ -1186,6 +1188,18 @@ class Session:
                     time.sleep(0.03)
                 self.hold = False
             actor = game.actor()
+            # 2026-11-07 修复：对手出牌节奏只作用于 AI 玩家的「出牌思考」。
+            # 旧实现把 time.sleep(speed) 放在每步 step/publish **之后**，于是
+            # 「对手打出一张牌」与「轮到人类决策」之间被硬插了 speed 秒，
+            # 人类的 pending（碰/杠/胡按钮、手牌选项）要等这段时间才出现；
+            # 连人类自己出完牌也会被拖 speed 秒。用户口径：节奏只限制 AI，
+            # 不能用在自己身上。
+            # 现在把停顿前置到 AI 出牌**之前**（视觉上仍是「对手出牌有节奏」），
+            # 且只在出牌阶段生效 —— 响应阶段 AI 的过牌、以及人类的任何决策点
+            # 都不会被延时卡住：publish 之后下一轮立刻进入 wait_human 写 pending。
+            if (not self.auto and self.speed > 0 and actor != self.my_seat
+                    and game.phase == Phase.DISCARD):
+                time.sleep(self.speed)
             # 2026-11-02：对手决策耗时计量。choose() 是阻塞的——模型算多久都等它
             # （节奏 speed 只是出牌后的额外停顿，永远不会为了赶时间换模型/降级），
             # 这里把每个对手的真实反应时间记下来，随状态发给前端展示。
@@ -1226,8 +1240,6 @@ class Session:
             if game.phase == Phase.OVER:
                 self._emit_result(game)
             self._publish(game)
-            if not self.auto and self.speed > 0:
-                time.sleep(self.speed)
         if self.force_end and game.phase != Phase.OVER:
             # 提前结束本局：不计分、不入历史（_settle 里对 abort 只做座位推进）
             with self.lock:
@@ -1297,6 +1309,10 @@ class Session:
             "type": res.get("type"),
             "deltas": [round(float(x), 2) for x in (res.get("deltas") or [])],
         }
+        # 2026-11-07：第一巡同轮跟打（历史/回放结算页用）
+        rec["follow_dealer"] = bool(res.get("follow_dealer"))
+        rec["follow_tile"] = res.get("follow_tile")
+        rec["follow_pay"] = float(res.get("follow_pay") or 0.0)
         # 终局听牌记录（胡牌/黄庄统一：座位 + 名字 + 各自等待张，流水查验用）
         tp = [int(p) for p in (res.get("tenpai") or [])]
         rec["tenpai"] = tp
@@ -1358,6 +1374,8 @@ class Session:
                 "rob_kong": bool(res.get("rob_kong")),
                 "how": res.get("how"),
                 "void_name": self.names[res["void_player"]]
+                if res.get("void_player") is not None else None,
+                "void_seat": int(res["void_player"])
                 if res.get("void_player") is not None else None,
                 "fan_cn": res.get("fan_cn"), "fan": res.get("fan"),
                 "detail": [[self.names[d[0]] if isinstance(d[0], int) and 0 <= d[0] < 4
@@ -2144,6 +2162,13 @@ class Session:
             "wall_left": res.get("wall_left"),
             "mine": round(float((res.get("deltas") or [0.0] * 4)[me]), 2),
         }
+        # 2026-11-07：第一巡同轮跟打（胡牌/黄庄两类终局都会带）。
+        # 结算页据此在庄家卡片上打「同轮跟打」标签，并展示赔付与 4 张鸡。
+        out["follow_dealer"] = bool(res.get("follow_dealer"))
+        out["follow_tile"] = res.get("follow_tile")
+        out["follow_pay"] = float(res.get("follow_pay") or 0.0)
+        out["follow_tile_cn"] = (tile_cn(int(res["follow_tile"]))
+                                 if res.get("follow_tile") is not None else "")
         detail = res.get("detail") or []
         out["detail"] = [{"who": self._who(d[0]), "seat": int(d[0]) if isinstance(d[0], int) else -1,
                           "label": str(d[1]), "info": str(d[2]) if len(d) > 2 else "",
@@ -2220,6 +2245,10 @@ class Session:
                 "fan_cn": res.get("fan_cn"),
                 "fan": res.get("fan"),
                 "void_name": self.names[void] if void is not None else None,
+                # 2026-11-07 修复「鸡分全烧」标签不显示：前端 nameOfSeat 返回的是
+                # 派生名（头像名+模型缩写），与 self.names 里的开局名字符串对不上，
+                # 按名字比较会漏标 / 重名时误标。改用座位号，名字仅作兼容展示。
+                "void_seat": int(void) if void is not None else None,
                 "winner_hand": game.hand_tiles(w),
                 # 各赢家手牌（一炮多响时每位赢家都含点炮张，渲染用）
                 "winner_hands": {str(x): game.hand_tiles(x) for x in winners},
@@ -2357,6 +2386,15 @@ class Session:
             if txt == "报叫":
                 self._push("baojiao", (seat - self.my_seat) % 4,
                            f"{self.names[seat]} 报叫！", None, "报叫")
+            elif txt == "第一巡同轮跟打":
+                # 2026-11-07：首巡四家同牌跟打，引擎只在 log 里留一行，这里补成流水
+                ft = getattr(game, "follow_tile", None)
+                pay = float(getattr(game.cfg, "follow_pay", 3.0))
+                self._push("follow", (seat - self.my_seat) % 4,
+                           f"第一巡同轮跟打！庄家赔每家 {pay:g} 鸡，"
+                           f"{tile_cn(int(ft)) if ft is not None else '该牌'}×4 "
+                           f"视为通行证与庄家手中鸡",
+                           int(ft) if ft is not None else None, "第一巡同轮跟打")
         self._log_seen = len(log)
 
         ever = getattr(game, "ever_tenpai", None)
@@ -2583,6 +2621,8 @@ class Handler(BaseHTTPRequestHandler):
                          "未听牌者包「已亮明的鸡」（自己打出的+碰杠来的）；"
                          "点炮张归胡牌者（是鸡牌则鸡分一并转移）；一炮多响各家均得牌；"
                          "抢杠（仅补杠）/热炮无视通行证且放炮者鸡分全烧；"
+                         "第一巡庄家首牌被三家同轮跟打：庄家赔每家 3 鸡，"
+                         "这 4 张牌视为庄家通行证并算作庄家手中的鸡（设置可关）；"
                          "龙七对须由胡牌张凑成第四张；胡后翻鸡上下鸡，金鸡翻倍；"
                          "黄庄只赔自摸分+最大牌型分。",
                 "master": resolve_model_stem("master"),

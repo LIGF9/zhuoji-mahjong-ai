@@ -63,6 +63,10 @@ pub struct Config {
     pub huang_baoji: bool,
     pub huang_baogang: bool,
     pub huang_baodapai: bool,    // 流局：未听牌者包大牌面（默认开）
+    // ---- 2026-11-07：第一巡同轮跟打（与 DushanConfig 默认一致）----
+    pub first_round_follow: bool, // 规则开关（默认开）
+    pub follow_pay: f32,          // 庄家赔每家的鸡数（默认 3）
+    pub follow_hold: u8,          // 被跟打的 4 张牌算庄家手中几只鸡（默认 4）
 }
 
 impl Default for Config {
@@ -97,6 +101,9 @@ impl Default for Config {
             huang_baoji: false,
             huang_baogang: false,
             huang_baodapai: true,
+            first_round_follow: true,
+            follow_pay: 3.0,
+            follow_hold: 4,
         }
     }
 }
@@ -162,6 +169,17 @@ pub struct Game {
     pub hengji_opens: [u8; 4],           // 各家本局开出横鸡轮的次数
     pub hengji_starter: i8,              // 全场第一个开出横鸡轮的玩家（-1=无）
     pub hengji_event_n: u32,             // hengji_events 总数（open+close，v3 glob128）
+
+    // ---- 2026-11-07：第一巡同轮跟打 ----
+    // 判定条件与 Python DushanGame._check_first_round_follow 严格同源
+    // （全场前 4 次弃牌恰为四家首张、首张由庄家打出、四张牌种相同）。
+    // 快照过桥可直接灌结果字段；重放路径由 step_discard 自行判定。
+    pub follow_dealer: bool,             // 已触发（庄家获通行证 + 4 张手中鸡）
+    pub follow_tile: u8,                 // 被跟打的牌种（255=无）
+    pub first_discard_tiles: [u8; 4],    // 各家第一张弃牌（255=未打）
+    pub first_discard_order: [u8; 4],    // 首弃牌的打出顺序（座位）
+    pub first_discard_n: u8,             // 已记录的首弃牌数
+    pub total_discards: u16,             // 全场弃牌次数（「同轮」判据）
 
     pub outcome: Option<Outcome>,
     pub steps: u32,
@@ -238,6 +256,12 @@ impl Game {
             hengji_opens: [0; 4],
             hengji_starter: -1,
             hengji_event_n: 0,
+            follow_dealer: false,
+            follow_tile: 255,
+            first_discard_tiles: [255; 4],
+            first_discard_order: [0; 4],
+            first_discard_n: 0,
+            total_discards: 0,
             outcome: None,
             steps: 0,
         };
@@ -346,6 +370,10 @@ impl Game {
     /// 独山通行证：杠 / 报叫 / 胡牌张成非平胡牌型。
     #[inline]
     fn has_passport14(&self, p: usize, hand14: &Counts, win_tile: u8, t: &FanTable) -> bool {
+        // 第一巡同轮跟打：被跟打的 4 张牌视为庄家的通行证
+        if self.follow_dealer && p == self.dealer as usize {
+            return true;
+        }
         if self.has_dou(p) || self.baojiao[p] {
             return true;
         }
@@ -354,6 +382,10 @@ impl Game {
     }
 
     fn has_passport_loose(&self, p: usize, t: &FanTable) -> bool {
+        // 第一巡同轮跟打：被跟打的 4 张牌视为庄家的通行证
+        if self.follow_dealer && p == self.dealer as usize {
+            return true;
+        }
         if self.has_dou(p) || self.baojiao[p] {
             return true;
         }
@@ -590,6 +622,7 @@ impl Game {
             return;
         }
         let tile = a.tile;
+        self.total_discards = self.total_discards.saturating_add(1);
         self.repao_discard = self.gang_discard[p];
         self.hands[p][tile as usize] -= 1;
         self.discards[p].push(tile);
@@ -631,6 +664,12 @@ impl Game {
 
         if !self.first_discard_done[p] {
             self.first_discard_done[p] = true;
+            if self.first_discard_n < 4 {
+                self.first_discard_tiles[p] = tile;
+                self.first_discard_order[self.first_discard_n as usize] = p as u8;
+                self.first_discard_n += 1;
+            }
+            self.check_first_round_follow();
             if self.cfg.baojiao_auto && self.is_tenpai(p, t) {
                 self.baojiao[p] = true;
             }
@@ -641,6 +680,35 @@ impl Game {
         self.gang_discard[p] = false;
         self.last_discard = Some((p as u8, tile));
         self.begin_respond(p as u8, tile, t);
+    }
+
+    /// 第一巡同轮跟打：全场前 4 次弃牌恰是四家各第一张、第一张由庄家打出、
+    /// 且四张牌种相同 → 庄家获通行证 + 4 张手中鸡 + 赔每家 follow_pay 只鸡。
+    /// 条件与 Python ``DushanGame._check_first_round_follow`` 严格同源。
+    fn check_first_round_follow(&mut self) -> bool {
+        if self.follow_dealer || !self.cfg.first_round_follow {
+            return false;
+        }
+        if self.total_discards != 4 || self.first_discard_n != 4 {
+            return false;
+        }
+        if self.first_discard_order[0] != self.dealer {
+            return false;
+        }
+        let mut seen = 0u8;
+        for &p in &self.first_discard_order {
+            seen |= 1u8 << p;
+        }
+        if seen != 0x0f {
+            return false;
+        }
+        let t0 = self.first_discard_tiles[self.dealer as usize];
+        if t0 >= 27 || self.first_discard_tiles.iter().any(|&x| x != t0) {
+            return false;
+        }
+        self.follow_dealer = true;
+        self.follow_tile = t0;
+        true
     }
 
     /// 玩家 p 现在打出 tile 会记成什么鸡：0=非鸡(空) 1=冲锋鸡 2=横鸡 3=普通鸡(幺鸡)。
@@ -924,6 +992,12 @@ impl Game {
             hengji_opens: [0; 4],
             hengji_starter: -1,
             hengji_event_n: 0,
+            follow_dealer: false,
+            follow_tile: 255,
+            first_discard_tiles: [255; 4],
+            first_discard_order: [0; 4],
+            first_discard_n: 0,
+            total_discards: 0,
             outcome: None,
             steps: 0,
         }

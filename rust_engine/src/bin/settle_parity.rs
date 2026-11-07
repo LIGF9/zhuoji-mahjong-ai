@@ -43,6 +43,16 @@ fn parse_cfg(d: &Value) -> Config {
     if let Some(x) = d.get("huang_baodapai").and_then(|v| v.as_bool()) {
         c.huang_baodapai = x;
     }
+    // 2026-11-07：第一巡同轮跟打（默认开，对拍定向 case 会显式传开关/赔付值）
+    if let Some(x) = d.get("first_round_follow").and_then(|v| v.as_bool()) {
+        c.first_round_follow = x;
+    }
+    if let Some(x) = d.get("follow_pay").and_then(|v| v.as_f64()) {
+        c.follow_pay = x as f32;
+    }
+    if let Some(x) = d.get("follow_hold_chickens").and_then(|v| v.as_u64()) {
+        c.follow_hold = x.min(255) as u8;
+    }
     c
 }
 
@@ -88,6 +98,15 @@ fn run_one(line: &str) -> String {
         m.insert("diag_flags".into(), json!({
             "huang_baogang": cfg.huang_baogang, "huang_baoji": cfg.huang_baoji,
             "huang_baodapai": cfg.huang_baodapai,
+        }));
+        m.insert("diag_follow".into(), json!({
+            "dealer": g.follow_dealer,
+            "tile": if g.follow_tile < 27 { Some(g.follow_tile) } else { None },
+            "total_discards": g.total_discards,
+            "first_discard_n": g.first_discard_n,
+            "switch": cfg.first_round_follow,
+            "pay": cfg.follow_pay,
+            "hold": cfg.follow_hold,
         }));
     }
     format!("{{\"ok\":true,\"result\":{}}}", out)

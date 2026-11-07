@@ -191,7 +191,25 @@ pub fn game_from_json(d: &Value) -> Game {
     }
     g.hengji_starter = j_i64(d, "hengji_starter", -1).clamp(-1, 3) as i8;
     g.hengji_event_n = j_i64(d, "hengji_event_n", 0).max(0) as u32;
+    // ---- 第一巡同轮跟打：判定进度 + 已触发结果（2026-11-07）----
+    // 缺字段时沿用 Game::blank() 默认值（旧快照 = 旧行为，不会误触发）。
+    g.follow_dealer = j_bool(d, "follow_dealer", g.follow_dealer);
+    g.follow_tile = j_i64(d, "follow_tile", 255).clamp(0, 255) as u8;
+    let fdt = j_veci(d, "first_discard_tiles");
+    for (i, v) in fdt.iter().enumerate().take(4) {
+        g.first_discard_tiles[i] = if (0..27).contains(v) { *v as u8 } else { 255 };
+    }
+    let fdo = j_veci(d, "first_discard_order");
+    g.first_discard_n = fdo.len().min(4) as u8;
+    for (i, v) in fdo.iter().enumerate().take(4) {
+        g.first_discard_order[i] = (*v).clamp(0, 3) as u8;
+    }
+    g.total_discards = j_i64(d, "total_discards", 0).clamp(0, u16::MAX as i64) as u16;
     // 结算配置（网页可调值表 + 开关）
+    g.cfg.first_round_follow = j_bool(d, "cfg_first_round_follow", g.cfg.first_round_follow);
+    g.cfg.follow_pay = j_f64(d, "cfg_follow_pay", g.cfg.follow_pay as f64) as f32;
+    g.cfg.follow_hold = j_i64(d, "cfg_follow_hold_chickens", g.cfg.follow_hold as i64)
+        .clamp(0, 255) as u8;
     g.cfg.mantiangji = j_bool(d, "cfg_mantiangji", g.cfg.mantiangji);
     g.cfg.jin_mult = j_f64(d, "cfg_jin_mult", g.cfg.jin_mult as f64) as f32;
     g.cfg.end_baoji = j_bool(d, "cfg_end_baoji", g.cfg.end_baoji);
@@ -216,4 +234,52 @@ pub fn game_from_json(d: &Value) -> Game {
     g.cfg.dan_diao = j_f64(d, "cfg_dan_diao", g.cfg.dan_diao as f64) as f32;
     g.cfg.qing_yi_se = j_f64(d, "cfg_qing_yi_se", g.cfg.qing_yi_se as f64) as f32;
     g
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// 2026-11-07：第一巡同轮跟打的判定进度 / 结果 / 配置必须全量过桥。
+    #[test]
+    fn follow_bridge_fields_are_parsed() {
+        let d = json!({
+            "dealer": 2,
+            "phase": 1,
+            "drawn": true,
+            "follow_dealer": true,
+            "follow_tile": 18,
+            "first_discard_tiles": [18, 18, 18, 18],
+            "first_discard_order": [2, 3, 0, 1],
+            "total_discards": 4,
+            "cfg_first_round_follow": false,
+            "cfg_follow_pay": 5.5,
+            "cfg_follow_hold_chickens": 3,
+        });
+        let g = game_from_json(&d);
+        assert!(g.follow_dealer);
+        assert_eq!(g.follow_tile, 18);
+        assert_eq!(g.first_discard_tiles, [18, 18, 18, 18]);
+        assert_eq!(g.first_discard_order, [2, 3, 0, 1]);
+        assert_eq!(g.first_discard_n, 4);
+        assert_eq!(g.total_discards, 4);
+        assert!(!g.cfg.first_round_follow);
+        assert_eq!(g.cfg.follow_pay, 5.5);
+        assert_eq!(g.cfg.follow_hold, 3);
+    }
+
+    /// 旧快照（无新字段）必须保持旧行为：未触发 + 默认开关/赔付/张数。
+    #[test]
+    fn missing_follow_fields_keep_old_behavior() {
+        let g = game_from_json(&json!({"dealer": 0, "phase": 1}));
+        assert!(!g.follow_dealer);
+        assert_eq!(g.follow_tile, 255);
+        assert_eq!(g.first_discard_tiles, [255; 4]);
+        assert_eq!(g.first_discard_n, 0);
+        assert_eq!(g.total_discards, 0);
+        assert!(g.cfg.first_round_follow);
+        assert_eq!(g.cfg.follow_pay, 3.0);
+        assert_eq!(g.cfg.follow_hold, 4);
+    }
 }

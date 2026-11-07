@@ -350,6 +350,28 @@ fn chicken_counts(
         add(*w as usize, *val as f64 * mult, "捉炮鸡",
             &format!("{}·{}", ji_tag_cn(*tag), tile_cn(*tile)), &mut c, &mut items);
     }
+    // 2026-11-07：第一巡同轮跟打 —— 被跟打的 4 张牌在结算计鸡时算作庄家手中的鸡。
+    // 与「手中鸡」同口径（庄家听牌才计、金鸡牌种按倍率）；放在全烧清零之前，
+    // 庄家若恰是全烧者其自身鸡分仍一律作废。触发结果由 Python 权威判定后过桥。
+    if g.follow_dealer && g.follow_tile < 27 {
+        let d = g.dealer as usize;
+        if tenpai[d] {
+            let ft = g.follow_tile;
+            let tb = bit(ft);
+            let mult = if tb & quad != 0 {
+                jin * 2.0
+            } else if tb & gold != 0 {
+                jin
+            } else {
+                1.0
+            };
+            let n = cfg.follow_hold as i64;
+            let val = n as f64 * cfg.ji_hold as f64 * mult;
+            add(d, val, "同轮跟打鸡", &format!("{}×{}", tile_cn(ft), n),
+                &mut c, &mut items);
+            hold_bd[d].push([ft as i64, n]);
+        }
+    }
     // 全烧：该玩家自身鸡分作废
     if let Some(v0) = void {
         let v0 = v0 as usize;
@@ -496,6 +518,24 @@ pub fn settle_win(g: &mut Game, ft: &FanTable) -> Value {
         pdet.push([a, b], (label.to_string(), info.to_string(), val,
                            who.unwrap_or(a as i64)));
     };
+
+    // 2026-11-07：第一巡同轮跟打 —— 庄家向其余三家各赔 follow_pay 只鸡
+    // （首巡已成立的即时约定，与胡牌方式/是否自摸无关）
+    if g.follow_dealer && g.cfg.follow_pay > 0.0 {
+        let d = g.dealer as usize;
+        let pay = g.cfg.follow_pay as f64;
+        let info = if g.follow_tile < 27 {
+            format!("{}×4", tile_cn(g.follow_tile))
+        } else {
+            "同轮跟打".to_string()
+        };
+        for q in 0..4usize {
+            if q != d {
+                pflow(q, d, pay, "第一巡同轮跟打", &info, Some(d as i64),
+                      &mut pair, &mut pdet);
+            }
+        }
+    }
 
     // ---- 终局听牌（赢家视为听牌）----
     let mut tenpai = [false; 4];
@@ -953,6 +993,9 @@ pub fn settle_win(g: &mut Game, ft: &FanTable) -> Value {
         "pair": pair.iter().map(|r| r.to_vec()).collect::<Vec<_>>(),
         "pair_detail": pdet.to_json(),
         "wall_left": g.wall_left(),
+        "follow_dealer": g.follow_dealer,
+        "follow_tile": if g.follow_tile < 27 { Some(g.follow_tile as i64) } else { None },
+        "follow_pay": g.cfg.follow_pay as f64,
         "deltas": delta.to_vec(),
     })
 }
@@ -965,6 +1008,23 @@ pub fn settle_huangzhuang(g: &Game, _ft: &FanTable) -> Value {
     let mut detail: Vec<(i64, String, String, f64)> = Vec::new();
     let mut pair = [[0.0f64; 4]; 4];
     let mut pdet = PairDet::new();
+
+    // 2026-11-07：第一巡同轮跟打 —— 首巡即时约定，流局也照赔
+    if g.follow_dealer && g.cfg.follow_pay > 0.0 {
+        let d = g.dealer as usize;
+        let pay = g.cfg.follow_pay as f64;
+        let info = if g.follow_tile < 27 {
+            format!("{}×4", tile_cn(g.follow_tile))
+        } else {
+            "同轮跟打".to_string()
+        };
+        for q in 0..4usize {
+            if q != d {
+                pair[q][d] += pay;
+                pdet.push([q, d], ("第一巡同轮跟打".into(), info.clone(), pay, d as i64));
+            }
+        }
+    }
 
     let tenpai = {
         let mut t = [false; 4];
@@ -1072,6 +1132,9 @@ pub fn settle_huangzhuang(g: &Game, _ft: &FanTable) -> Value {
         "pair": pair.iter().map(|r| r.to_vec()).collect::<Vec<_>>(),
         "pair_detail": pdet.to_json(),
         "wall_left": 0,
+        "follow_dealer": g.follow_dealer,
+        "follow_tile": if g.follow_tile < 27 { Some(g.follow_tile as i64) } else { None },
+        "follow_pay": g.cfg.follow_pay as f64,
         "deltas": delta.to_vec(),
     })
 }

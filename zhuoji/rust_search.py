@@ -174,6 +174,18 @@ def snapshot_of(game, p: int) -> dict:
                           else int(game.hengji_starter),
         "hengji_event_n": len(getattr(game, "hengji_events", None) or []),
         "ji_tag_of_last": _tag_last,    # [4] JI_* 编码
+        # ---- 2026-11-07：第一巡同轮跟打（判定进度 + 已触发结果，全量过桥）----
+        # Rust 搜索/标注器可从任意中间状态起模拟，必须知道首巡四家的首弃牌历史与
+        # 是否已触发，否则庄家通行证(can_ron)与结算赔付/手中鸡会与 Python 重放分叉。
+        "follow_dealer": bool(getattr(game, "follow_dealer", False)),
+        "follow_tile": 255 if getattr(game, "follow_tile", None) is None
+                       else int(game.follow_tile),
+        "first_discard_tiles": [255 if x is None else int(x)
+                                for x in (getattr(game, "first_discard_tiles", None)
+                                          or [None] * 4)],
+        "first_discard_order": [int(x) for x in
+                                (getattr(game, "first_discard_order", None) or [])],
+        "total_discards": int(getattr(game, "total_discards", 0)),
         # ---- 结算配置（网页可调；键省略 cfg_ 前缀在 Rust 侧补）----
         "cfg_mantiangji": bool(getattr(cfg, "mantiangji", False)),
         "cfg_jin_mult": float(getattr(cfg, "jin_ji_multiplier", 2.0)),
@@ -182,6 +194,10 @@ def snapshot_of(game, p: int) -> dict:
         "cfg_huang_baoji": bool(getattr(cfg, "huang_baoji", False)),
         "cfg_huang_baogang": bool(getattr(cfg, "huang_baogang", False)),
         "cfg_huang_baodapai": bool(getattr(cfg, "huang_baodapai", True)),
+        # 2026-11-07：第一巡同轮跟打（开关 / 每家赔付鸡数 / 手中鸡张数）
+        "cfg_first_round_follow": bool(getattr(cfg, "first_round_follow", True)),
+        "cfg_follow_pay": float(getattr(cfg, "follow_pay", 3.0)),
+        "cfg_follow_hold_chickens": int(getattr(cfg, "follow_hold_chickens", 4)),
         "cfg_baojiao_bonus": float(getattr(cfg, "baojiao_bonus", 10.0)),
         "cfg_ji_hold": float(getattr(cfg, "ji_hold", 1.0)),
         "cfg_ji_discard_plain": float(getattr(cfg, "ji_discard_plain", 1.0)),
