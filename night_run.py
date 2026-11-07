@@ -322,6 +322,24 @@ def promote(r: int) -> None:
     promote_ckpt(ROOT / f"models/exit_r{r:02d}.pt", f"r{r:02d}")
 
 
+def ppo_init(r: int) -> Path:
+    """PPO 链式初始化：默认续上一条 PPO 链，让每轮 960 局的少量经验跨轮累积。
+
+    为什么必须链式：960 局 ≈6 万决策 / 2 epoch / lr 5e-5 的更新量极小（冒烟实测
+    kl≈+0.005），若每轮都从 DAgger 现最佳重新起步，则每轮都是「一次几乎零位移的
+    微扰」⇒ 40 轮的 RL 经验互不叠加，等于安慰剂，闸门 D 必然恒 ≈0。
+    链式后 40 轮累计 ≈3.8 万局 ≈240 万决策，才是一次真实的 RL 实验。
+
+    r=10 时 exit_p09.pt 不存在 ⇒ 回退 latest_pt()，与修正前行为**完全等价**（零风险）。
+    runs/ppo_rechain 存在（远程急停标志）或上一轮链缺 ckpt ⇒ 从 DAgger 现最佳重启链。
+    """
+    if not (ROOT / "runs/ppo_rechain").exists():
+        prev = ROOT / f"models/exit_p{r - 1:02d}.pt"
+        if prev.exists():
+            return prev
+    return latest_pt()
+
+
 def ppo_round(r: int) -> None:
     """PPO-lite 候选轮（§6.24）：纯策略自对弈 + 终端分差奖励 → exit_p{r:02d}.pt。
 
@@ -338,7 +356,8 @@ def ppo_round(r: int) -> None:
     if out.exists():
         log(f"P{r:02d} PPO 已完成（ckpt 在），跳过")
         return
-    init = latest_pt()
+    init = ppo_init(r)
+    log(f"P{r:02d} PPO 链起点 = {init.name}")
     cmd = [PY, "train_ppo.py", "--init", str(init), "--out", str(out),
            "--hands", str(PPO_HANDS), "--workers", "4", "--threads", "2",
            "--max-states", "60000", "--epochs", "2", "--lr", "5e-5",

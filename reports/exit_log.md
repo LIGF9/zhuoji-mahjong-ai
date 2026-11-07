@@ -101,3 +101,1720 @@ a scoped thread panicked
 [2026-11-06 02:34:00] 旧驱动（02:22-02:33 的 R2 标注）未落盘，无数据损失；同 seed0
 [2026-11-06 02:34:00] 620000 重采，保证可复现。标注超时放宽至 3.5h。
 [2026-11-06 02:34:00] 配套：每小时自检自动化（03:32 首次，至 11-13 02:30）。
+[2026-11-06 03:35:40] ---- 每小时自检 #1（7×24 起后首次，03:32 触发）----
+[2026-11-06 03:35:40] 驱动存活：night_run.lock 心跳 9s、annotate_r02.log 3s 前更新、ps 见
+                        night_run.py(PID 79443) + annotate(PID 79445)。判定：在跑 → 只自检/报告/更新计划，
+                        不启第二驱动、不打断标注/训练/闸门、不并发跑任何评估。
+[2026-11-06 03:35:40] 阶段：R2 DAgger 标注（学生 exit_r01.onnx rollout + N32 教师 Q，100k / 4 分片）。
+                        进度 46,762/100,000（w0 11729 / w1 11715 / w2 11691 / w3 11627），已跑 1.03h，
+                        吞吐 11,396 标注/h·worker（4 线程聚合 45,584/h），落在 10~12.5k 健康区间；
+                        ETA 04:45，距 3.5h 超时上限 06:04 有 1h19m 余量。
+                        启动日志 [annotate] ORT ready (teacher_coreml=true, student_coreml=false)，
+                        教师 CoreML / 学生 CPU + --student-enc 3，已知坑全部规避。
+[2026-11-06 03:35:40] 健康核对：当前 annotate_r02.log panic/NaN/超时 0；磁盘 311Gi 可用(29%)；
+                        R1 数据 4×25,000 行、tiles(63,27)、glob(130)、q 的 NaN 与 mask 精确互补
+                        （非法动作槽位约定，非 bug）；闸门 jsonl 行数 A=1200(300×4) / C=200(50×4)，
+                        seed 池固定 A=710000+300、C=720000+50、四座旋转、冻结基线 master 贪心/N32。
+[2026-11-06 03:35:40] R1 复核：train loss 2.4219→1.6633，val 2.2450→1.7711（ep6 最佳，ep9 patience3 早停），
+                        ckpt=exit_r01.pt(9.84M M1/v3)；闸门 A diff=+0.179±0.406 z=+0.44 p≈0.6599 152:146
+                        → 不通过、未晋升（无 exit_best.pt）；闸门 C diff=-2.480±0.863 z=-2.87 p≈0.0041 22:28
+                        → 显著弱于 N32，记为「搜索蒸进网络」初始差距基线。
+                        eval_pairs.py:163 判据核对 = p<0.05 且均值>0；night_run._gate_pass("判定: 通过")
+                        与之匹配正确（"判定: 不通过" 不含该子串），无晋升逻辑 bug。
+[2026-11-06 03:35:40] 决策①（下一步训练）：R2 标注落盘后由驱动自动续跑 R2 训练（200k 窗口，
+                        --init exit_r01.pt）→ 闸门 A/C → R3，无需人工干预，本次不启新驱动。
+[2026-11-06 03:35:40] 决策②（增速三选一）：不触发。计划要求「连续两轮闸门 A 不显著或均值≤0」，
+                        目前仅 R1 一点（p=0.6599、均值 +0.179>0），R2 结果未出；提前改
+                        τ/Q-MSE/n_det 会污染对照并违反「先 1 后 2 再 3、禁止同时改两项」。
+                        决策点顺延至 R2 闸门 A 出结果后（预计 05:30 前后，下一次自检判断）。
+[2026-11-06 03:35:40] 决策③（Oracle Guiding / PPO-lite 分支）：不推进。闸门 C 仅 1 个数据点
+                        （-2.480±0.863），不足以判断「差距持续收敛」，需 R2/R3 至少两点成趋势再定。
+[2026-11-06 03:35:40] 计划调整：docs/14天训练计划.md 追加 §6「7×24 模式校准」——原 D1–D14 日程
+                        （11-19 截止、每天 2 轮 R1–R16）与实际（11-13 02:30、MAX_ROUND=60）已脱节，
+                        按实测 ≈2.9h/轮重排；登记驱动与计划的 6 项阶段缺口（闸门 B、正对照、增速开关、
+                        aux、lr 5e-4、Oracle/PPO）及补跑时点与优先级；红线：任何评估不得与标注并发
+                        （会把 11.4k/h·worker 压到 <8k 触发异常判据）。
+[2026-11-06 03:35:40] 下次自检关注：R2 是否 04:45 前落盘 4×25k；R2 train/val 是否继续下降；
+                        R2 闸门 A 的 p/均值与闸门 C 差距是否自 -2.48 收敛；若 R2 亦不显著，按 §6.4
+                        执行 ① τ 1.0→0.5（仅 train_exit.py --tau，禁止同时动其他项）。
+[2026-11-06 04:42:30] ---- 每小时自检 #2（7×24 第 2 次；驱动在跑，只自检/报告/更新计划）----
+[2026-11-06 04:42:30] 驱动存活：night_run.lock 心跳 12s、annotate_r02.log 4s 前更新、ps 见
+                        night_run.py(PID 79443) + annotate(PID 79445, 74% CPU)。判定：在跑 →
+                        不启第二驱动、不打断标注/训练/闸门、不并发跑任何评估。
+[2026-11-06 04:42:30] 阶段：R2 DAgger 标注 97.2%（04:41:08 采样 w0 24392 / w1 24231 /
+                        w2 24273 / w3 24297 ≈ 97,193/100k），已跑 7626s≈2h07m，
+                        吞吐 11,483~11,516 标注/h·worker（4 线程聚合 ≈46,000/h），
+                        落在 10~12.5k 健康区间；ETA 04:44~04:45，距 3.5h 超时上限 06:04
+                        有 1h19m 余量。自检 #1 的 ETA 04:45 得到验证。
+[2026-11-06 04:42:30] 健康核对：当前 annotate_r02.log panic/NaN/失败/Error/timeout 全 0；
+                        日志秒级更新（远优于 10min 判据）；磁盘 311Gi 可用(29%)；
+                        R1 数据 4×25,000、tiles(63,27)、glob(130)、q 的 NaN 与 mask 4/4 精确互补；
+                        闸门 A 1200 行 / C 200 行；驱动代码复核 --student-enc 3、
+                        --student-device cpu、教师 CoreML、seed0=620000，已知坑全部规避。
+[2026-11-06 04:42:30] 闸门统计独立复算（analyze.py 口径 deltas[cand]-mean(其余三家)，
+                        按 seed 四座平均，n=300/50）：A +0.179±0.406 z=+0.44 p≈0.6599；
+                        C -2.480±0.863 z=-2.87 p≈0.0041 —— 与驱动 summary 逐位一致，
+                        固定 seed 池 / 四座旋转 / 冻结基线协议与 p<0.05 且均值>0 判据实现无误。
+[2026-11-06 04:42:30] 最近产出：R1 全齐（100k 标注、exit_r01.pt 39.5MB、
+                        train 2.4219→1.6633、val 2.2450→1.7711 ep6 早停、闸门 A/C）。
+                        R2 数据尚未落盘属正常（标注器结束一次性落盘）；无 exit_best.pt（R1 未晋升）。
+                        产出符合预期。
+[2026-11-06 04:42:30] 决策①（下一步训练）：R2 标注落盘后由驱动自动接续 R2 训练
+                        （400k 滑窗 / --init exit_r01.pt / 30 epoch patience3 / lr 1e-3 / τ 1.0）
+                        → 闸门 A/C → R3。本次不启新驱动、不打断、不并发评估，零人工干预。
+[2026-11-06 04:42:30] 决策②（增速三选一）：不触发。R2 闸门 A 未出，目前仅 R1 一点
+                        （p≈0.6599、均值 +0.179>0），未达「连续两轮 p>0.2 或均值≤0」。
+                        决策点仍为 R2 闸门 A（预计 05:10~05:30）；若届时亦不显著 →
+                        执行 ① τ 1.0→0.5，且仅此一项，禁止同时动 Q-MSE / n_det / lr。
+[2026-11-06 04:42:30] 决策③（Oracle Guiding / PPO-lite）：不推进。闸门 C 仅 1 点
+                        （-2.480±0.863），无法判断「差距持续收敛」，需 R2/R3 至少两点成趋势。
+[2026-11-06 04:42:30] 计划调整（§6.6 落地校准，重要）：修正「改 night_run.py 即生效」的隐含错误——
+                        运行中驱动是长驻单进程、不重载源码，编辑 night_run.py 只对下次重启生效；
+                        τ 1.0→0.5 应改为编辑 train_exit.py:38 的 TAU 常量（每轮训练是新进程，
+                        自动重读，零重启、零并发、零打断），这是唯一符合硬约束的落地路径。
+                        闸门 B / 正对照改为「驱动重启窗口或终评统一口径」补跑，
+                        不在 7×24 标注期内抢 CPU；详见 docs/14天训练计划.md §6.6。
+[2026-11-06 04:42:30] 下次自检关注：R2 是否 04:45 前落盘 4×25k；R2 train/val 是否继续下降；
+                        R2 闸门 A 的 p/均值、闸门 C 是否自 -2.48 收敛；若连续两轮不显著
+                        立即按 §6.4 ① 改 TAU=0.5（仅此一项）。
+[2026-11-06 04:44:37]   rc=0  7839s  annotate_r02
+[2026-11-06 04:44:37] R2 标注完成 student=exit_r01.onnx seed0=620000 → 4×25k
+[2026-11-06 04:44:37] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r02.pt --epochs 30 --window 400000 --batch 256 --seed 20261108 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_r01.pt  → train_r02.log
+[2026-11-06 04:45:20] ---- 自检 #2 收尾：捕获 R2 标注→训练交接（全程零干预）----
+[2026-11-06 04:45:20] R2 标注 04:44:37 落盘完成 rc=0、耗时 7839s≈2h10m39s，
+                        聚合吞吐 45,914/h（≈11,479/h·worker），与自检 #1 预测 04:45 一致。
+[2026-11-06 04:45:20] R2 数据合规：exit_w{0..3}.npz 各 25,000 行（合计 100,000），
+                        tiles(25000,63,27)、glob(25000,130)、q/mask(25000,28)，
+                        q 的 NaN 与 mask 4/4 精确互补，满足 data_ready 的 ≥24k 判据。
+[2026-11-06 04:45:20] 下一步训练已由驱动自动启动（本次未干预）：
+                        train_exit.py --data R1+R2 两窗口 --out exit_r02.pt
+                        --epochs 30 --window 400000 --batch 256 --seed 20261108
+                        --init exit_r01.pt（200k 实际窗口、续训自 R1、τ1.0/lr1e-3 未改）。
+                        train_exit.py PID 89576 在跑（23% CPU），日志仅 1 条无害
+                        UserWarning(float(loss) 的 requires_grad 提示，R1 同款)，
+                        panic/NaN/Error/Traceback 全 0；annotate 已退出，lock 心跳持续。
+[2026-11-06 04:45:20] 自检竞态说明（非训练异常）：首次读 exit_w3.npz 时该分片尚在写入
+                        （4.4MB vs 其余 9.7MB）触发 BadZipFile；标注器四分片逐个落盘，
+                        驱动在 annotate 进程退出后才检查 data_ready（内含 try/except），不受影响。
+                        等 15s 复核 4/4 全合规。后续自检须等进程退出或分片大小稳定再读 npz。
+[2026-11-06 04:45:20] 决策不变：不启第二驱动、不打断、不并发评估；τ/Q-MSE/n_det、
+                        Oracle/PPO 全部维持原状，硬决策点仍为 R2 闸门 A（05:10~05:30）。
+[2026-11-06 05:23:33]   rc=0  2336s  train_r02
+[2026-11-06 05:23:33] R2 训练完成 init=exit_r01.pt → exit_r02.pt  (['[done] best val 1.7661 → /Users/ligf9/zhuoji-mahjong-ai/models/exit_r02.pt'])
+[2026-11-06 05:23:33] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r02.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r02_gateA.jsonl  → gateA_r02.log
+[2026-11-06 05:24:29]   rc=0  56s  gateA_r02
+[2026-11-06 05:24:29] R2 闸门 A: [summary] seats=[0, 1, 2, 3]  n=300  diff=+2.374±0.415  z=+5.72  p≈0.0000  符号 179:117  → 通过
+[2026-11-06 05:24:29] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 05:24:30]   rc=0  1s  export_exit_best
+[2026-11-06 05:24:30] 晋升：exit_r02.pt → exit_best.pt
+[2026-11-06 05:24:30] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r02.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --a-mode greedy --b-mode search32 --seeds 50 --seed0 720000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r02_gateC.jsonl  → gateC_r02.log
+[2026-11-06 05:46:44]   rc=0  1334s  gateC_r02
+[2026-11-06 05:46:44] R2 闸门 C(趋势): [summary] seats=[0, 1, 2, 3]  n=50  diff=-0.293±1.125  z=-0.26  p≈0.7944  符号 22:28
+[2026-11-06 05:46:44] R2 轮次完成  best=exit_best.pt
+[2026-11-06 05:46:44] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 05:46:45]   rc=0  1s  export_exit_best
+[2026-11-06 05:46:45] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r03 --seed0 630000  → annotate_r03.log
+[2026-11-06 05:47:40] ---- 每小时自检 #3（7×24 第 3 次；驱动在跑，只自检/报告/更新计划）----
+[2026-11-06 05:47:40] 驱动存活：night_run.lock 心跳 4~5s、annotate_r03.log 秒级更新、ps 见
+                        night_run.py(PID 79443，已跑 3h13m) + annotate(PID 94304，85.6% CPU)。
+                        判定：在跑 → 不启第二驱动、不打断标注/训练/闸门、不并发跑任何评估。
+[2026-11-06 05:47:40] 阶段：R3 DAgger 标注（05:46:45 启动，学生首次用 exit_best.onnx、
+                        seed0=630000；教师 CoreML / 学生 CPU + --student-enc 3，已知坑全规避）。
+                        吞吐 11,106~11,792 标注/h·worker（健康区间 10~12.5k），
+                        panic/NaN/Error/timeout 全 0，日志秒级更新，ETA ≈08:00，
+                        距 3.5h 上限 09:16 有 1h16m 余量。
+[2026-11-06 05:47:40] R2 完整产出（本次核心新增）：标注 04:44:37 落盘 4×25,000=100,000；
+                        训练 05:23:33 完成 init=exit_r01.pt、200k 实际窗口、
+                        train 1.7914→1.6924、best val 1.7661(ep6)/ep9 patience3 早停 → exit_r02.pt。
+[2026-11-06 05:47:40] R2 闸门 A：+2.374±0.415 z=+5.72 p≈0.0000 符号 179:117 → **通过、晋升**，
+                        05:24:30 exit_r02.pt → exit_best.pt（shasum-256 逐位一致），r02.promoted=ok，
+                        exit_best.onnx 已导出(tiles[B,63,27]/glob[B,130])。
+[2026-11-06 05:47:40] R2 闸门 C：−0.293±1.125 z=−0.26 p≈0.7944 → 自 R1 −2.480 收敛 2.187 分(88%)，
+                        已不显著；新贪心基本追平 N32，「搜索蒸进网络」接近达成。
+[2026-11-06 05:47:40] 独立复算 4 份闸门 jsonl（deltas[cand]−mean(其余三家) 按 seed 四座平均）
+                        与驱动 summary 逐位一致：A r01 +0.179±0.406 p=0.6599 / r02 +2.374±0.415 p=0.0000；
+                        C r01 −2.480±0.863 p=0.0041 / r02 −0.293±1.125 p=0.7944；
+                        行数 1200 / 200、seats[0,1,2,3]、seed 池 710000+300 / 720000+50 全合规。
+[2026-11-06 05:47:40] npz 合规：r01/r02 各 4×25,000，tiles(63,27)/glob(130)/q,mask(28)，
+                        q 的 NaN 与 mask 8/8 分片精确互补（非法动作槽位约定，非 bug）；
+                        磁盘 311Gi 可用(29%)；TAU=1.0、lr=1e-3 未改。结论：**健康，产出超预期**。
+[2026-11-06 05:47:40] 决策①（下一步训练）：R3 标注已由驱动自动启动，本次零干预；
+                        后续 R3 训练(300k 窗口、init=exit_best.pt) → 闸门 A/C → R4 由驱动接续。
+                        首次以「被认可的最佳 ckpt」作 DAgger rollout 学生，
+                        自检 #1/#2 记录的「latest_pt() 回退最新轮」隐患自动闭环。
+[2026-11-06 05:47:40] 决策②（增速三选一）：**不触发**。R2 闸门 A 显著通过(p≈0.0000、均值+2.374>0)，
+                        不满足「连续两轮不显著或均值≤0」；按 §6.6.3「通过 → 不改任何超参」，
+                        τ / Q-MSE / n_det / lr 全部维持原值。明确：R3 单轮回落亦不构成
+                        「连续两轮」（R2 已显著），禁止据此提前改 TAU=0.5。
+[2026-11-06 05:47:40] 决策③（Oracle Guiding / PPO-lite）：**本次不激活，进入就绪态**。
+                        闸门 C 仅 1 段收敛(R1→R2)，§6.4 要求「连续 ≥2 轮收敛」需 R3 点确认；
+                        PPO-lite 按 §6.4 约 R10+ 且须先完成 wrapper 定稿+单测，现在太早。
+                        P2a 可执行规格、双条件判据与落地时点已固化进计划 §6.7。
+[2026-11-06 05:47:40] 决策④（闸门 B）：维持 §6.6.2，R3 末(r%3==0)不在主循环并发补跑，
+                        线上等效口径由 11-13 后终评 500 seed 统一补跑；逐轮趋势由闸门 C 承担。
+[2026-11-06 05:47:40] 计划调整(§6.7)：①预算修正 R2 实测 3.22h/轮、R4+ ≈3.87h/轮 →
+                        168h 实际约 44 轮（非 55），MAX_ROUND=60 不会先触发、DEADLINE 为硬约束；
+                        ②val loss 跨轮不可比（窗口 100k→200k 且分布转为学生 rollout），
+                        强度只认冻结基线闸门 A/C；③口径澄清：闸门 A +2.374 是
+                        「新贪心 vs master 贪心」，非主目标「新+N32 vs master+N32」，
+                        后者须闸门 B / 终评确认；闸门 C −0.293 不显著 ≈ 超额目标接近达成。
+[2026-11-06 05:47:40] 硬决策点顺延：R3 闸门 C（预计 09:00~09:10 出结果，由 09:47/10:47 自检捕获）
+                        与 R6 末增速复核。下次自检(≈06:47)只需核对 R3 标注进度/吞吐/异常，不提前决策。
+[2026-11-06 07:00:00] ---- 每小时自检 #4（7×24 第 4 次；06:53 触发、06:54~07:01 采样；驱动在跑，只自检/报告/更新计划）----
+[2026-11-06 07:00:00] 驱动存活：night_run.lock 心跳 11~28s、annotate_r03.log 20s 前更新、ps 见
+                        night_run.py(PID 79443，已跑 4h20m) + annotate(PID 94304，67.8% CPU)。
+                        判定：在跑 → 不启第二驱动、不打断标注、不并发跑任何评估。
+[2026-11-06 07:00:00] 阶段：R3 DAgger 标注（05:46:45 启动，学生 exit_best.onnx、seed0=630000；
+                        teacher_coreml=true / student_coreml=false、--student-enc 3 / --student-device cpu）。
+                        进度 w0 13189 / w1 13066 / w2 13181 / w3 13202 ≈ 52,638/100k = 52.6%，
+                        已跑 4195s≈1h10m，吞吐 11,319~11,360 标注/h·worker（聚合 ≈45.3k/h），
+                        落在 10~12.5k 健康区间；ETA ≈08:00 落盘，距 3.5h 上限 09:16 有 1h16m 余量。
+[2026-11-06 07:00:00] 健康核对：annotate_r03.log panic/NaN/Error/Traceback/timeout/fail 计数 0；
+                        日志秒级更新（远优于 10min 判据）；磁盘 311Gi 可用(29%)；
+                        R1/R2 共 8/8 npz 分片各 25,000 行、tiles(63,27)/glob(130)/q,mask(28)、
+                        q 的 NaN 与 mask 精确互补；runs/exit_r03 尚空属正常（标注器结束一次性落盘）。
+[2026-11-06 07:00:00] 最近产出：本次无新轮次产出（R3 仍在标注）。R2 全链路复算——
+                        标注 04:44:37 落盘 100k / 7839s；训练 05:23:33 init=exit_r01.pt、200k 窗口、
+                        train 1.7914→1.6924、best val 1.7661(ep6)；闸门 A +2.374±0.415 z=+5.72
+                        p≈0.0000 179:117 → 05:24:30 晋升 exit_best.pt（shasum 与 exit_r02.pt 一致
+                        69f59485…）；闸门 C −0.293±1.125 z=−0.26 p≈0.7944，自 R1 −2.480 收敛 88%。
+[2026-11-06 07:00:00] 4 份闸门 jsonl 独立复算（deltas[cand]−mean(其余三家) 按 seed 四座平均）
+                        与驱动 summary 逐位一致：A r01 +0.179±0.406 p=0.6599 / r02 +2.374±0.415 p=0.0000；
+                        C r01 −2.480±0.863 p=0.0041 / r02 −0.293±1.125 p=0.7944；行数 1200/1200/200/200、
+                        四座旋转、固定 seed 池 710000+300 / 720000+50 全合规。train_exit.py:38 TAU=1.0、
+                        :85 lr=1e-3 只读核对未改。结论：**健康，产出符合预期**。
+[2026-11-06 07:00:00] 决策①（下一步训练）：驱动在跑，R3 标注 → 训练(300k 窗口, init=exit_best.pt)
+                        → 闸门 A/C → R4 由驱动自动接续，**本次零干预**。
+[2026-11-06 07:00:00] 决策②（增速三选一）：不触发。R2 闸门 A 显著通过 → §6.6.3「通过 → 不改任何
+                        超参」；§6.7.2 明确 R3 单轮回落 ≠ 连续两轮，禁止提前改 TAU=0.5。
+                        决策③（Oracle / PPO）：不激活、保持就绪态（闸门 C 仅 1 段收敛，需 R3 点
+                        确认第 2 段；PPO 约 R10+）。决策④（闸门 B）：维持 §6.6.2 终评统一口径补跑。
+[2026-11-06 07:00:00] 本次新增排查（伪风险，已排除，不改代码）：night_run.py:183 seed0=600000+r*10000
+                        配合 annotate.rs:294 `Rng::new(seed0+tid*10007)`，R8 起部分 worker 的
+                        rollout RNG 种子编号会扫入 710000/720000 评估编号区间（R11/R12 的 w0
+                        更直接等于闸门 A/C 的 seed0）。核实：标注用 Rust xorshift64*+Fisher-Yates
+                        （rng.rs 注「无需与 Python 对齐」、单条长 RNG 流连续发牌），评估用
+                        Python random.Random(seed).shuffle（rules.py:146/168、每 seed 重置），
+                        PRNG 不同族且洗牌/发牌流语义不同 ⇒ 编号相同也不会生成相同牌墙，
+                        评估 seed 池与 rollout 的隔离在实现层成立。**不修改 night_run.py**
+                        （对长驻进程无效，§6.6.1），登记入计划 §6.8 防后续自检误判为协议违规。
+[2026-11-06 07:00:00] 计划校准（§6.8）：①窗口截断已核实 train_exit.py:58-60 `x[-window:]`、
+                        pats 按轮次升序 ⇒ 400k 滑窗只留最近 4 轮，§6.7.3「R4+ 1.30h 封顶、
+                        3.87h/轮、168h≈44 轮」由假设升级为验证结论；②R3 时间线精修：
+                        标注 ETA 08:00 → 训练 ≈08:58 → 闸门 A 08:59 → 闸门 C ≈09:21，
+                        硬决策点修正为 ≈09:21（原写 09:00~09:10），由 09:47 自检捕获、10:47 兜底；
+                        ③长期洁净度：逐轮 A/C 复用同一 300/50 seed 池 44 轮有多重比较假阳性累积，
+                        终评须用全新独立 500 seed 池（建议 3_000_000+500），最终显著性以终评为准，
+                        逐轮闸门仅作趋势；④磁盘每轮≈118MB×44≈5.2GB，311Gi 余量充足。
+[2026-11-06 07:00:00] 下次必做：07:47 核对 R3 标注进度/吞吐/异常（落盘前勿读 r03 npz，避免
+                        BadZipFile 竞态）；08:47 核对 R3 训练 --init exit_best.pt / 300k 窗口 /
+                        train-val 曲线；09:47 捕获 R3 闸门 A/C，按 §6.7.6 决策树判 P2a 就绪与增速。
+[2026-11-06 07:59:09]   rc=0  7944s  annotate_r03
+[2026-11-06 07:59:09] R3 标注完成 student=exit_best.onnx seed0=630000 → 4×25k
+[2026-11-06 07:59:09] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz runs/exit_r03/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r03.pt --epochs 30 --window 400000 --batch 256 --seed 20261109 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt  → train_r03.log
+[2026-11-06 08:12:26] ---- 每小时自检 #5（7×24 第 5 次；08:12 触发、08:12~08:20 采样；驱动在跑，只自检/报告/更新计划）----
+[2026-11-06 08:12:26] 驱动存活：night_run.lock 心跳 8~9s、night_run.py PID 79443（已跑 5h43m）、
+                        R3 训练 PID 5006（20min，9.4% CPU）、train_r03.log 08:18:42 更新。
+                        判定：在跑 → 不启第二驱动、不打断训练、不并发跑任何评估。
+[2026-11-06 08:12:26] 阶段：R3 训练（07:59:09 启动，data 12 files/300000 samples、400k 窗口、
+                        --init exit_best.pt、--seed 20261109、30ep/patience3）。R3 标注已于
+                        07:59:09 rc=0 完成，7944s≈2h12m，4×25k 一次性落盘。
+[2026-11-06 08:12:26] 最近产出①（R3 标注）：r01/r02/r03 共 12/12 npz 分片各 25,000 行、
+                        tiles(25000,63,27)/glob(25000,130)/q,mask(25000,28)、q 的 NaN 与 mask
+                        4/4 精确互补（r03 qNaN 484,682~488,216）。末次吞吐 11,325~11,372
+                        标注/h·worker（聚合 ≈45,317/h），落在 10~12.5k 健康区间；
+                        annotate_r03.log panic/NaN/Error/fail 计数 0，日志秒级更新。
+[2026-11-06 08:12:26] 最近产出②（R3 训练中期）：ep1 train 1.7647/val 1.7693、ep2 1.7510/1.7687
+                        (best)、ep3 1.7433/1.7764 —— train 单调下降，val ep3 微升 0.0077，
+                        由 patience3 早停处理，非异常（R2 同款）。每 ep ≈390s，
+                        预计 08:32（ep5 早停）~08:58（ep9）结束。
+                        exit_r03.pt 已写出（8e29f123…），但 exit_best.pt 仍 = exit_r02.pt
+                        （ae506c68…，两者哈希一致）—— **写入 ≠ 晋升**，晋升唯一标志是
+                        runs/gates/rNN.promoted + 闸门 A summary 通过。
+[2026-11-06 08:12:26] 闸门复算（deltas[cand]−mean(其余三家) 按 seed 四座平均）与驱动逐位一致：
+                        A r01 +0.179±0.406 p≈0.6599 / r02 +2.374±0.415 p≈0.0000（已晋升）；
+                        C r01 −2.480±0.863 p≈0.0041 / r02 −0.293±1.125 p≈0.7944。
+                        train_exit.py:38 TAU=1.0、night_run.py 的 --student-enc 3 /
+                        --student-device cpu / A=710000+300 / C=720000+50 只读核对未改。
+                        磁盘 311Gi 可用(29%)。结论：**健康，产出符合预期**。
+[2026-11-06 08:12:26] 新增排查①（伪异常，已定性）：night_run.log 第 19~79 行有 8 条
+                        `学生前向失败 tiles Got:15 Expected:63` panic，均在
+                        `[00:00:48] 夜间驱动结束 failures=2` 之前，属 11-06 00:07/02:22 两次
+                        早期失败尝试（未带 --student-enc 3）；02:33:57 正式 7×24 启动（第 93 行）
+                        之后 panic/Error 计数 0。night_run.log 是 append 累积文件，
+                        **后续自检不得因头部历史 panic 误判当前异常**，只按时间戳切片判定。
+[2026-11-06 08:12:26] 新增排查②（ONNX 陈旧权重风险，已排除）：promote() 用固定 stem='exit_best'
+                        调 ensure_onnx()，其缓存判据是 `onnx.mtime >= {stem}.pt.mtime`
+                        （forward.py:73）。核实：promote 用 shutil.copy2 保留源 ckpt mtime ⇒
+                        R3 若晋升，exit_best.pt mtime=08:12 > exit_best.onnx 05:24 ⇒ 触发重导出，
+                        R4 rollout 拿到 R3 权重；若不通过，两者保持 R2 且 05:24>=05:10 正确复用。
+                        **两分支均自洽，无陈旧学生权重风险**。但判据依赖 mtime 而非内容哈希，
+                        属脆弱点（异常时间戳会静默复用旧 ONNX 且无报错），登记为低优先级健壮性项，
+                        建议终评/自然重启窗口加固为内容哈希校验；**当前不改代码**（避免非必要干预）。
+[2026-11-06 08:12:26] 决策①（下一步训练）：驱动在跑，R3 训练 → 闸门 A/C → R4 标注由
+                        first_incomplete_round()/for 循环自动接续，**本次零干预、零重启**。
+                        决策②（增速三选一）：不触发（R2 A 显著通过，R3 闸门未出；
+                        R3+R4 连续两轮 p>0.2 或均值≤0 才仅改 TAU=0.5）。
+                        决策③（Oracle/PPO）：不激活、保持就绪态（闸门 C 仅 1 段收敛，等 R3 点）。
+                        决策④（闸门 B）：维持 §6.6.2 终评统一口径补跑。
+[2026-11-06 08:12:26] 计划校准（§6.9）：R3 训练按实测 390s/ep，早停可能提前到 ≈08:32，
+                        ⇒ 闸门 C 结果窗口修正为 ≈09:00~09:21（原单一 ≈09:21）。
+                        下次自检（≈09:2x~09:47）捕获；若有 08:47 自检，只记录闸门 A 结果，
+                        **不提前决策**（须等闸门 C 配对判第 2 段收敛）。
+[2026-11-06 08:12:26] 下次必做：捕获 R3 闸门 A（p/均值/是否晋升）与闸门 C（是否自 −0.293
+                        继续收敛 / 反弹显著为负），按 §6.7.6 决策树判 P2a 就绪与增速；
+                        核对 R3 train/val 最终曲线与早停 epoch、r03.promoted 是否生成、
+                        exit_best.onnx 是否随晋升更新；R6 末复核增速三选一。
+[2026-11-06 08:51:03]   rc=0  3114s  train_r03
+[2026-11-06 08:51:03] R3 训练完成 init=exit_best.pt → exit_r03.pt  (['[done] best val 1.7683 → /Users/ligf9/zhuoji-mahjong-ai/models/exit_r03.pt'])
+[2026-11-06 08:51:03] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r03.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r03_gateA.jsonl  → gateA_r03.log
+[2026-11-06 08:51:59]   rc=0  56s  gateA_r03
+[2026-11-06 08:51:59] R3 闸门 A: [summary] seats=[0, 1, 2, 3]  n=300  diff=+2.843±0.422  z=+6.74  p≈0.0000  符号 186:108  → 通过
+[2026-11-06 08:51:59] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 08:52:00]   rc=0  1s  export_exit_best
+[2026-11-06 08:52:00] 晋升：exit_r03.pt → exit_best.pt
+[2026-11-06 08:52:00] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r03.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --a-mode greedy --b-mode search32 --seeds 50 --seed0 720000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r03_gateC.jsonl  → gateC_r03.log
+[2026-11-06 09:13:37]   rc=0  1296s  gateC_r03
+[2026-11-06 09:13:37] R3 闸门 C(趋势): [summary] seats=[0, 1, 2, 3]  n=50  diff=+0.300±0.980  z=+0.31  p≈0.7595  符号 27:23
+[2026-11-06 09:13:37] R3 轮次完成  best=exit_best.pt
+[2026-11-06 09:13:37] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 09:13:38]   rc=0  1s  export_exit_best
+[2026-11-06 09:13:38] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r04 --seed0 640000  → annotate_r04.log
+[2026-11-06 09:52:00] ---- 每小时自检 #6（7×24 第 6 次；09:41 触发、09:45~09:55 采样；驱动在跑，只自检/报告/更新计划）----
+[2026-11-06 09:52:00] 驱动存活：night_run.lock 心跳 2~7s、night_run.py PID 79443（已跑 7h18m）+
+                        annotate PID 10902（64.8% CPU，32min）、annotate_r04.log 秒级更新。
+                        判定：在跑 → 不启第二驱动、不打断标注、不并发跑任何评估。
+[2026-11-06 09:52:00] 阶段：R4 DAgger 标注（09:13:38 启动，学生 exit_best.onnx=R3 权重、
+                        seed0=640000，--student-enc 3 / --student-device cpu、教师 CoreML）。
+                        进度 w0 6193 / w1 6223 / w2 6175 / w3 6208 ≈ 24,799/100k（24.8%，1957s），
+                        吞吐 11,376~11,481 标注/h·worker（聚合 ≈45.5k/h），ETA ≈11:26，
+                        距 3.5h 超时上限 12:43 有 1h17m 余量。annotate_r04.log
+                        panic/NaN/Error/timeout/fail 计数 0，日志秒级更新，磁盘 311Gi 可用(29%)。
+[2026-11-06 09:52:00] 健康核对：按 02:33:57 正式 7×24 启动时间戳切片，13 个阶段全部 rc=0，
+                        panic/Traceback/Timeout/阶段异常 计数 0（文件头部 8 条 tiles Got:15
+                        是 00:07/02:22 早期失败启动残留，§6.9.2 已定性，非当前异常）。
+                        6 份闸门 jsonl 行数 A 1200×3 / C 200×3、seats[0,1,2,3]、
+                        固定 seed 池 A=710000..710299 / C=720000..720049 全合规。
+[2026-11-06 09:52:00] 最近产出（R3 全链路，本次核心）：标注 07:59:09 rc=0 落盘 4×25k（7944s≈2h12m）；
+                        训练 08:51:03 rc=0（3114s，300k 窗口、--init exit_best.pt、seed 20261109），
+                        train 1.7647→1.7184 单调降、best val 1.7683(ep5)、ep8 patience3 早停；
+                        闸门 A 08:51:59 +2.843±0.422 z=+6.74 p≈0.0000 186:108 → 通过，
+                        08:52:00 晋升 exit_r03.pt → exit_best.pt（哈希 74f313eb… 逐位一致）、
+                        r03.promoted=ok、exit_best.onnx 08:52:00 重导出；
+                        闸门 C 09:13:37 +0.300±0.980 z=+0.31 p≈0.7595 27:23 → 首次转正，
+                        自 R1 −2.480 → R2 −0.293 → R3 +0.300 连续 2 段收敛（累计 +2.780 分）。
+[2026-11-06 09:52:00] 独立复算（6 份 jsonl，口径 deltas[cand]−mean(其余三家) 按 seed 四座平均）
+                        与驱动 summary 核心统计量逐位一致：A r01 +0.179±0.406 p=0.6599 /
+                        r02 +2.374±0.415 p=0.0000 / r03 +2.843±0.422 p=0.0000；
+                        C r01 −2.480±0.863 p=0.0041 / r02 −0.293±1.125 p=0.7944 /
+                        r03 +0.300±0.980 p=0.7595。符号计数因零值处理口径差 ±3，不影响判定。
+[2026-11-06 09:52:00] 数据合规：r01/r02/r03 共 12/12 npz 分片各 25,000 行、tiles(63,27)/
+                        glob(130)/q,mask(28)，q-NaN 与 mask 精确互补（NaN ↔ mask=0，
+                        overlap=0 / gap=0，12/12 True）。**本次修正自检脚本口径**：历史写的
+                        「NaN 与 mask 互补」指 NaN↔mask=0；若按 NaN↔mask=1 校验会全部 False，
+                        属校验脚本口径错误而非数据异常，后续自检统一按 mask=0 判定。
+[2026-11-06 09:52:00] 新增验证①（ONNX 陈旧权重，§6.9.3 由推断升级为实测）：exit_best.onnx
+                        mtime 08:52:00 > exit_best.pt 08:31 ⇒ 触发重导出；用权重数值签名
+                        （size+sum+前缀和）比对 174 个 initializer：exit_r03.pt 命中 92/338
+                        float 张量、exit_r02.pt 命中 0/338 ⇒ R4 rollout 学生确为 R3 权重，
+                        无陈旧权重。ONNX 输入 tiles[0,63,27]/glob[0,130] 动态 batch 合规。
+[2026-11-06 09:52:00] 新增验证②（增益斜率，同冻结池逐 seed 配对，仅趋势、不作晋升依据）：
+                        R3−R2 闸门 A +0.469±0.563 z=+0.83 p≈0.4053（148/300 seed 更优）、
+                        闸门 C +0.593±1.432 z=+0.41 p≈0.6786（26/50 更优）。
+                        ⇒ 绝对强度对 master 仍极显著（+2.843），但环比增量已不显著，
+                        增益进入平台期；C 三段增量 +2.187 → +0.593 递减，
+                        是「教师天花板临近」的定量证据。注意 C 的 +0.300 不显著(n=50)、
+                        逐轮复用同一池有多重比较累积，**不宣布「超额目标达成」**，
+                        以终评 500 seed 独立池为准。
+[2026-11-06 09:52:00] 决策①（下一步训练）：驱动在跑，R4 标注 → 训练(400k 滑窗首次封顶、
+                        --init exit_best.pt) → 闸门 A/C → R5 由 for 循环自动接续，
+                        **本次零干预、零重启、零并发评估**。不启第二驱动。
+[2026-11-06 09:52:00] 决策②（增速三选一）：**不触发**。R2/R3 闸门 A 连续两轮显著为正
+                        （p≈0.0000、均值 +2.374/+2.843>0）；触发条件是连续两轮 p>0.2
+                        或均值≤0。train_exit.py:38 TAU=1.0、:85 lr=1e-3 只读核对未改。
+                        R6 末复核；单轮回落不得提前改 TAU=0.5。
+[2026-11-06 09:52:00] 决策③（P2a Oracle Guiding）：§6.7.5 双条件**已满足** ——
+                        (a) 闸门 C 连续 ≥2 段收敛且 R3 未反弹为显著负；(b) 闸门 A 显著为正。
+                        按 §6.7.6 从「就绪态」升级为**规格冻结 + 离线准备态**，
+                        但**不激活、不改代码、不并发、不重启**：长驻驱动无软停 flag
+                        （DEADLINE 为模块常量、仅 timebox_ok 拒新阶段），主循环无空档，
+                        §6.7.5 只允许自然重启窗口或终评窗口。规格见计划 §6.10.3。
+[2026-11-06 09:52:00] 决策④（PPO-lite）：不启动（约 R10+，须先完成奖励 wrapper 定稿+单测；
+                        当前增益仍在，只是斜率放缓）。决策⑤（闸门 B / 终评）：
+                        终评第一优先 = 500 seed「新+N32 vs master+N32」独立池
+                        (3_000_000+500)，优先级高于 P2a 试点；P2a 结论作下一迭代输入。
+[2026-11-06 09:52:00] 计划调整（§6.10）：①预算 R3 实测 3.45h/轮（训练 300k 0.865h）、
+                        R4+ 400k 封顶 ≈3.76h/轮，剩余 160.6h ⇒ 主循环约 42~45 轮，
+                        DEADLINE 为硬约束；②**终评改在 DEADLINE 之后（11-13 02:30 起）执行**，
+                        不占 168h 窗口、不与标注并发，脚本/独立 seed 池/闸门 B 等价口径
+                        在 11-12 前离线备好（修正 §6.7.3「预留 11-12 晚间」）；
+                        ③P2a 结构约束登记：只在终评做则无法「并入主路重跑后续轮」，
+                        定位为验证性对照 + 下一迭代输入；④平台期触发规则：
+                        R4~R6 若 A 环比增量持续不显著且 C 在 0 附近平台化，
+                        R6 末把「天花板」由临近升级为确认，届时切换优先级到 P2a/终评，
+                        但仍不改主循环超参；⑤下次自检：10:47 核 R4 标注进度/吞吐，
+                        11:47 核 R4 训练 400k 窗口，13:xx 捕获 R4 闸门 A/C，R6 末复核增速。
+[2026-11-06 09:52:00] 结论：**健康，产出超预期（连续两轮闸门 A 显著通过、闸门 C 转正）**；
+                        下一步训练已由驱动自动接续 R4，本次零干预。
+                        落地：reports/exit_log.md（本块）、docs/14天训练计划.md（§6.10）、
+                        reports/夜间训练报告-2026-11-06.md（§13）。
+
+================================================================================
+[2026-11-06 11:25:00] 自检 #7（7×24 第 7 次，R4 标注落盘 + 训练启动窗口）
+================================================================================
+[2026-11-06 11:25:00] 状态：驱动全程存活（lock 心跳 6~28s、night_run.py PID 79443 +
+                        annotate_r04 PID 10902 → 11:24:47 rc=0 退出 → train_r04 自动接续）。
+                        R4 标注 09:13:38→11:24:47（7870s≈2h11m，早于 3.5h 超时上限
+                        12:43），吞吐 11,438~11,481/h·worker（聚合 ≈45.8k/h），0 异常。
+                        R4 四分片 11:24:47 稳定落盘：4×25,000=100,000 行，tiles(63,27)/
+                        glob(130)/q,mask(28)，NaN↔mask overlap=0 gap=0 **全合规（16/16）**。
+                        r01~r03 12 分片复核同样全合规。磁盘 311Gi。
+[2026-11-06 11:25:00] 驱动自动接续「下一步训练」：11:24:48 `train_exit.py --data r01~r04
+                        --window 400000 --init exit_best.pt --seed 20261110`，
+                        **400k 滑窗首次封顶**（§6.10.6 预计 ≈1.15h）。按硬约束
+                        **零干预、未启第二驱动、未打断、未并发评估**。
+[2026-11-06 11:25:00] 闸门独立复算（正确口径：deltas[cand_seat]−mean(其余三家)，
+                        四座按 seed 平均）与驱动逐位一致：
+                        A: R1 +0.179±0.406 p≈0.6599 / R2 +2.374±0.415 p≈0.0000 /
+                           R3 +2.843±0.422 p≈0.0000；
+                        C: R1 −2.480±0.863 p≈0.0041 / R2 −0.293±1.125 p≈0.7944 /
+                           R3 +0.300±0.980 p≈0.7595。
+                        exit_best.pt ≡ exit_r03.pt（sha 74f313eb…），exit_best.onnx 08:52
+                        同步；TAU=1.0 / lr=1e-3 / n_det=32 全未改。
+                        异常扫描：02:33:57 之后 panic/NaN/timeout/error/rc≠0 **全为 0**；
+                        主日志 11 条 panic 与 2 条 rc=101 均为 00:00:48 前早期失败启动
+                        历史遗留（缺 --student-enc 3），按时间戳切片排除。
+[2026-11-06 11:25:00] 【本次最重要发现 · P0 终评阻断缺陷（前 6 次自检均未发现）】
+                        计划书 §4 主目标「新+N32 vs master+N32」的原定命令
+                        `eval_pairs.py --a exit_best.pt --a-mode search32 --b-mode search32`
+                        **必然形状 panic**，根因坐实（三层静态 + 张量实测）：
+                        ① `rust_engine/src/pymod.rs:11,254,319` 的 take_batch/batch_arrays
+                           固定用 `encode::NUM_CHANNELS=15 / GLOBAL_DIM=70`（v1）；
+                        ② `zhuoji/rust_search.py:290-316` `_BatchRunner` 缓冲按 v1 常量
+                           (mp,15,27)/(mp,70) 分配并 reshape；
+                        ③ `exit_best.pt` 是 enc3（encoder_version=3, in_channels=63,
+                           glob=130），而 `dushan_master.pt` 是 enc1（15/70）。
+                        实测把 (1,15,27)+(1,70) 喂 enc3 网络 →
+                           `RuntimeError: shape '[1, 63, 3, 9]' is invalid for input of size 405`。
+                        历史闸门 A（双 greedy，NetAgent 按 ckpt 自带 enc 版本编码）与
+                        闸门 C（A 侧新 greedy + B 侧 master+N32）**都绕开了该组合**，
+                        故 7×24 主循环完全健康、产出有效；缺陷只影响闸门 B / 终评主目标。
+                        连带修正：§6.3 缺口清单第 1 项闸门 B 原命令
+                        `--a-mode search32 --b-mode search32 --seeds 100 --seed0 730000`
+                        同样不可执行（幸而 §6.6.2 已改为终评补跑、从未插入主循环）。
+[2026-11-06 11:25:00] 决策①（下一步训练）：驱动在跑且已自动接续 R4 训练 →
+                        **零干预、不启第二驱动、不打断、不并发评估**；
+                        R4 训练 → 闸门 A/C → R5 由 for 循环接续。
+[2026-11-06 11:25:00] 决策②（增速三选一）：**不触发**。R2/R3 闸门 A 连续两轮显著为正
+                        （p≈0.0000、均值 +2.374/+2.843>0），触发条件「连续两轮 p>0.2
+                        或均值≤0」不成立；TAU=1.0 不动，R6 末复核。R4 闸门未出，
+                        按 §6.7.6 / §6.10.7 **不提前决策**。
+[2026-11-06 11:25:00] 决策③（P2a / PPO / 平台期）：P2a 维持「规格冻结 + 离线准备态」
+                        不激活（无合法窗口、不改代码、不重启）；PPO-lite 不启动；
+                        平台期结论待 R4 闸门 A/C（≈13:0x）与 R6 末确认，本次不提前判断。
+[2026-11-06 11:25:00] 决策④（落地终评离线准备，按 §6.10.6「任一自检均可推进、
+                        不需打断训练」授权的本次实质动作）：
+                        (a) 新建 `tools/final_eval_precheck.py` —— 只读预检（不跑对局、
+                            不占 CPU、不写模型），输出编码兼容性矩阵与 DEADLINE 后
+                            冻结口径命令清单；本次 dry-run 通过。
+                        (b) 终评**默认主口径改为组合 1**：500 seed 独立池 3_000_000+500、
+                            四座旋转、`新贪心 vs master+N32`（同闸门 C 口径放大），
+                            对应 §4「超额：新贪心 ≥ 现 N32（搜索等效搬迁）」；
+                            辅口径 `新贪心 vs master 贪心` 同池配对降噪。
+                        (c) 严格字面「双侧 search32」列为 **P0 待开发**：需让 Rust 搜索
+                            内核按模型 enc 版本输出（encode_v3.rs 已存在，63/130），
+                            但**绝不在 7×24 窗口内重编译或覆盖在跑的 annotate 二进制**；
+                            只能在 DEADLINE 后用独立构建目录补做，完成后补跑组合 2。
+                            两者口径差异如实写进终评报告，不以组合 1 冒称字面主目标。
+[2026-11-06 11:25:00] 决策⑤（终评预算，首次量化）：闸门 C 实测单局 35~36s（单侧 N32）、
+                        闸门 A 0.26s。500 seed×四座=2000 局，6 workers：
+                        单侧 N32 ≈3.7h、双侧 N32 ≈7.4h（保守 ×3 ≈11.1h）。
+                        ⇒ 终评须留 ≈4~11h，DEADLINE 后执行不占 168h 窗口，与
+                        §6.10.6 排程一致；准备资产须 11-12 前备齐。
+[2026-11-06 11:25:00] 结论：**健康，产出符合预期**（R4 标注 4×25k 合规落盘、
+                        训练自动接续、16/16 分片合规、闸门统计逐位一致）；
+                        本次零干预主循环，另发现并登记 P0 终评阻断缺陷、落地预检脚本
+                        与修正后的终评口径。落地：reports/exit_log.md（本块）、
+                        docs/14天训练计划.md（§6.11）、
+                        reports/夜间训练报告-2026-11-06.md（§14）、
+                        tools/final_eval_precheck.py（新建）。
+[2026-11-06 11:24:47]   rc=0  7870s  annotate_r04
+[2026-11-06 11:24:48] R4 标注完成 student=exit_best.onnx seed0=640000 → 4×25k
+[2026-11-06 11:24:48] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz runs/exit_r03/exit_w*.npz runs/exit_r04/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r04.pt --epochs 30 --window 400000 --batch 256 --seed 20261110 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt  → train_r04.log
+[2026-11-06 12:07:44]   rc=0  2576s  train_r04
+[2026-11-06 12:07:44] R4 训练完成 init=exit_best.pt → exit_r04.pt  (['[done] best val 1.7625 → /Users/ligf9/zhuoji-mahjong-ai/models/exit_r04.pt'])
+[2026-11-06 12:07:44] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r04.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r04_gateA.jsonl  → gateA_r04.log
+[2026-11-06 12:08:39]   rc=0  56s  gateA_r04
+[2026-11-06 12:08:39] R4 闸门 A: [summary] seats=[0, 1, 2, 3]  n=300  diff=+3.312±0.418  z=+7.92  p≈0.0000  符号 196:100  → 通过
+[2026-11-06 12:08:39] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 12:08:40]   rc=0  1s  export_exit_best
+[2026-11-06 12:08:41] 晋升：exit_r04.pt → exit_best.pt
+[2026-11-06 12:08:41] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r04.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --a-mode greedy --b-mode search32 --seeds 50 --seed0 720000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r04_gateC.jsonl  → gateC_r04.log
+[2026-11-06 12:30:40]   rc=0  1319s  gateC_r04
+[2026-11-06 12:30:40] R4 闸门 C(趋势): [summary] seats=[0, 1, 2, 3]  n=50  diff=-0.347±1.085  z=-0.32  p≈0.7494  符号 21:28
+[2026-11-06 12:30:40] R4 轮次完成  best=exit_best.pt
+[2026-11-06 12:30:40] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 12:30:41]   rc=0  1s  export_exit_best
+[2026-11-06 12:30:41] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r05 --seed0 650000  → annotate_r05.log
+================================================================================
+[2026-11-06 12:34:43] 自检 #8（7×24 第 8 次 · R4 闸门 A/C 硬决策点）
+================================================================================
+[2026-11-06 12:34:43] 状态：驱动全程存活（lock 心跳 15~29s、night_run.py PID 79443 自 02:33
+                        持续；night_run.log 12:30:41、annotate_r05.log 12:37:37 更新）。
+                        当前阶段 = R5 DAgger 标注（12:30:41 启动，seed0=650000，学生
+                        exit_best.onnx = R4 权重），12:37 采样 ≈5.4%（w0~w3 各 1.2~1.34k/25k），
+                        吞吐 11,508~11,959/h·worker（健康区间 10~12.5k，聚合 ≈46.7k/h），
+                        ETA ≈14:40，早于 3.5h 超时上限 16:00；0 异常，磁盘 311Gi。
+[2026-11-06 12:34:43] 「下一步训练」已由驱动 12:30:41 自动接续（R5 标注 → R5 训练 →
+                        闸门 A/C → R6）。按硬约束零干预：未启第二驱动、未打断、未并发评估。
+[2026-11-06 12:34:43] R4 结果（硬决策点，实际 12:08/12:30 完成，早于 §6.11.7 预估 13:0x）：
+                        闸门 A +3.312±0.418 z=+7.92 p≈0.0000 符号 196:100 → 通过，
+                        12:08:41 晋升 exit_r04.pt → exit_best.pt（sha 947b96be… 一致），
+                        r04.promoted=ok、exit_best.onnx 12:08 同步；
+                        闸门 C −0.347±1.085 p≈0.7494 符号 21:28（趋势口径，不决策）。
+                        R4 训练 400k 封顶 / init=exit_best.pt / 2576s，train 1.7571→1.7301
+                        单调降，best val 1.7625(ep2)、ep5 早停；R4 标注 4×25k=100k，
+                        r01~r04 16/16 npz（tiles(63,27)/glob(130)/q,mask(28)，
+                        NaN↔mask overlap=0 gap=0）全合规。
+[2026-11-06 12:34:43] 闸门独立复算（口径 deltas[cand_seat]−mean(其余三家)，四座按 seed 平均）
+                        与驱动逐位一致：A R1 +0.179 / R2 +2.374 / R3 +2.843 / R4 +3.312；
+                        C R1 −2.480 / R2 −0.293 / R3 +0.300 / R4 −0.347。
+                        配对环比：A R3−R2 +0.469±0.563 p≈0.4053、R4−R3 +0.469±0.540
+                        p≈0.3854（连续两轮不显著）；C R4−R3 −0.647±1.433 p≈0.6517
+                        （未延续收敛，噪声内）。跨两轮累积 A R4−R2 +0.938±0.564 p≈0.0966；
+                        C 三轮同池合并 −0.113±0.663 p≈0.8643（新贪心 ≈ N32 稳定成立）。
+[2026-11-06 12:34:43] 异常复核：02:33:57 起 26 个阶段全 rc=0，0 panic/NaN/超时；主日志
+                        11 条 panic + 2 条 rc=101 全部为 00:00:48 前失败启动历史遗留
+                        （缺 --student-enc 3 / --student-device cpu），按时间戳切片排除。
+[2026-11-06 12:34:43] 决策（最优推荐直接执行，主循环零干预）：
+                        ① 下一步训练 = 驱动已自动接续 R5，不启第二驱动/不打断/不并发评估；
+                        ② 增速三选一 **不触发**：闸门 A 连续三轮 p≈0.0000 显著为正且均值>0，
+                           TAU=1.0 / Q-MSE 关 / 教师 n_det=32 / lr=1e-3 全维持，R6 末复核；
+                           （环比增量不显著 ≠ 闸门 A 不显著，§6.4 触发条件未发生）
+                        ③ Oracle Guiding(P2a) **暂停推进**：R4 闸门 C 回落 −0.347 使
+                           §6.7.5 条件(a)「与 N32 差距持续收敛」中断 ⇒ 从「规格冻结+
+                           离线准备态」降级为「规格冻结+观察态」，不激活/不改代码/不重启；
+                           R6 天花板确认后再定。④ PPO-lite 不启动（R10+ 且增益仍累积）。
+                        ⑤ 平台期：R4 满足 §6.10.6 首轮条件（A 环比 |Δ|<1.0 且 p>0.2；
+                           C 0 附近无显著为负），但按规则 R6 末才升级天花板为「确认」，
+                           现不改超参、不提前切资源。
+                        ⑥ 终评准备：复核 tools/final_eval_precheck.py dry-run 通过
+                           （组合 1/3 可用、组合 2 [P0] 禁用）；剩余导出冒烟清单与报告模板
+                           列入 §6.12.5，11-12 前离线完成。
+[2026-11-06 12:34:43] 本次最重要量化修正：**「平台期」= 单轮边际增益低于 seed 池分辨率，
+                        不是增益停滞**。A 绝对 diff 逐轮单调上升且三点近似线性（+0.469/轮），
+                        跨两轮累积 +0.938 p≈0.0966 接近显著 ⇒ 继续主循环仍有正收益，
+                        不支持提前切 Oracle/PPO 或调超参。（三点共线使斜率 SE 退化，
+                        该拟合仅作描述，不作显著性依据）
+[2026-11-06 12:34:43] 新语义登记：train_exit.py:58-60 滑窗 x[-window:]，R5 起 r01~r05
+                        共 500k 只取最近 400k ⇒ **master rollout 数据(r01)完全滑出**，
+                        训练分布 100% 学生 DAgger；后续 val 跨轮更不可比，强度只认冻结基线闸门。
+[2026-11-06 12:34:43] 落地：reports/exit_log.md（本块）、docs/14天训练计划.md（§6.12）、
+                        reports/夜间训练报告-2026-11-06.md（§15）。
+
+================================================================================
+[2026-11-06 13:50:19] 自检 #9（7×24 第 9 次 · R5 标注期常规巡检 + 终评准备收口）
+================================================================================
+[2026-11-06 13:50:19] 状态：驱动全程存活（lock 心跳 3~18s、night_run.py PID 79443 自
+                        02:33 已跑 11h17m、annotate PID 26706 跑 1h19m、
+                        annotate_r05.log 16s 内更新）。当前阶段 = **R5 DAgger 标注**
+                        （12:30:41 启动，seed0=650000，学生 exit_best.onnx = R4 权重），
+                        13:50 采样 **62.2%**（w0~w3 各 15,526~15,570/25,000，
+                        聚合 ≈62.2k/100k），吞吐 11,745~11,824/h·worker（健康区间
+                        10~12.5k，聚合 ≈47.2k/h），ETA ≈14:38，远早于 3.5h 上限
+                        16:00:41；0 异常，磁盘 311Gi。r05 npz 未落盘（标注结束才写，
+                        符合预期，未读以避免 BadZipFile 竞态）。
+[2026-11-06 13:50:19] 「下一步训练」：驱动在跑且 12:30:41 已自动接续 R5，按硬约束
+                        **零干预** —— 未启第二驱动、未打断标注、未并发跑任何评估。
+                        落盘后驱动自动启动 train_r05（r01~r05、窗口 400k 封顶、
+                        init=exit_best.pt）→ 闸门 A/C → R6。
+[2026-11-06 13:50:19] 产出复核（无新轮次产出，R5 仍在标注）：最近完成轮次 **R4** ——
+                        闸门 A `+3.312±0.418 z=+7.92 p≈0.0000`（连续第三轮显著通过），
+                        12:08:41 晋升 exit_r04.pt→exit_best.pt、r04.promoted=ok、
+                        exit_best.onnx 12:08 同步；闸门 C `−0.347±1.085 p≈0.7494`
+                        （趋势口径，噪声内）。R4 训练 400k/init/2576s，
+                        train 1.7571→1.7301 单调降、best val 1.7625(ep2)、ep5 早停。
+                        ckpt 5 份（r01~r04 + best）、gates 8 份 jsonl、
+                        promoted 3 份（r02/r03/r04）。
+[2026-11-06 13:50:19] 独立复算（口径 deltas[cand_seat]−mean(其余三家)，四座按 seed
+                        平均）与驱动逐位一致：A `+0.179 / +2.374 / +2.843 / +3.312`；
+                        C `−2.480 / −0.293 / +0.300 / −0.347`；环比 A
+                        R3−R2 `+0.469±0.563 p≈0.4053`、R4−R3 `+0.469±0.540 p≈0.3854`；
+                        C R4−R3 `−0.647±1.433 p≈0.6517`。r01~r04 **16/16** npz
+                        全合规（25,000 行、tiles(63,27)/glob(130)/q,mask(28)、
+                        NaN↔~mask overlap=0 gap=0）。TAU=1.0 未改。
+[2026-11-06 13:50:19] 异常复核：02:33:57 起 **26 个阶段全 rc=0**，0 panic/NaN/超时；
+                        主日志 11 条 panic + 2 条 rc=101 全为 00:00:48 前失败启动
+                        历史遗留（缺 --student-enc 3 / --student-device cpu），
+                        按时间戳切片排除。
+[2026-11-06 13:50:19] 决策（最优推荐直接执行；按 §6.12.5 本次为常规巡检窗口，
+                        **不提前决策**）：① 下一步训练 = 驱动自动接续 R5，零干预；
+                        ② 增速三选一 **不触发**（A 连续三轮 `p≈0.0000` 且均值>0，
+                           TAU/Q-MSE/n_det/lr 全维持），R6 末复核；
+                        ③ P2a 维持「规格冻结 + 观察态（暂停推进）」不激活；
+                        ④ PPO-lite 不启动；⑤ 平台期不提前升级天花板；
+                        ⑥ 终评准备按 §6.10.6 授权**执行并完成**（见下）。
+[2026-11-06 13:50:19] 本次落地（终评离线准备收口，零 CPU 占用、不打断训练）：
+                        ① 新建 `tools/final_eval_report.py`（冻结口径统计固化，
+                           dry-run 用 r01~r04 八份 jsonl 与驱动逐位一致；明确禁止
+                           `deltas[0]` 错误口径 / 自对弈胜率 / val loss 作决策）；
+                        ② 新建 `reports/终评执行手册-2026-11-13.md`（导出冒烟清单 +
+                           终评三项配对命令 + §4 交付判定对照 + 口径差异强制声明 +
+                           终评报告模板 + 禁止事项）；
+                        ③ `tools/final_eval_precheck.py` 命令清单回链新资产；
+                        ④ 复核预检 dry-run：组合 1/3 可用、组合 2 `[P0]` 禁用。
+[2026-11-06 13:50:19] 两项排查（防终评踩坑）：① **`?touch=1` 冒烟项不存在** ——
+                        计划 §1 D13–D14 第 2 条字面不可执行：`dushan_server.py`
+                        全文件无 touch / parse_qs / urlparse query 处理；
+                        `dushan.html:20` 的 `touch` 只是 JS 设备触屏检测变量；
+                        模型选择由 `spec.model → resolve_model_stem()`（:854,872）
+                        完成。⇒ 手册改用 `--selftest 10` + HTTP 200 +
+                        ORT/torch 前向一致性三项等价覆盖。
+                        ② 终评命令 `--seats 0,1,2,3` **已核实存在**
+                        （`eval_pairs.py:176`），`--seed0 3000000 --seeds 500`
+                        参数合法，组合 1 可执行；组合 2 仍因 enc3 内核禁用，
+                        **不得冒称 §4 主目标**。
+[2026-11-06 13:50:19] 最重要计划校准（§6.13.2）：R4 实测完整一轮 = **3h17m**
+                        （标注 2h11m + 训练 43m + 闸门 A 1m + 闸门 C 22m）。
+                        据此 R5 时间线：标注落盘 ≈14:38 → 训练 ≈15:21 →
+                        闸门 A ≈15:22 → 闸门 C ≈15:44 → R6 标注 ≈15:44 启动。
+                        ⇒ **§6.12.5 的「≈16:0x 捕获 R5 闸门」偏晚 25~35min，
+                        硬决策点校准为 15:2x~15:5x（由 15:4x 自检捕获）**；
+                        R6 末硬决策点 ≈19:0x（原 19~20h 模糊值精确化）。
+[2026-11-06 13:50:19] 结论：**健康、产出符合预期、主循环零干预**。当前阶段 R5 标注
+                        62.2%、吞吐 11.7~11.8k/h·worker、ETA 14:38、0 异常。
+                        最近产出 R4（闸门 A `+3.312±0.418 p≈0.0000` 已晋升
+                        exit_best.pt；闸门 C `−0.347±1.085 p≈0.7494`）。
+                        下一步动作：驱动自动接续 R5 训练 → 闸门 A/C → R6；
+                        本次不调任何超参、不切分支；终评准备已离线完成，
+                        DEADLINE 后按手册执行。
+[2026-11-06 13:50:19] 落地：reports/exit_log.md（本块）、docs/14天训练计划.md（§6.13）、
+                        reports/夜间训练报告-2026-11-06.md（§16）、
+                        tools/final_eval_report.py（新建）、
+                        reports/终评执行手册-2026-11-13.md（新建）、
+                        tools/final_eval_precheck.py（回链）。
+[2026-11-06 13:50:19] **下次必做**：14:4x 核 R5 训练 400k 封顶 / init / train-val /
+                        早停 + r05 npz 4×25k 合规（落盘后再读）；
+                        **15:4x 捕获 R5 闸门 A/C**（A 是否连续第 4 轮显著、C 是否仍
+                        0 附近、R5−R3 跨两轮累积、r05.promoted / onnx 同步）；
+                        R6 末 ≈19:0x 硬决策点复核增速三选一 + 天花板确认 +
+                        P2a 观察态是否解除。切勿因 C 单轮回落改超参。
+
+[2026-11-06 14:37:41]   rc=0  7620s  annotate_r05
+[2026-11-06 14:37:41] R5 标注完成 student=exit_best.onnx seed0=650000 → 4×25k
+[2026-11-06 14:37:41] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz runs/exit_r03/exit_w*.npz runs/exit_r04/exit_w*.npz runs/exit_r05/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r05.pt --epochs 30 --window 400000 --batch 256 --seed 20261111 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt  → train_r05.log
+
+================================================================================
+[2026-11-06 15:07:30] 自检 #10（7×24 第 10 次 · R5 训练期常规巡检）
+================================================================================
+[2026-11-06 15:07:30] 状态：驱动全程存活（lock 心跳 13~28s、night_run.py PID 79443
+                        自 02:33 跑 12h33m、train_exit.py PID 37357 跑 29m52s/20.3% CPU、
+                        train_r05.log 15:04:21 更新）。当前阶段 = **R5 训练**
+                        （14:37:41 启动，`[data] 20 files, 400000 samples（窗口 400000）`、
+                        init=exit_best.pt、seed 20261111、M1 9.84M/mps）。
+                        按硬约束 **零干预**：未启第二驱动、未打断训练、未并发跑任何评估。
+[2026-11-06 15:07:30] R5 训练曲线：ep1 train 1.7906/val 1.7886(512s)、ep2 1.7782/1.7908
+                        (1027s)、ep3 1.7719/1.7893(1597s) —— train 单调降，val ep2/ep3
+                        微升由 patience3 处理，ep1 暂为 best。每 ep ≈512~570s，
+                        预计 15:13（ep4 早停）~15:55（ep8/9）结束。日志仅 1 条无害
+                        UserWarning(float(loss) requires_grad，R1 起同款)，
+                        panic/NaN/Error/Traceback/fail 全 0。
+[2026-11-06 15:07:30] R5 标注复核：14:37:41 rc=0 落盘，7620s≈2h07m，四分片逐个
+                        saved 25,000 targets + `[annotate] all done`；末段吞吐
+                        11,809~11,857/h·worker（聚合 ≈47.3k/h），落在 10~12.5k 健康区间；
+                        panic/NaN/Error/timeout/fail 全 0，磁盘 311Gi 可用(29%)。
+[2026-11-06 15:07:30] 数据合规：r01~r05 **20/20** npz 分片各 25,000 行、
+                        tiles(63,27)/glob(130)/q,mask(28)，q-NaN ↔ mask=0
+                        overlap=0 gap=0（r05 四分片已稳定落盘，实测 NaN≈49.1~49.3 万）。
+[2026-11-06 15:07:30] 闸门独立复算（tools/final_eval_report.py 冻结口径
+                        deltas[cand_seat]−mean(其余三家)、四座按 seed 平均）与驱动逐位一致：
+                        A R1 +0.179±0.406 p≈0.6599 / R2 +2.374±0.415 p≈0.0000 /
+                        R3 +2.843±0.422 p≈0.0000 / R4 +3.312±0.418 p≈0.0000；
+                        C R1 −2.480±0.863 p≈0.0041 / R2 −0.293±1.125 p≈0.7944 /
+                        R3 +0.300±0.980 p≈0.7595 / R4 −0.347±1.085 p≈0.7494。
+                        8 份 jsonl 行数 A 1200×4 / C 200×4 全合规；R5 闸门**尚未产出**
+                        （gates 目录最新为 r04）。
+[2026-11-06 15:07:30] 权重链：exit_best.pt ≡ exit_r04.pt（sha 309e05fd…）；
+                        exit_r05.pt 已写出（23f2a53e…）但 **无 r05.promoted ⇒ 未晋升**，
+                        再次验证 §6.9.4「写入 ≠ 晋升」；exit_best.onnx 12:08 同步；
+                        promoted 3 份（r02/r03/r04）。TAU=1.0(train_exit.py:38)、
+                        lr=1e-3(:85) 只读核对未改。02:33:57 起 20 条阶段行全 rc=0、
+                        异常 0；主日志头部 11 条 panic + 2 条 rc=101 均为 00:00:48 前
+                        失败启动历史遗留（按时间戳切片排除）。
+[2026-11-06 15:07:30] 决策（最优推荐直接执行；按 §6.12.5 属常规巡检窗口，不提前决策）：
+                        ① 下一步训练 = 驱动 14:37:41 已自动接续 R5 训练 → 闸门 A/C →
+                           R6 标注，零干预；② 增速三选一 **不触发**（A 连续三轮
+                           p≈0.0000 且均值>0，R5 闸门未出；TAU/Q-MSE/n_det/lr 全维持）；
+                        ③ P2a 维持「规格冻结 + 观察态（暂停推进）」不激活；
+                        ④ PPO-lite 不启动；⑤ 平台期不提前升级天花板（R6 末确认）；
+                        ⑥ 终评准备已由 #9 收口，本次复算验证统计脚本仍可用。
+[2026-11-06 15:07:30] 本次两项新增（写入计划 §6.14）：
+                        (a) **val/train 跨轮不可比再确认**：R4 起点 1.7571/1.7625 →
+                            R5 起点 1.7906/1.7886 的抬升，源于 400k 滑窗把 r01
+                            （master rollout）完全滑出、训练分布 100% 学生 DAgger
+                            （§6.12.4），**不是退化**；强度只认冻结基线闸门 A/C，
+                            禁止据 loss 跨轮调超参。
+                        (b) **自检采样节奏 vs 闸门窗口对齐**：历史触发间隔 61~101min
+                            （中位 ≈72min），而闸门 A+C 窗口仅 ≈23min ⇒ 「准点捕获」
+                            不可行；本次 15:07 落在训练 ep3，R5 闸门由 **≈16:1x~16:4x
+                            首次捕获**（§6.13.2 的 ≈15:4x 无对应触发）。固化规则：
+                            每次自检一律完整复核自上次以来所有新落盘轮次，
+                            硬决策点按「首次捕获该轮闸门的自检」判定。
+[2026-11-06 15:07:30] 落地资产：新建 `tools/check_npz.py`（只读轻量分片校验：
+                        按 npy header version 偏移取 shape、只读 q/mask 验证
+                        NaN↔mask=0、BadZipFile 竞态提示；`--round r05` 与全量均通过
+                        4/4 与 20/20）。本次内联初版脚本因把 hlen 字节当 dict 文本
+                        解析报 SyntaxError(null bytes)，属**自检脚本口径错误非数据异常**，
+                        修正后全合规；固化工具避免后续重复踩坑。
+[2026-11-06 15:07:30] 结论：**健康、产出符合预期、主循环零干预**。
+                        当前 R5 训练 ep3/400k 封顶、train 单调降、0 异常；
+                        最近完成轮次 R4 闸门 A +3.312±0.418 p≈0.0000 已晋升。
+                        下一步动作：驱动自动接续 R5 闸门 A/C → R6 标注；
+                        本次不调任何超参、不切分支、不启第二驱动。
+                        落地：reports/exit_log.md（本块）、docs/14天训练计划.md（§6.14）、
+                        reports/夜间训练报告-2026-11-06.md（§17）、tools/check_npz.py（新建）。
+[2026-11-06 15:07:30] **下次必做（≈16:1x~16:4x，R5 闸门硬决策点）**：完整捕获
+                        R5 闸门 A/C（A 是否连续第 4 轮显著、C 是否仍 0 附近、
+                        R5−R3 跨两轮累积、环比增量）、`r05.promoted` / exit_best.pt
+                        与 onnx 同步、R5 训练最终 train-val 与早停 epoch、R6 标注进度；
+                        按 §6.7.6 / §6.10.6 判 P2a 观察态与平台期。R6 末 ≈19:xx
+                        复核增速三选一 + 天花板确认。切勿因闸门 C 单轮波动改超参。
+[2026-11-06 15:15:09]   rc=0  2248s  train_r05
+[2026-11-06 15:15:09] R5 训练完成 init=exit_best.pt → exit_r05.pt  (['[done] best val 1.7886 → /Users/ligf9/zhuoji-mahjong-ai/models/exit_r05.pt'])
+[2026-11-06 15:15:09] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r05.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r05_gateA.jsonl  → gateA_r05.log
+[2026-11-06 15:16:12]   rc=0  63s  gateA_r05
+[2026-11-06 15:16:12] R5 闸门 A: [summary] seats=[0, 1, 2, 3]  n=300  diff=+3.398±0.413  z=+8.23  p≈0.0000  符号 209:87  → 通过
+[2026-11-06 15:16:12] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 15:16:13]   rc=0  1s  export_exit_best
+[2026-11-06 15:16:13] 晋升：exit_r05.pt → exit_best.pt
+[2026-11-06 15:16:13] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r05.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --a-mode greedy --b-mode search32 --seeds 50 --seed0 720000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r05_gateC.jsonl  → gateC_r05.log
+[2026-11-06 15:40:42]   rc=0  1468s  gateC_r05
+[2026-11-06 15:40:42] R5 闸门 C(趋势): [summary] seats=[0, 1, 2, 3]  n=50  diff=+0.060±0.935  z=+0.06  p≈0.9488  符号 26:23
+[2026-11-06 15:40:42] R5 轮次完成  best=exit_best.pt
+[2026-11-06 15:40:42] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 15:40:43]   rc=0  1s  export_exit_best
+[2026-11-06 15:40:43] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r06 --seed0 660000  → annotate_r06.log
+[2026-11-06 15:52:00] 自检 #11（提前捕获 R5 闸门硬决策点，§6.15）：
+                        健康、产出符合预期、主循环零干预。唯一驱动 PID 79443，
+                        lock 心跳 16s，32 条阶段行全 rc=0、panic/NaN/超时 0；
+                        Web 8770 GET /=200、/api/meta=200，单进程无重复启动。
+                        R6 标注 15:40:43 起 ≈10.0~10.1k/h·worker（聚合 ≈40.3k/h，
+                        >8k 健康线；较 R5 的 11.8k 低 ≈14%，起始即如此，登记观察）。
+[2026-11-06 15:52:00] R5 闸门冻结口径复算（final_eval_report.py，与驱动逐位一致）：
+                        A +3.398±0.413 z=+8.23 p≈0.0000（连续第 4 轮显著、绝对值新高）；
+                        C +0.060±0.935 p≈0.9488（0 附近、无显著为负）。
+                        A 配对环比 R5−R4 = +0.086±0.529 p≈0.8715
+                        （前两段均 +0.469）；R5−R3 = +0.554±0.545 p≈0.3094；
+                        R5−R2 = +1.023±0.545 p≈0.0603；C R2~R5 合并
+                        −0.070±0.576 p≈0.9033。r05.promoted / exit_best.pt
+                        ≡ exit_r05.pt（SHA a8c708fe…）/ exit_best.onnx 15:16 三者同步。
+[2026-11-06 15:52:00] 【最重要】修正 §6.12.2「≈+0.47/轮线性累积」：R5 增量
+                        +0.086 使斜率转平，跨两轮累积亦回落；但 A 对 master 仍
+                        p≈0.0000 且创新高、R5−R2 接近显著 ⇒ 精确表述为
+                        「单轮边际低于分辨率且斜率转平，绝对强度仍缓慢累积」，
+                        教师天花板「临近」证据加强，非退化/非停训信号。
+[2026-11-06 15:52:00] 决策：① 零干预，R6→R7 由驱动接续；② 增速三选一不触发
+                        （A 连续 4 轮 p≈0.0000，TAU/lr/n_det 全维持）；③ 平台期
+                        R4/R5 已满足 2/3 条件但按 §6.10.6 仍留 R6 末才升级为「确认」；
+                        ④ P2a 维持观察态（C 增量绕 0 震荡、收敛条件未成立）；
+                        ⑤ PPO-lite 不启动；⑥ R5 训练 ep1 即 best val、ep4 早停，
+                        仅登记分布漂移语义，不改 epochs/窗口/配比；⑦ 终评准备不变。
+                        落地：docs/14天训练计划.md §6.15、reports/夜间训练报告-2026-11-06.md §18。
+[2026-11-06 15:52:00] 排程：R6 标注 ≈18:0x~18:1x 落盘 → 训练 ≈18:5x →
+                        闸门 A ≈18:5x → 闸门 C ≈19:1x~19:2x ⇒ R6 硬决策点
+                        ≈19:1x~19:3x。≈16:xx 自动化自检请勿重写 §6.15，
+                        只核对结论 + 巡检 R6 进度/吞吐/心跳，不提前决策。
+[2026-11-06 16:15:00] 自检 #12（自动化核对，按 §6.15.6 执行，不重写 §6.15）：
+                        健康、产出符合预期、主循环零干预、不提前决策。
+                        唯一驱动 PID 79443，lock 心跳 17.9s；02:33:57 切片
+                        25 个已完成阶段全 rc=0、第 26 条 R6 标注在跑；
+                        panic/NaN/Traceback/超时 0（2 条 rc=101 为 00:00:48 前历史遗留）。
+                        阶段 R6 标注（15:40:43 起，PID 44330，--student-enc 3
+                        --student-device cpu，seed0=660000），进度 ≈27.6%，
+                        吞吐 10,268~10,388/h·worker（较 R5 低 ≈12%，起始即如此、
+                        全程平稳无掉速），>8k 健康线；超时临界 7,143/h·worker
+                        ⇒ 余量 44%，无超时风险。磁盘 311Gi、Web 8770
+                        GET / 与 /api/meta 均 200（单进程 PID 43859）、TAU=1.0 未改。
+[2026-11-06 16:15:00] R5 结论独立复核：冻结口径复算与驱动 / §6.15.2 逐位一致
+                        （A +0.179/+2.374/+2.843/+3.312/+3.398，C −2.480/−0.293/
+                        +0.300/−0.347/+0.060；A 环比 +2.196/+0.469/+0.469/+0.086；
+                        R5−R3 +0.554±0.545 p≈0.3094；R5−R2 +1.023±0.545 p≈0.0603；
+                        C R2~R5 合并 −0.070±0.514 p≈0.8916）。§6.15.3「边际转平、
+                        绝对强度仍缓慢累积、天花板临近但非退化」成立。
+                        补齐 #11 未做项：tools/check_npz.py 全量 20/20 分片合规
+                        （25k 行、tiles(63,27)/glob(130)、NaN↔mask=0 overlap/gap=0）。
+[2026-11-06 16:15:00] 【本次新证据】ONNX initializer 数值签名实测：
+                        exit_best.onnx 命中 exit_r05.pt 90/336 个浮点权重张量，
+                        r02/r03/r04 全 0/336 ⇒ R6 学生确为 R5 权重（推断升实测）。
+                        代码走查 promote() = copy2 → export_onnx → ensure_onnx
+                        → 写 promoted → 打日志；copy2 保留源 mtime(R5 14:46)
+                        晚于上轮 onnx(12:08) 使 mtime 缓存失效而强制重导出，
+                        故 15:16 onnx 为 R5。§6.9.3 登记的「mtime 缓存脆弱点」
+                        在 promote 路径下是必要机制且实测自洽 ⇒ 降级为已验证的
+                        低优先级健壮性项，7×24 期间不改代码（长驻不重载源码）。
+[2026-11-06 16:15:00] 决策（§6.15.4 原样维持）：① 下一步训练已由驱动 15:40:43
+                        自动接续 R6，零干预（不启第二驱动/不打断/不并发评估）；
+                        ② 增速三选一不触发（A 连续 4 轮 p≈0.0000，TAU=1.0 全维持）；
+                        ③ 平台期不提前升级，R6 末才确认天花板；④ P2a 维持观察态
+                        （C 绕 0 震荡）；⑤ PPO 不启动；⑥ 终评手册 §2 冒烟清单
+                        + §6 报告模板已存在 ⇒ §6.15.4⑦「11-12 前补齐」待办关闭。
+[2026-11-06 16:15:00] 【本次最重要落地】新建 tools/gate_decision.py（只读/零 CPU/
+                        不启对局）：把 §6.4/§6.7.6/§6.10.6/§6.15.4 判据代码化，
+                        复用 final_eval_report.py 冻结口径，一键输出逐轮闸门+环比
+                        +五项决策建议+健康摘要，杜绝后续自检口径漂移；dry-run
+                        与 §6.15.2 逐位一致，--round 6 未落盘时正确回退 R5。
+                        时间线校准：R6 标注 ≈18:06 落盘 → 训练 ≈18:44 →
+                        闸门 A ≈18:45 → 闸门 C ≈19:09。捕获窗口：自检间隔
+                        ≈72min ⇒ 首次捕获 R6 闸门为 ≈19:4x 自检，硬决策点
+                        实际落 ≈19:4x（比 §6.15.5 晚 10~30min，按 §6.14.3
+                        「首次捕获即决策点」不视为错过）。
+                        落地：docs/14天训练计划.md §6.16、reports/夜间训练报告
+                        -2026-11-06.md §19、tools/gate_decision.py（新建）。
+[2026-11-06 16:15:00] **下次必做（≈19:4x，R6 末硬决策点）**：先跑
+                        tools/gate_decision.py --md 得一致判据，再执行 ① 增速
+                        三选一（仅当 A 连续两轮 p>0.2 或均值≤0 才仅改
+                        train_exit.py:38 TAU=0.5，禁止同时改第二项）；
+                        ② 用 R4~R6 三轮把天花板升级为「确认」但仍不改超参；
+                        ③ 判 P2a 观察态是否解除；④ 核 r06 4×25k 合规、
+                        r06.promoted / exit_best.pt / onnx 三者同步。
+                        17:2x 与 18:3x 自检只核对进度/吞吐/落盘，勿提前决策、
+                        勿在落盘前读 r06 npz。
+
+[2026-11-06 17:31:00] ===== 自检 #13（7×24 第 13 次 · R6 标注期常规巡检）=====
+[2026-11-06 17:31:00] 结论：健康、产出符合预期、主循环零干预。驱动唯一 PID 79443
+                        （已跑 14h58m），lock 心跳 1.7~8.1s，annotate_r06.log 秒级
+                        更新；R6 标注 PID 44330（--student-enc 3 / --student-device
+                        cpu / 教师 CoreML / seed0=660000 / 4 线程 / 100000 targets）。
+[2026-11-06 17:31:00] R6 标注进度 81.5%（81,518/100k，w0~w3 各 20,342~20,440/
+                        25k，6702s≈1.86h），累计吞吐 10,914~10,960/h·worker
+                        （健康区间 10~12.5k，瞬时斜率 ≈11.6k），ETA ≈17:57 落盘
+                        （总 2.28h），距 3.5h 超时上限 19:10 余 ≈73min。
+                        02:33:57 切片 25 个已完成阶段全 rc=0，第 26 条 R6 标注
+                        在跑；panic / NaN / Traceback / 超时 / Error / Killed 全 0
+                        （11 条 panic + 2 条 rc=101 均为 00:00:48 前历史遗留、
+                        切片外）。磁盘 310Gi、Web 8770 `/` + `/api/meta` 双 200、
+                        TAU=1.0 未改。
+[2026-11-06 17:31:00] 复核：tools/gate_decision.py --md 与驱动核心统计量逐位
+                        一致（A +0.179/+2.374/+2.843/+3.312/+3.398；C −2.480/
+                        −0.293/+0.300/−0.347/+0.060；A 环比 +2.196/+0.469/
+                        +0.469/+0.086）。tools/check_npz.py 20/20 分片全合规；
+                        exit_best.pt ≡ exit_r05.pt（23f2a53e…）、onnx 15:16 同步、
+                        r02~r05.promoted = ok。R6 闸门未落盘、r06 npz 未读
+                        （避免 BadZipFile 竞态）。最近完整轮仍为 R5：闸门 A
+                        +3.398±0.413 p≈0.0000（连续第 4 轮显著通过）、闸门 C
+                        +0.060±0.935 p≈0.9488（新贪心 ≈ N32 持平）、环比
+                        +0.086±0.529 p≈0.8715（边际转平、绝对强度仍缓慢累积）。
+[2026-11-06 17:31:00] 决策（常规巡检，按 §6.16.6 不提前决策）：① 下一步训练由
+                        驱动自动接续 R6 标注 → 训练(400k 封顶, init=exit_best.pt)
+                        → 闸门 A/C → R7，零干预（不启第二驱动 / 不打断 /
+                        不并发评估）；② 增速三选一不触发（A 连续 4 轮 p≈0.0000
+                        且均值>0，TAU / Q-MSE / n_det / lr 全维持）；③ 平台期
+                        不提前升级（R4/R5 满足 2/3，留 R6 末）；④ P2a 维持观察态
+                        （C 最近两段正增量 1/2）；⑤ PPO 不启动（门槛 R10+）；
+                        ⑥ 终评离线准备保持收口状态。
+[2026-11-06 17:31:00] 【本次最重要发现 · 浮点边界效应】gate_decision.py /
+                        final_eval_report.py 复算的「符号」计数与 night_run.log /
+                        gateA_r05.log 的 [summary] 差 1~2 个 seed（R5 A 211:87
+                        vs 209:87；R5 C 26:24 vs 26:23；R4 C 20:29 vs 21:28）。
+                        逐 seed 严格对比坐实：驱动口径（dict 去重 + numpy float64
+                        四座平均）与冻结口径（per_seed + Python float）数值差异 0，
+                        mean/SE/z/p 完全一致；差异仅来自 3 个 seed 的四座平均分差
+                        为 ±2.2e-16 / ±4.4e-16 / −5.6e-17 级浮点残差（理论应为 0），
+                        numpy 路径得精确 0（不计符号）、Python 路径得微小非零。
+                        ⇒ 纯描述性字段的浮点边界效应；_gate_pass() 只认
+                        「判定: 通过」不受影响；终评报告只引用 mean±SE / z / p，
+                        不引用符号计数（或必须注明来源口径）。不改代码（长驻不
+                        重载且零决策影响），登记低优先级健壮性项。
+[2026-11-06 17:31:00] 【本次最重要计划校准 §6.17】① 时间线：R6 标注 ≈17:57
+                        （比 §6.16.5(b) 的 18:06 早 9min）→ 训练 ≈18:37 →
+                        闸门 A ≈18:38 → 闸门 C ≈19:03 → R7 标注 ≈19:03
+                        （闸门 C 耗时 1296→1319→1468s 逐轮递增，外推 1480s）。
+                        ② 硬决策点定义纠偏：自检触发 ≈18:43 / 19:55 / 21:07，
+                        18:43 落在「R6 闸门 A 已落盘但闸门 C 未落盘」窗口 ⇒
+                        明确「首次捕获」指首次捕获完整 A+C 闸门，18:43 只记录
+                        闸门 A + 核 r06 落盘/训练，不执行增速 / 天花板 / P2a
+                        硬决策；真正的 R6 末硬决策点为 ≈19:55 自检（覆盖
+                        §6.16.5(c) 的 ≈19:4x）。③ 19:55 清单：先
+                        tools/gate_decision.py --md，再执行「仅当 A 连续两轮
+                        p>0.2 或均值≤0 才仅改 TAU=0.5」、R4~R6 天花板升级
+                        「确认」但不改超参、P2a 观察态去留、核 r06 4×25k 与
+                        r06.promoted / exit_best.pt / onnx 同步。④ 长期：
+                        DEADLINE 2026-11-13 02:30 唯一硬约束，约 42~45 轮，
+                        终评 DEADLINE 后按手册执行。
+[2026-11-06 17:31:00] 落地：docs/14天训练计划.md §6.17、reports/夜间训练报告
+                        -2026-11-06.md §20、本日志块。
+[2026-11-06 17:31:00] **下次必做**：18:43 自检（若触发）核 R6 标注落盘 4×25k /
+                        训练 400k / train-val / 早停 / 闸门 A，勿提前决策；
+                        **19:55 硬决策点**完整执行四项清单，勿在闸门 C 未落盘时
+                        改任何超参或宣布天花板。
+
+[2026-11-06 17:56:38]   rc=0  8155s  annotate_r06
+[2026-11-06 17:56:38] R6 标注完成 student=exit_best.onnx seed0=660000 → 4×25k
+[2026-11-06 17:56:38] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz runs/exit_r03/exit_w*.npz runs/exit_r04/exit_w*.npz runs/exit_r05/exit_w*.npz runs/exit_r06/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r06.pt --epochs 30 --window 400000 --batch 256 --seed 20261112 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt  → train_r06.log
+[2026-11-06 18:31:18]   rc=0  2079s  train_r06
+[2026-11-06 18:31:18] R6 训练完成 init=exit_best.pt → exit_r06.pt  (['[done] best val 1.7959 → /Users/ligf9/zhuoji-mahjong-ai/models/exit_r06.pt'])
+[2026-11-06 18:31:18] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r06.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r06_gateA.jsonl  → gateA_r06.log
+[2026-11-06 18:32:19]   rc=0  61s  gateA_r06
+[2026-11-06 18:32:19] R6 闸门 A: [summary] seats=[0, 1, 2, 3]  n=300  diff=+3.658±0.407  z=+8.99  p≈0.0000  符号 211:88  → 通过
+[2026-11-06 18:32:19] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 18:32:20]   rc=0  1s  export_exit_best
+[2026-11-06 18:32:20] 晋升：exit_r06.pt → exit_best.pt
+[2026-11-06 18:32:20] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r06.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --a-mode greedy --b-mode search32 --seeds 50 --seed0 720000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r06_gateC.jsonl  → gateC_r06.log
+
+[2026-11-06 18:52:00] === 自检 #14（7×24 第 14 次 · R6 闸门 A 落盘 + 巡检窗口）===
+[2026-11-06 18:52:00] 结论：健康、产出符合预期、主循环零干预。驱动唯一 PID 79443
+                        （lock 4~16s，已跑 16h06m）；阶段 = R6 闸门 C 评估在跑
+                        （eval_pairs PID 59667，18:32:20 启动，18:49 已写 20/50
+                        seed，jsonl 未完整）。按 §6.17.4 本次属「A 已落盘 / C
+                        未落盘」巡检窗口，未启第二驱动 / 未打断 / 未并发评估 /
+                        未调任何超参。
+[2026-11-06 18:52:00] 健康：R6 标注 17:56:38 rc=0（8155s≈2h16m，吞吐
+                        11,034~11,063/h·worker，聚合 ≈44.2k/h，健康区间 10~12.5k
+                        内，未跌破 8k 线）；02:33:57 切片 29 个已完成阶段全 rc=0、
+                        rc!=0=0、panic=0、NaN/Traceback/超时=0（11 条 panic +
+                        2 条 rc=101 均为 00:00:48 前历史遗留、切片外）；磁盘 310Gi
+                        （29% 用）；train_exit.py:38 TAU=1.0 未改。
+[2026-11-06 18:52:00] R6 产出：4×25,000=100k 标注全合规，r01~r06 共 **24/24**
+                        npz 分片（25k 行、tiles(63,27)/glob(130)/q,mask(28)、
+                        NaN↔mask=0 overlap=0 gap=0）；训练 18:31:18 rc=0（2079s，
+                        24 files / 400k 滑窗封顶、init=exit_best.pt、seed 20261112），
+                        train 1.7894→1.7773→1.7705→1.7649 单调降，best val
+                        1.7959(ep1)，ep4 早停（patience3）。val 跨轮不可比，
+                        强度只认冻结基线闸门。
+[2026-11-06 18:52:00] R6 闸门 A：18:32:19 `+3.658±0.407 z=+8.99 p≈0.0000
+                        符号 211:88` → 通过，**连续第 5 轮显著**；18:32:20 晋升
+                        exit_r06.pt → exit_best.pt，sha b6a91a59…（exit_best.pt ≡
+                        exit_r06.pt）、runs/gates/r06.promoted=ok、exit_best.onnx
+                        18:32 同步。独立冻结口径复算与驱动 summary 逐位一致。
+[2026-11-06 18:52:00] 【本次最重要发现 · 自检工具 P1 缺陷并修复】
+                        `tools/gate_decision.py --md` 在闸门 C 进行中直接崩溃：
+                        ValueError `r06_gateC.jsonl 无有效记录`。根因 discover()
+                        仅用 c.exists() 判完整轮，而闸门 A 通过后立即起闸门 C，
+                        C 需 ≈22min，期间 jsonl 为 0 字节或仅部分 seed（18:49
+                        实测 20/50 行）。影响：仅自检工具（驱动不调用），主循环
+                        零影响，但 19:55 硬决策点有阻断风险。修复：新增
+                        _complete(path,n_min) 按「非空 + 唯一 seed 数达标
+                        (A=300/C=50)」判定；discover() 允许 C=None；main 进入
+                        「巡检」模式 —— 正常输出 A、标注 C 待落盘、暂缓 ② 天花板
+                        / ③ P2a、不崩溃。py_compile + --md + --round 5 回归通过，
+                        与 #13 结论逐位一致。仅改只读工具，未碰驱动/训练/超参。
+[2026-11-06 18:52:00] 【独立复算 · 边际增益与累积显著性】A 逐轮 +0.179/
+                        +2.374/+2.843/+3.312/+3.398/+3.658（R2~R6 连续 5 轮
+                        p≈0.0000）；环比 R6−R5 `+0.260±0.518 p≈0.6156`、
+                        R5−R4 `+0.086±0.529 p≈0.8715`，单轮增量低于 seed 池
+                        分辨率（≈0.52/轮）；跨轮累积 R6−R4 `+0.346±0.540
+                        p≈0.5219`、R6−R3 `+0.814±0.548 p≈0.1370`、
+                        **R6−R2 `+1.283±0.554 p≈0.0206`（首次跨 4 轮达 p<0.05）**。
+                        C R2~R5 合并 `−0.070±0.514 p≈0.8916`（新贪心 ≈ N32 持平，
+                        n=200，仍不宣布 §4 达成）。⇒ 平台期 = 单轮边际不可分辨
+                        而非停滞；累积增益统计可检出，继续主循环有正收益；
+                        不提前切分支 / 不改超参。
+[2026-11-06 18:52:00] 决策（巡检窗口，按 §6.17.4 不提前硬决策）：① 下一步训练
+                        由驱动自动接续 R6 闸门 C → R7 标注(seed0=670000,
+                        student=exit_best.onnx=R6 权重) → 训练(400k 封顶,
+                        init=exit_best.pt) → 闸门 A/C → R8，零干预；② 增速三选一
+                        **确定不触发**（A 连续 5 轮 p≈0.0000，TAU=1.0/Q-MSE/
+                        n_det/lr 全维持；该结论不依赖 C）；③ 天花板确认 / ④ P2a
+                        观察态去留**暂缓**（依赖 R6 闸门 C，留首次捕获完整 A+C
+                        的自检）；⑤ PPO 不启动（门槛 R10+）；⑥ 终评准备保持收口。
+[2026-11-06 18:52:00] 落地：docs/14天训练计划.md §6.18、reports/夜间训练报告
+                        -2026-11-06.md §21、tools/gate_decision.py（修复）、本日志块。
+[2026-11-06 18:52:00] **下次必做**：先跑 `tools/gate_decision.py --md`（已修复，
+                        闸门进行中也不崩）；① 若 R6 C 已完整落盘则本次即硬决策点，
+                        否则 ≈19:55；② 用 R4~R6 三轮 A+C 判天花板「确认」但
+                        **仍不改超参**；③ 判 P2a 观察态去留；④ 核 R7 标注进度
+                        / 吞吐与 exit_best.onnx 是否为 R6 权重；⑤ 勿在 C 未落盘
+                        时改 TAU=0.5（不可逆）。
+
+[2026-11-06 18:59:20] === 自检 #14 补记：完整 A+C 落盘 → 本次升级为 R6 末硬决策点 ===
+[2026-11-06 18:59:20] 18:58:31 R6 闸门 C 完整落盘（200 行 / 50 seed，1571s）：
+                        `+1.347±0.920 z=+1.46 p≈0.1434 符号 27:23`；18:58:31
+                        R6 轮次完成（整轮 3h18m），18:58:32 驱动自动启动 R7
+                        标注（seed0=670000，学生=exit_best.onnx=R6 权重），
+                        起步吞吐 9,438~9,701/h·worker（98s 冷启动瞬时值，未
+                        跌破 8k 线，下次自检复核累计值）。按 §6.17.4「硬决策点
+                        = 首次捕获完整 A+C 的自检」，**本次即 R6 末硬决策点**
+                        （覆盖上面 18:52 块的「暂缓 / ≈19:55」表述，提前 ≈56min），
+                        硬决策在 R7 训练前生效。
+[2026-11-06 18:59:20] `gate_decision.py --md` 完整模式五项（冻结口径一致）：
+                        ① 增速三选一 **不触发**（最近两轮 A 弱=False/False，
+                        TAU=1.0/Q-MSE/n_det/lr 全维持，一项都不改）；
+                        ② 天花板 **不确认、不升级**（A 三轮环比 3/3 满足，
+                        但 C 平台=False：R6 C +1.347 超出 |mean|<1 ⇒ 打断
+                        「C 平台化」判据；顺延 R7/R8 复核，仍不改超参）；
+                        ③ **P2a 观察态解除 → 规格冻结 + 离线准备态（就绪不激活）**
+                        （C 最近两段正增量 2/2：+0.407 / +1.287，A p≈0.0000；
+                        不改代码/不启动/不并发/不重启/不并入主路，仅 DEADLINE
+                        后或自然重启窗口试点）；④ PPO 不启动（r=6<R10）；
+                        ⑤ 下一步训练零干预（驱动已自动接续 R7）。
+[2026-11-06 18:59:20] 独立复算 C：全序列 −2.480/−0.293/+0.300/−0.347/
+                        +0.060/+1.347；环比 R6−R5 `+1.287±1.368 p≈0.3468`
+                        （不显著）；C R2~R6 合并 `+0.213±0.451 p≈0.6361`
+                        （n=250，≈0）。⇒ R6 C 上扬是 1 SE 内噪声，
+                        **不宣布 §4 超额目标达成**；但足以打断平台化判据。
+                        P2a 双条件基于两段均不显著的 C 环比，属「就绪」非
+                        「证据充分」，R7 C 若回落立即退回观察态。
+[2026-11-06 18:59:20] 时间线校准（§6.18.6）：R6 整轮 3h18m（标注 2h16m +
+                        训练 35m + A 1m + C 26m；C 耗时 1296→1319→1468→1571s
+                        逐轮递增）；R7 标注 ≈21:15 → 训练 ≈21:50 → A ≈21:51
+                        → C ≈22:17 → R8 ≈22:17；自检 ≈20:1x/21:2x/22:3x
+                        ⇒ **下一硬决策点 ≈22:3x（首次捕获 R7 完整 A+C）**。
+                        02:34 起 16h26m 完成 5 轮，余 ≈151.5h ⇒ 约 42~45 轮。
+[2026-11-06 18:59:20] 落地（覆盖 18:52 块「下次必做」）：docs/14天训练计划.md
+                        §6.18（完整硬决策版）、reports/夜间训练报告-2026-11-06.md
+                        §21.6、tools/gate_decision.py（修复）、本补记块。
+[2026-11-06 18:59:20] **下次必做（≈22:3x）**：先跑 `gate_decision.py --md`；
+                        ① 增速仍以 A 连续两轮弱为唯一触发；② 用 R5~R7 三轮
+                        复核天花板；③ 判 P2a 就绪态是否因 R7 C 回落退回观察态；
+                        ④ 核 R7 4×25k 与 r07.promoted/exit_best.pt/onnx 同步；
+                        ⑤ 复核 R7 累计吞吐 ≥10k/h·worker。20:1x/21:2x 只巡检，
+                        勿提前决策、勿在落盘前读 r07 npz。
+[2026-11-06 19:03:52] 补充复核：R7 标注 305s 累计吞吐 `9,266~9,435/h·worker`
+                        （98s 为 9,438~9,701），**未回升至 10k**，较 R6 起始
+                        低 ≈10%，属连续第 2 轮起始偏低（R6 10.3~10.4k →
+                        R7 9.3~9.4k）。仍在 8k 异常线与 7.14k 超时线之上，
+                        按 9.3k 估 25k 需 ≈2.69h < 3.5h 上限 ⇒ **不判异常、
+                        不干预**，但列入 20:1x / 21:2x 重点复核项；若跌破 8k
+                        立即按 annotate_r07.log 定位（负载 / 学生模型 / 热节流）。
+                        02:33:57 切片 31 阶段全 rc=0、异常 0；磁盘 310Gi；
+                        lock 26s；驱动唯一 PID 79443。
+[2026-11-06 18:58:31]   rc=0  1571s  gateC_r06
+[2026-11-06 18:58:31] R6 闸门 C(趋势): [summary] seats=[0, 1, 2, 3]  n=50  diff=+1.347±0.920  z=+1.46  p≈0.1434  符号 27:23
+[2026-11-06 18:58:31] R6 轮次完成  best=exit_best.pt
+[2026-11-06 18:58:31] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 18:58:32]   rc=0  1s  export_exit_best
+[2026-11-06 18:58:32] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r07 --seed0 670000  → annotate_r07.log
+
+[2026-11-06 20:30:00] === 自检 #15（7×24 第 15 次 · R7 标注期常规巡检，20:1x 窗口）===
+[2026-11-06 20:30:00] 结论：健康、产出符合预期（无新轮次落盘）、主循环零干预。
+                        驱动唯一（lock 心跳 5s，annotate_r07.log 秒级更新，
+                        night_run.py PID 79443）；阶段 = R7 DAgger 标注 ≈58.3%
+                        （18:58:32 启动，seed0=670000，学生 exit_best.onnx=R6
+                        权重，--student-enc 3 --student-device cpu ✓）。按硬
+                        约束未启第二驱动 / 未打断 / 未并发评估 / 未改超参；
+                        r07 npz 未读（落盘前 BadZipFile 竞态）。
+[2026-11-06 20:30:00] R7 进度（20:28 实测）：w0 14,549 / w1 14,624 / w2 14,565
+                        / w3 14,656（≈58,294/100k），已跑 1h30m；吞吐
+                        9,753~9,812/h·worker（聚合 ≈39.1k/h）。ETA ≈21:33，
+                        3.5h 超时上限 22:28:32，余量 ≈55min。#14 重点复核项
+                        （吞吐）趋势：98s 9.44~9.70k → 305s 9.27~9.44k →
+                        401s 9.48~9.60k → 5393s 9.75~9.81k，自低点持续回升
+                        但仍未回到 10k，较 R6 同期低 ≈11%；>8k 异常线与
+                        >7.14k 超时线余量充足 ⇒ 不判异常、不干预、继续观察；
+                        若跌破 8k 立即按 annotate_r07.log 定位（负载/热节流/
+                        学生模型）。
+[2026-11-06 20:30:00] 健康复核：02:33:57 切片 31 阶段全 rc=0、rc!=0=0、
+                        panic/NaN/Traceback/超时=0；磁盘 310Gi；TAU=1.0 未改；
+                        check_npz 24/24 合规（r01~r06）；gate_decision.py --md
+                        与 #14 逐位一致（A +0.179/+2.374/+2.843/+3.312/
+                        +3.398/+3.658；C −2.480/−0.293/+0.300/−0.347/+0.060/
+                        +1.347；A 环比 R6−R5 +0.260±0.518 p≈0.6156）；晋升
+                        三件套同步（exit_best.pt ≡ exit_r06.pt 39,517,130B、
+                        mtime 18:04=copy2 保留；onnx 18:32 重导出（pt mtime
+                        >上轮 onnx 15:16，mtime 缓存正确失效）；r06.promoted
+                        18:32）。
+[2026-11-06 20:30:00] 决策：常规巡检窗口（R7 完整 A+C 未落盘，不提前决策），
+                        五项全不触发：① 增速三选一不触发（A 连续 5 轮
+                        p≈0.0000）；② 天花板不确认（待 R7 C）；③ P2a 维持
+                        「规格冻结+离线准备态（就绪不激活）」（R7 C 若回落
+                        即退回观察态）；④ PPO 不启动（r=6<10）；⑤ 下一步
+                        训练由驱动自动接续 R7→训练(400k,init=exit_best.pt)
+                        →闸门 A/C→R8，零干预。
+[2026-11-06 20:30:00] 时间线校准（覆盖 §6.18.6-2 / #14 补记）：R7 吞吐
+                        ≈9.8k < R6 11.05k ⇒ 标注落盘 ≈21:33（原估 21:15，
+                        +18min）→ 训练 ≈22:08（按 35min）→ A ≈22:09 →
+                        C ≈22:35~22:40（C 耗时 1296→1571s 递增，留 26~30min）
+                        → R8 ≈22:35。自检节奏 ≈72min（20:26→21:3x→22:4x）
+                        ⇒ **下一硬决策点 ≈22:4x（首次捕获 R7 完整 A+C）**；
+                        21:3x 即使捕获落盘/训练/A 也只巡检不决策。
+[2026-11-06 20:30:00] 落地：docs/14天训练计划.md §6.19、reports/夜间训练报告
+                        -2026-11-06.md §22、本块。
+[2026-11-06 20:30:00] **下次必做（≈21:3x 巡检；≈22:4x 硬决策）**：21:3x 核
+                        R7 落盘 4×25k、训练 400k/init/train-val/早停，只记录
+                        不决策；22:4x 先 gate_decision.py --md，执行① 仅当
+                        A 连续两轮 p>0.2 或均值≤0 才**仅**改 train_exit.py:38
+                        TAU=0.5（禁止同时改第二项）② 用 R5~R7 复核天花板
+                        ③ 判 P2a 就绪态去留（R7 C 回落→退回观察态）④ 核
+                        r07 4×25k 与 r07.promoted/exit_best.pt/onnx 同步
+                        ⑤ 复核 R7 吞吐是否回到 ≥10k/h·worker。DEADLINE 后按
+                        终评手册先预检再评估。
+[2026-11-06 21:23:44]   rc=0  8712s  annotate_r07
+[2026-11-06 21:23:44] R7 标注完成 student=exit_best.onnx seed0=670000 → 4×25k
+[2026-11-06 21:23:44] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz runs/exit_r03/exit_w*.npz runs/exit_r04/exit_w*.npz runs/exit_r05/exit_w*.npz runs/exit_r06/exit_w*.npz runs/exit_r07/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r07.pt --epochs 30 --window 400000 --batch 256 --seed 20261113 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt  → train_r07.log
+
+[2026-11-06 21:33:00] 自检 #16（7×24 第 16 次 · R7 落盘核对窗口）
+                        结论：健康、产出符合预期、主循环零干预。驱动存活
+                        （lock 2~5s、night_run.py PID 79443 已跑 18h50m），
+                        02:33:57 切片 34 阶段全 rc=0、panic/NaN/Traceback 0、
+                        磁盘 309Gi、TAU=1.0 未改；未启第二驱动 / 未打断 /
+                        未并发评估。
+[2026-11-06 21:33:00] R7 标注 **21:23:44 rc=0 落盘**（8712s≈2h25m，聚合
+                        ≈41.3k/h = **10.25~10.30k/h·worker**，较 R6 11.05k
+                        低 7% 但全程稳定无中途掉速；#15 关注项「吞吐回
+                        ≥10k」确认达成，超时余量 44%）；4×25k=100k 行
+                        **check_npz 4/4 全合规**（rows=25000、tiles(63,27)、
+                        glob(130)、NaN↔mask=0 overlap=0 gap=0），r01~r07
+                        累计 **28/28** 分片合规。
+[2026-11-06 21:33:00] **21:23:44 驱动自动接续 R7 训练**（400k 滑窗封顶、
+                        `--init exit_best.pt`、seed 20261113、数据 r01~r07）⇒
+                        「下一步训练」已由驱动启动；ep1 进行中（≈390s/ep），
+                        `float(loss)` 的 requires_grad UserWarning 与 R1~R6 同款
+                        无害。
+[2026-11-06 21:33:00] 复核：`tools/gate_decision.py --md` 与 #14/#15 逐位一致
+                        （A +0.179/+2.374/+2.843/+3.312/+3.398/+3.658，
+                        C −2.480/−0.293/+0.300/−0.347/+0.060/+1.347；A 环比
+                        +2.196/+0.469/+0.469/+0.086/+0.260）；exit_best.pt ≡
+                        exit_r06.pt、r06.promoted=ok、onnx 18:32 同步；闸门
+                        r07 A/C 未落盘。
+[2026-11-06 21:33:00] 决策：本窗口为「只记录不决策」的落盘核对（按 §6.19
+                        第 4 条）；五项全不触发：① 增速三选一（A 连续 5 轮
+                        p≈0.0000）；② 天花板（待 R7 C）；③ P2a 维持就绪态
+                        不激活；④ PPO（r=7<10）；⑤ 零干预。
+[2026-11-06 21:33:00] 时间线校准（覆盖 §6.19-3 / #15）：R7 落盘 21:23 比
+                        预估 21:33 提前 10min（吞吐回升至 10.3k 高于预估
+                        9.8k）⇒ 训练结束 ≈21:59（按 R6 2079s~35min）→
+                        闸门 A ≈22:00 → 闸门 C ≈**22:26~22:31**（C 耗时
+                        1296→1571s 递增）→ R8 标注 ≈22:30。自检节奏 ≈72min
+                        （21:33→22:4x）⇒ **硬决策点 ≈22:4x 不变**（首次捕获
+                        R7 完整 A+C）。
+[2026-11-06 21:33:00] 落地：docs/14天训练计划.md §6.20、reports/夜间训练
+                        报告-2026-11-06.md §23、本块。
+[2026-11-06 21:33:00] **下次必做（≈22:4x，R7 完整 A+C 硬决策点）**：先
+                        `tools/gate_decision.py --md`；① 仅当 A 连续两轮
+                        p>0.2 或均值≤0 才**仅**改 `train_exit.py:38
+                        TAU=0.5`（禁止同时改第二项）；② 用 R5~R7 三轮复核
+                        天花板（R6 C +1.347 打断平台化，需 R7 C 回 0 附近
+                        才重新具备确认条件）；③ 判 P2a 就绪态去留（R7 C
+                        回落→退回观察态）；④ 核 r07.promoted /
+                        exit_best.pt / onnx 三者同步与 R7 最终 train-val /
+                        早停 epoch；⑤ R8 标注进度与吞吐。DEADLINE 后按终评
+                        手册先预检再评估。
+[2026-11-06 21:56:05]   rc=0  1941s  train_r07
+[2026-11-06 21:56:05] R7 训练完成 init=exit_best.pt → exit_r07.pt  (['[done] best val 1.7765 → /Users/ligf9/zhuoji-mahjong-ai/models/exit_r07.pt'])
+[2026-11-06 21:56:05] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r07.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r07_gateA.jsonl  → gateA_r07.log
+[2026-11-06 21:56:56]   rc=0  51s  gateA_r07
+[2026-11-06 21:56:56] R7 闸门 A: [summary] seats=[0, 1, 2, 3]  n=300  diff=+3.353±0.428  z=+7.84  p≈0.0000  符号 200:98  → 通过
+[2026-11-06 21:56:56] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 21:56:58]   rc=0  1s  export_exit_best
+[2026-11-06 21:56:58] 晋升：exit_r07.pt → exit_best.pt
+[2026-11-06 21:56:58] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r07.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --a-mode greedy --b-mode search32 --seeds 50 --seed0 720000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r07_gateC.jsonl  → gateC_r07.log
+[2026-11-06 22:17:21]   rc=0  1224s  gateC_r07
+[2026-11-06 22:17:21] R7 闸门 C(趋势): [summary] seats=[0, 1, 2, 3]  n=50  diff=-0.460±1.114  z=-0.41  p≈0.6797  符号 25:24
+[2026-11-06 22:17:21] R7 轮次完成  best=exit_best.pt
+[2026-11-06 22:17:21] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 22:17:23]   rc=0  1s  export_exit_best
+[2026-11-06 22:17:23] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r08 --seed0 680000  → annotate_r08.log
+[2026-11-06 23:41:16] ============================================================
+[2026-11-06 23:41:16] 7×24 ExIt 驱动启动：R8 起，截止 2026-11-13 02:30（R1 已完成；断点续跑 + 每小时自检自动化）
+[2026-11-06 23:41:16] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-06 23:41:17]   rc=0  1s  export_exit_best
+[2026-11-06 23:41:17] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r08 --seed0 680000  → annotate_r08.log
+[2026-11-06 23:52:00] ========== 自检 #17（7×24 第 17 次 · R7 完整 A+C 硬决策点）==========
+[2026-11-06 23:52:00] 【事故·已恢复】原驱动 PID 79443（02:34 启动、连续运行
+                        19h45m）于 22:17:23~23:41:16 之间死亡。证据：主日志
+                        22:17:23 后无任何写入；无 Python 崩溃报告；pmset 显示
+                        全程持有 Electron NoIdleSleepAssertion（**非系统休眠**）；
+                        进程树显示驱动是 WorkBuddy 会话 shell 的子进程 ⇒ 判定
+                        **会话销毁连带终止进程组**，非程序崩溃、非数据损坏。
+                        23:41:16 由自动化按预案重启（唯一 PID 89566），正确
+                        识别「R8 起」并从第一个未完成阶段续跑；已完成数据零
+                        损失（r01~r07 = 28/28 分片完整）。代价：R8 标注从 0
+                        重跑，损失 83.9min 标注进度（annotate 只在结束时落盘）。
+[2026-11-06 23:52:00] 【当前状态·健康】新驱动 89566（lock 心跳 1.7~24.5s）+
+                        annotate 89568 在跑 R8（23:41:16 起、seed0=680000、
+                        学生=exit_best.onnx=R7 权重、enc3/cpu ✓）。R8 进度
+                        ≈6.6k/25k·worker（26%），吞吐 11.1~12.9k/h·worker，
+                        ETA ≈01:40 < 3.5h 上限 03:11。02:33:57 切片 37 阶段
+                        全 rc=0、panic/NaN/超时 0；磁盘 309Gi；Web 8770
+                        HTTP 200；TAU=1.0 未改。
+[2026-11-06 23:52:00] 【R7 完整一轮产出】标注 21:23:44 rc=0（8712s、
+                        10.25~10.30k/h·worker、4×25k、28/28 合规）；训练
+                        21:56:05 rc=0（1941s、400k 封顶、init=exit_best=R6，
+                        train 1.7806→1.7553、val 1.7765→1.7829、
+                        **best val 在 ep1**、ep4 早停）；闸门 A
+                        `+3.353±0.428 p≈0.0000` 连续第 6 轮通过 → 21:56:58
+                        晋升 exit_r07.pt→exit_best.pt（两侧 sha
+                        1629296193c5a9f… 一致、r07.promoted=ok、onnx 21:56
+                        同步）；闸门 C `−0.460±1.114 p≈0.6797`；整轮 3h16m。
+                        冻结口径独立复算与驱动 [summary] 逐位一致。
+[2026-11-06 23:52:00] 【本次最有价值结论：主循环边际增益已归零 4 轮，瓶颈
+                        已确认为教师天花板】
+                        ① 闸门 A 环比：R5−R4 +0.086±0.529(p=.87)、R6−R5
+                        +0.260±0.518(p=.62)、R7−R6 −0.304±0.551(p=.58)、
+                        **R7−R4 +0.041±0.545(p=.94)** ⇒ 4 轮累计 +0.04，
+                        A 绝对值停在 +3.3~3.7。
+                        ② 闸门 C 6 轮持平：−0.29/+0.30/−0.35/+0.06/+1.35/
+                        −0.46；R7−R2 `−0.167±1.196(p=.89)`、R7−R5
+                        `−0.520±1.448(p=.72)` ⇒ 学生贪心 ≈ N32 搜索，「搜索
+                        蒸进网络」已饱和，且不再收敛（无新可蒸）。
+                        ③ 训练侧铁证：R5/R6/R7 三轮 **best val 均出现在
+                        ep1**、之后单调恶化、ep4~5 早停 ⇒ 从 exit_best 出发
+                        的续训在 1 个 epoch 后即过拟合约 400k 窗口，网络已在
+                        数据最优点附近，**不是拟合能力不足，而是标签上限**。
+                        ④ 标签实测（本次量化）：R7 分片 q 合法值 −26.8~63.2、
+                        每样本 max−min 中位 0.81 分、合法动作均值 8.4 个 ⇒
+                        τ=1.0 目标熵 1.7006 nats、**τ=0.5 仅降至 1.5151
+                        （−11%）**、τ=0.25 至 1.2592。即 τ 杠杆偏小，且
+                        q 差异多在噪声量级（<1 分）时锐化会放大 argmax 噪声。
+[2026-11-06 23:52:00] 【决策五项】
+                        ① 增速三选一 **不触发**：A 绝对强度 6 轮 p≈0.0000 且
+                        均值 >0，用户判据（连续两轮 p>0.2 或均值 ≤0）未满足；
+                        TAU/Q-MSE/n_det/lr 一项都不改。补充两条反证支撑：
+                        (a) ③ n_det=64 依据项目自身实测「N32 略强于 N128」，
+                        未必抬天花板而标注成本 ×2；(b) ① τ=0.5 实测仅 −11%
+                        熵，EV 低。
+                        ② 天花板**不确认但记为「边际停滞」**：A 环比 3/3 不
+                        显著已满足，C 平台化按严格定义（连续 3 轮 |C|<1.0）
+                        被 R6 +1.347 破坏 ⇒ 不改超参（遵守「44 轮多重比较下
+                        不反复调参防 seed 池过拟合」），但主循环已无正收益，
+                        转入分支准备。
+                        ③ P2a 由「就绪态」按预注册规则**退回观察态**（R7 C
+                        回落）；但本次把 P2a 从「需先实现」推进为**开关已落地、
+                        可实验态**（见下）。
+                        ④ PPO-lite 不启动（r=7 < R10）。
+                        ⑤ 主循环**零干预**：R8 已由新驱动自动接续，未启第二
+                        驱动、未打断、未与标注并发评估。
+[2026-11-06 23:52:00] 【落地：P2a 开关实现（零风险、默认关闭）】查源码确认
+                        `search.rs:262` 已存在完美信息分支 `if !fair
+                        { game.clone() }`、`annotate.rs` 教师搜索硬编码
+                        fair=true；故 `--oracle 1` 只需把 fair 透传（约 12 行）。
+                        已在 `rust_engine/src/bin/annotate.rs` 加
+                        `teacher_q(.., fair)` 参数 + `--oracle` 解析（值形，
+                        `--oracle 0/false` 或省略 ⇒ **与历史行为完全一致**），
+                        并用 `CARGO_TARGET_DIR=rust_engine/target_oracle -j 2
+                        nice 10` **编译到独立目录**，绝不触碰在跑二进制
+                        `target/release/annotate`；主循环正在用的 driver 未
+                        重读源码，行为不变。另查实 `--n-det` 已存在（默认 32），
+                        教师升级不需要重编译，只需 night_run.py 加参数（但
+                        长驻驱动不重载源码 ⇒ 需重启窗口）。
+[2026-11-06 23:52:00] 【下一步训练（已启动 + 计划）】R8 标注 → 01:40 训练
+                        (400k, init=exit_best) → 闸门 A/C → R9，全自动。
+                        分支计划：**R8 训练窗口（≈01:40~02:15，CPU 空闲）**
+                        跑 20k oracle 标签对照（α=1.0 纯 Q_oracle，成本远低于
+                        n_det=32：单局面搜索而非 32 次 determinize），train
+                        20k ckpt，仅用冻结 300 seed 闸门 A 与主路 best 对比；
+                        显著更优才考虑并入。**R10 为硬切换点**：若 R8~R10 边际
+                        仍 ≈0，则按 P2a 退火（α 1.0→0.5→0.0）并入主循环，需
+                        驱动重启窗口改 night_run.py。
+[2026-11-06 23:52:00] 【登记缺陷/教训】P1：驱动是会话语义子进程，已致 1 次
+                        83.9min 损失（占 168h 的 0.8%）；建议在自然重启窗口改
+                        launchd KeepAlive 托管（属系统级变更，需用户确认），
+                        当前由每小时自检兜底，最坏损失 ≈1 轮。P1：`annotate`
+                        **不支持 --help 且会真启动**，本次误跑 2min（PID
+                        90254，占用 16% CPU 使 R8 吞吐瞬时 12.9k→11.1k，已
+                        TERM/KILL 并确认恢复、无脏文件），此后查参数一律
+                        grep 源码。P0 遗留：enc3 search32 内核（终评主口径）
+                        仍未解决。
+
+
+[2026-11-07 01:30:00] ========== 自检 #18（7×24 第 18 次 · R8 标注期巡检）==========
+[2026-11-07 01:30:00] 【当前状态·健康·零干预】驱动唯一 PID 89566（23:41 重启、1h22m），
+                        lock 8~30s；R8 标注 69%（17,295/25,000·worker），吞吐
+                        11,314~11,348/h·worker，ETA ≈01:55（上限 03:11，余 76min）；
+                        37 阶段 rc=0、panic 0、磁盘 309Gi、TAU=1.0、24/24 npz 合规。
+                        未启第二驱动、未打断、未与标注并发评估。
+[2026-11-07 01:30:00] 【判据修正·必须记住】23:41 重启的驱动 stdout 绑 /dev/ttys002，
+                        ⇒ runs/night_run.log 自 22:17 起冻住，**不再是心跳信号**；
+                        权威实时日志是 reports/exit_log.md。严禁用 night_run.log 的
+                        mtime 判死（会误触发第二个驱动）。存活 = lock<120s ∧ PID 未变
+                        ∧ exit_log/annotate 有本轮阶段行。下次重启须 nohup 并核 fd。
+[2026-11-07 01:30:00] 【P2a 端到端首次跑通】target_oracle/annotate --oracle 1：
+                        800 targets/1 线程/教师 CoreML = 223s（12,890/h·worker），
+                        与 PIMC 同量级 ⇒ §6.21.5 的 8m40s 慢**只是教师走了 --device cpu**。
+                        配对成立（同 student + 同 seed0=670000，800/800 状态逐位相同）。
+[2026-11-07 01:30:00] 【诊断·oracle vs PIMC】argmax 一致率仅 38.8%，但不一致里
+                        81.2% 的 gap<1 分、48.4%<0.25 分；≥1 分只占全部状态 11.5%。
+                        合法 Q 均值 oracle 比 PIMC **低 0.847**、maxQ 低 0.261
+                        ⇒ **是 PIMC 标签系统性偏乐观**，不是 oracle。τ=1 熵几乎相同。
+                        ⇒ P2a 下调为「成本可行、证据不足、不进主路」。
+[2026-11-07 01:30:00] 【本轮核心·平台期机制证据】教师自身 top1−top2 间隔中位
+                        **0.144 分**（oracle 0.099），**63.6% 的状态 <0.25 分**；
+                        学生 argmax 与标签只对上 **52.5%**，但闸门 C≈0（≈N32 强度）
+                        ⇒ 那 47.5% 分歧几乎全是无价值差异的近平局。
+                        **标签在行动维度已到噪声底**，同配方 DAgger 无法再增加信息。
+                        另：logit vs centered-Q 斜率 0.840/R² 0.702（已按分标定）、
+                        价值头 V*8 ~ maxQ 相关 0.948/残差 0.69 分。
+                        ⇒ 增速三选一（τ/ Q-MSE/ n_det）**三项全部量化否决**，此后不再调参。
+[2026-11-07 01:30:00] 【已执行·产品】ExIt 学生首次上线：cp exit_best.pt→models/web_best.pt，
+                        MASTER_CANDIDATES 前置 web_best（备份 dushan_server.py.bak-20261107），
+                        影子 8771 验证（meta/new/state/selftest3 全 PASS，150ms/局），
+                        确认 8770 无连接后蓝绿切换 → 双 200、models=web_best(9.85M)、
+                        fd 已脱离会话、单步 92ms。回退：删 web_best.pt 或还原 .bak。
+                        注：**绝不能覆盖 dushan_master.pt 换代**（它是闸门 A/C 冻结基线）。
+[2026-11-07 01:30:00] 【决策五项】① 主循环零干预（R8 → ≈01:55 训练 → 闸门 → R9）；
+                        ② 超参/损失一项不改；③ 分支切换点 R10→**R9 末（≈05:3x）**；
+                        ④ **PPO-lite 优先、P2a 降级**（终端奖励绕开标签偏差，唯一能超
+                        教师上限的路径）；⑤ 切换前置 = PPO 冒烟必须通过，否则不切。
+[2026-11-07 01:30:00] 【终评缺陷与修正】闸门 A 只与 master 贪心比、**不与上轮最佳比**
+                        ⇒ 每轮必通过、exit_best 在噪声上随机游走（R7−R6=−0.304 即证据）。
+                        改为两段式：冻结池排名（当前 r07 +0.341 / r03 +0.281 / r05 +0.044
+                        / r01 +0.043 / r06 −0.073 / r04 −0.146 / r02 −0.147，最高−次高
+                        =+0.060，合并 SE 0.788 ⇒ 不可分辨）→ top3~5 在独立池 3_000_000+500
+                        复赛定交付。已写入终评手册 §8。
+[2026-11-07 01:30:00] 【下一步】R8 落盘 → 训练(400k, init=exit_best) → 闸门 A/C → R9，
+                        全程自动。下次自检核 R8 4×25k + 训练曲线 + 完整 A+C；R9 末尾为
+                        分支硬决策点，先做 PPO 规模测算（2k 局冒烟 >1.5h 则判不可行、
+                        退回扩大终评+产品打磨，不硬上）。
+[2026-11-07 01:52:34]   rc=0  7876s  annotate_r08
+[2026-11-07 01:52:34] R8 标注完成 student=exit_best.onnx seed0=680000 → 4×25k
+[2026-11-07 01:52:34] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz runs/exit_r03/exit_w*.npz runs/exit_r04/exit_w*.npz runs/exit_r05/exit_w*.npz runs/exit_r06/exit_w*.npz runs/exit_r07/exit_w*.npz runs/exit_r08/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r08.pt --epochs 30 --window 400000 --batch 256 --seed 20261114 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt  → train_r08.log
+[2026-11-07 02:27:21]   rc=0  2087s  train_r08
+[2026-11-07 02:27:21] R8 训练完成 init=exit_best.pt → exit_r08.pt  (['[done] best val 1.7708 → /Users/ligf9/zhuoji-mahjong-ai/models/exit_r08.pt'])
+[2026-11-07 02:27:21] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r08.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r08_gateA.jsonl  → gateA_r08.log
+[2026-11-07 02:28:20]   rc=0  60s  gateA_r08
+[2026-11-07 02:28:20] R8 闸门 A: [summary] seats=[0, 1, 2, 3]  n=300  diff=+3.694±0.415  z=+8.90  p≈0.0000  符号 216:82  → 通过
+[2026-11-07 02:28:20] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 02:28:22]   rc=0  2s  export_exit_best
+[2026-11-07 02:28:22] 晋升：exit_r08.pt → exit_best.pt
+[2026-11-07 02:28:22] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r08.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --a-mode greedy --b-mode search32 --seeds 50 --seed0 720000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r08_gateC.jsonl  → gateC_r08.log
+[2026-11-07 02:49:53]   rc=0  1291s  gateC_r08
+[2026-11-07 02:49:53] R8 闸门 C(趋势): [summary] seats=[0, 1, 2, 3]  n=50  diff=+0.807±0.964  z=+0.84  p≈0.4028  符号 28:21
+[2026-11-07 02:49:53] R8 轮次完成  best=exit_best.pt
+[2026-11-07 02:49:53] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 02:49:54]   rc=0  1s  export_exit_best
+[2026-11-07 02:49:54] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r09 --seed0 690000  → annotate_r09.log
+
+[2026-11-07 03:00:00] ======== 自检 #19（7×24 第 19 次）R8 完整 A+C 捕获 + PPO 冒烟提前通过 ========
+[2026-11-07 03:00:00] 【状态】健康、零干预。驱动唯一 PID 89566（23:41 重启、3h18m），
+                        lock 2~30s；R9 标注 02:49:54 起，9.38~9.53k/h·worker
+                        （起步 8.0k 低点是本机自检进程抢 CPU，已回升），ETA ≈05:28；
+                        41 阶段 rc=0、panic/NaN 0、磁盘 308Gi、TAU=1.0、32/32 npz 合规。
+[2026-11-07 03:00:00] 【R8 结果】标注 01:52:34 rc=0（7876s、11.4k/h·worker、4×25k）；
+                        训练 02:28:20 rc=0（2082s）train 1.7742→1.7504、
+                        best val 1.7708@ep1、early-stop ep4（第 5 轮连续 best-val 落在 ep1）；
+                        闸门 A +3.694±0.415 z=+8.90 p≈0.0000（216:82）**连续第 7 轮通过**
+                        → 02:28:22 晋升 exit_r08 → exit_best（onnx 同步）；
+                        闸门 C +0.807±0.964 p≈0.4028（28:21），较 R7 −0.460 回升；
+                        环比 R8−R7 = +0.341±0.552 p≈0.5367（不可分辨，符号为正）；
+                        R8 整轮 3h16m（01:52:34 → 02:49:53）。
+[2026-11-07 03:00:00] 【PPO 前置条件提前满足】新 tools/ppo_scale_probe.py 成本实测：
+                        纯策略自对弈 0.62 s/局、62.6 决策/局（40 局样本）；
+                        ⇒ 2k 局 0.35h（单进程）/0.09h（4 进程），远低于 1.5h 预算。
+                        新 tools/ppo_smoke.py 跑 **2000 局**（0.93 s/局，含与闸门 C 并发）
+                        127,653 决策、熵中位 2.179 nats，四项判据全 PASS：
+                        ① 零和 max|Σdeltas|=0；② 终端奖励 std=10.84 分；
+                        ③ Φ=8V 塑形后优势 std=7.43 分（中位|A| 3.35）；
+                        ④ PPO 更新 79 步 loss=0.399 pg=−0.005 vl=0.807 ratio=1.0004
+                        clipfrac=0.115 ent=1.828 ⇒ **R9 末分支切换的技术前置已解除**。
+                        注：探针只读、不落盘、不覆盖 exit_best；与闸门 C 并发未拖慢
+                        （gateC 1291s，快于 R7 的 1571s）。
+[2026-11-07 03:00:00] 【决策】① 主循环零干预：R9 已由驱动 02:49:54 自动接续；
+                        ② 超参/损失仍一项不改；③ 分支切换点维持 **R9 末**，
+                        但「前置=PPO 冒烟」已通过，届时只需一次 A 复核即可执行；
+                        ④ P2a 维持观察态；⑤ 终评两段式 best-of 的排名命令已确认
+                        可直接用 final_eval_report.py 多轮并列（R01..R08 同池），无需另写工具。
+[2026-11-07 03:00:00] 【计划校准】R9 标注 02:49:54 → ≈05:28（9.45k/h·worker）
+                        → 训练 ≈06:13 → 闸门 A ≈06:14 → 闸门 C ≈06:40；
+                        **R9 末硬决策点 = 首次捕获完整 A+C 的自检，≈06:4x**
+                        （覆盖 §6.22.8 的「≈05:3x」）。剩余 ≈143.5h ⇒ 仍 40+ 轮。
+[2026-11-07 03:00:00] 【下一步】R9 → 训练 → 闸门 A/C；06:4x 硬决策：
+                        PPO-lite 已具备切换条件（成本 6k 局/轮 ≈0.4h@4进程、
+                        状态池上限 2×10^5 float16 ≈670MB），按「PPO 分支 + 保留 DAgger 复核」
+                        执行；切换须在阶段边界重启驱动（改 night_run.py），
+                        避免杀死进行中的标注。
+
+[2026-11-07 04:15:00] ======== 自检 #20（7×24 第 20 次）PPO 分支工程化落地 + 闸门 D 补齐 ========
+[2026-11-07 04:15:00] 【状态】健康、零干预。驱动唯一 PID 89566（23:41 重启、4h20m），lock 1.4~7s；
+                        R9 标注 54.3%（w0~w3 各 ≈13.5k/25k、seed0=690000、学生=R8 权重 enc3/cpu），
+                        吞吐 11,446~11,544/h·worker（聚合 45.9k/h），ETA ≈05:01；
+                        02:33:57 起 37 阶段 rc=0、panic/NaN 0、磁盘 308Gi、TAU=1.0；
+                        Web 8770 双 200 且 models=web_best；keepalive PID 99107 活。
+[2026-11-07 04:15:00] 【复核】gate_decision 与 §6.23 逐位一致（8 轮 A/C 全同）；
+                        check_npz --round r08 4/4 合规；exit_best ≡ exit_r08（6d35b3a6）、
+                        r08.promoted=ok、onnx 02:28 同步 ⇒ 三件套一致。
+[2026-11-07 04:15:00] 【本轮核心·三个新构件】把 PPO 从「冒烟通过」变成「可运行生产件」：
+                        ① 新建 train_ppo.py（393 行）：纯策略自对弈 rollout + 终端分差奖励 +
+                          Φ=8V 塑形 + GAE(γ1,λ0.95) + clipped PPO + KL 早停；
+                          rollout 4 进程、更新走 mps（实测 mps 0.70s/step vs cpu 3.30s/step，4.7×）；
+                          产出 ckpt 与 train_exit 完全同格式，eval_pairs 直读（已实测跑通）。
+                          实测标定：960 局≈2min + 60k 状态×2ep≈4.5min ≈ **8min/轮（占一轮 4%）**。
+                        ② night_run.py 新增 ppo_round()：PPO_FROM=10、PPO_EVERY=1、PPO_HANDS=960、
+                          runs/ppo_disabled 急停开关；位于 gates_round 之后，产出 exit_pNN.pt，
+                          **晋升判据 = 闸门 D（vs 现最佳）p<0.05 且均值>0 且闸门 A 通过**；
+                          整段独立 try/except，异常不计 consecutive_fail、不影响 DAgger 主线。
+                        ③ 补齐规格里一直缺的「上轮最佳」基线：snapshot_prev_best() 在 promote
+                          之前快照 exit_best，闸门 A/C 之后跑 300 seed 配对 → rNN_gateD.jsonl。
+                          这正是 §6.22.6 缺陷（A 恒过 ⇒ best 在噪声上随机游走，R7−R6=−0.304 仍晋升）
+                          的根因，成本仅 60s/轮。D 只记录不改 DAgger 晋升口径（保 R1~R8 可比）。
+[2026-11-07 04:15:00] 【切换方案】新建 tools/switch_ppo.py，在「R10 标注启动行 +3s」精确 kill
+                        （此刻标注器尚未落盘任何 npz ⇒ 零数据损失），交由 keepalive
+                        （start_new_session，本机唯一验证过可跨会话存活的拉起方式）重启。
+                        已启动 pid 12419（PPID=1，已脱离会话）。未命中则什么都不做，主线无风险。
+[2026-11-07 04:15:00] 【决策】① 主循环零干预（R9 训练 → A/C → R10 自动接续）；
+                        ② 超参/损失仍一项不改；③ PPO R10 起每轮启用、保留 DAgger；
+                        ④ P2a 维持观察态；⑤ 终评候选池 = r01..rNN ∪ pNN，两段式 best-of 独立池复赛。
+[2026-11-07 04:15:00] 【预算】每轮 ≈3h26m（3h17m + PPO 8min + 闸门D 1min），剩余 ≈141h ⇒ ≈40 轮。
+[2026-11-07 04:15:00] 【下一步】05:1x 巡检 R9 落盘 4×25k + 训练 400k/init/train-val/早停；
+                        ≈06:1x 捕获切换结果（switch_ppo.log + PID 变化 + P10 PPO 完成行）；
+                        ≈06:4x 硬决策：R9 完整 A+C 环比 + 首个 PPO 轮 D/A 统计 + 是否晋升。
+[2026-11-07 05:01:20]   rc=0  7886s  annotate_r09
+[2026-11-07 05:01:20] R9 标注完成 student=exit_best.onnx seed0=690000 → 4×25k
+[2026-11-07 05:01:20] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz runs/exit_r03/exit_w*.npz runs/exit_r04/exit_w*.npz runs/exit_r05/exit_w*.npz runs/exit_r06/exit_w*.npz runs/exit_r07/exit_w*.npz runs/exit_r08/exit_w*.npz runs/exit_r09/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r09.pt --epochs 30 --window 400000 --batch 256 --seed 20261115 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt  → train_r09.log
+
+[2026-11-07 05:15:00] ======== 自检 #21（7×24 第 21 次）R9 落盘核对 + PPO 观察器落地 + 切换窗口收口 ========
+[2026-11-07 05:15:00] 【状态】健康、产出符合预期、主线零干预。驱动唯一 PID 89566（23:41 重启、5h34m），
+                        lock 5~25s；R9 标注 05:01:20 rc=0 落盘（7886s≈2h11m、11,419~11,446/h·worker、
+                        4×25k），check_npz --round r09 4/4、累计 36/36 合规；
+                        02:33:57 切片 41 阶段全 rc=0、panic/NaN/Traceback/超时 0；
+                        磁盘 308Gi、TAU=1.0、Web 双 200 且 models=web_best(9.85M)、
+                        看门狗 99107 活（3h44m）、switch_ppo 12419 武装中（等待 R10 标注启动行）。
+[2026-11-07 05:15:00] 【R9 训练（进行中）】05:01:20 起，400k 封顶、init=exit_best.pt(=exit_r08)、
+                        seed 20261115；ep01 train 1.7742 / val 1.7681 / 506s。
+                        注：**R9 的 ep01 train 1.7742 与 R8 的 ep01 完全相同（4 位小数）**
+                        —— 同 init(=exit_r08) + 窗口 400k/400k 高度重叠 ⇒ 每轮新增 100k 标签
+                        只换掉 1/4 数据且都是同一噪声底，loss 差异 <1e-4。
+                        **这不是异常，是「增量数据已无新信息」的又一条旁证**（§6.25.3）。
+[2026-11-07 05:15:00] 【决策五项（gate_decision.py --md 复核，与 #20 逐位一致）】
+                        ① 增速三选一 不触发（最近两轮 A 弱=False/False，TAU=1.0 不动）；
+                        ② 天花板 不确认（三轮环比 3/3 满足但 C 平台=False，仍不改超参）；
+                        ③ P2a 维持观察态；④ PPO 当前轮判「不启动」（r=8，门槛 R10+，符合预期）；
+                        ⑤ 下一步训练由驱动自动接续（R9 训练 → A/C → R10），零干预。
+[2026-11-07 05:15:00] 【本轮唯一新构件】新建 tools/ppo_report.py（只读/零 CPU/不启对局）：
+                        把「PPO 是否在学」的三条同池口径固化 —— P{r} 闸门 A(vs master)、
+                        P{r} 闸门 D(vs 现最佳)、以及**关键判据 P{r}−R{r} 逐 seed 配对**
+                        （PPO 相对同期 DAgger 的净增量）。复用 final_eval_report 的
+                        per_seed/stats 唯一实现，禁止另写口径。已验证：用 r08/r07 跑出
+                        +0.341±0.552 p≈0.5367，与 gate_decision 逐位一致；缺失/半截 jsonl
+                        正确返回 None 而非拿半截数据下结论；首跑正确输出「尚无 PPO 轮次」。
+[2026-11-07 05:15:00] 【切换窗口收口（风险量化，不干预）】R9 训练 ≈05:36 结束（4 ep 早停）
+                        → 闸门 A ≈05:37 → 闸门 C ≈05:59 → **R10 标注启动 ≈05:59，
+                        switch_ppo 在 +3s 命中**（此刻标注器零落盘）→ keepalive 于 lock
+                        过期 120s 后拉起新驱动 ≈06:01~06:03，R10 从头重跑，净损失 ≈3s。
+                        switch_ppo 超时点在 07:40 ⇒ 即使闸门 C 打满 5400s 仍有 ≈95min 余量。
+                        **回退规则**：若 06:2x 自检发现 switch_ppo 已退出且无【切换】行 ⇒
+                        在 R11 标注启动边界重试（命令行已固化，见 §6.25.6）。
+[2026-11-07 05:15:00] 【新登记的耦合风险（不阻断，写入纪律）】PPO 晋升会把 exit_pNN 覆盖成
+                        exit_best.pt ⇒ **下一轮 DAgger 的学生分布随之改变**。闸门 D(p<0.05)
+                        + 闸门 A 双条件已把误晋升概率压到很低，且 rNN_gateD 会记录真实环比，
+                        漂移可被终评发现。另：**线上 models/web_best.pt 绝不跟随 PPO 晋升**
+                        （只允许从 DAgger rNN 刷新，且须闸门 D 通过 + 影子冒烟 + 蓝绿切换）。
+[2026-11-07 05:15:00] 【下一步】R9 闸门 A/C 首次完整捕获的自检（≈06:2x）= R9 硬决策点；
+                        同时确认【切换】是否发生、新驱动 PID、首个 PPO 轮 P10 是否跑起来。
+[2026-11-07 05:20:00] 【补做·PPO 命令链路实测（原以为已验，查实无任何 ppo 日志 ⇒ 重验）】
+                        以 `train_ppo.py --init exit_best.pt --out runs/selftest/... --hands 24
+                        --workers 2 --max-states 3000 --epochs 1 --rollout-device cpu --device cpu`
+                        端到端跑通（46s）：rollout 24 局/1482 决策/1482 状态、熵中位 2.136、
+                        零和 0.00e+00、A_std 8.15 分 → GAE → PPO 6 步 kl=+0.0053
+                        ratio=0.998 clipfrac=0.019 → `[save]` + `[metrics]` JSON。
+                        存档 9.84M、`encoder_version=3`，**eval_pairs 直读并跑完 2 seed 对局**
+                        ⇒ R10 首个 PPO 轮的「命令/存档/闸门读取」三段全部前置验证完毕。
+                        注：n<500 状态会 `[FAIL] 状态太少` rc=1（真实轮 60000 状态远超门槛）；
+                        `--dry` 与真实跑共用同一路径。验证产物 runs/selftest 已删除、
+                        models/ 无 exit_p*.pt 残留。**全程 --device cpu，未占 MPS，训练零影响**。
+[2026-11-07 05:35:19]   rc=0  2039s  train_r09
+[2026-11-07 05:35:19] R9 训练完成 init=exit_best.pt → exit_r09.pt  (['[done] best val 1.7681 → /Users/ligf9/zhuoji-mahjong-ai/models/exit_r09.pt'])
+[2026-11-07 05:35:19] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r09.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r09_gateA.jsonl  → gateA_r09.log
+[2026-11-07 05:36:12]   rc=0  53s  gateA_r09
+[2026-11-07 05:36:12] R9 闸门 A: [summary] seats=[0, 1, 2, 3]  n=300  diff=+3.736±0.399  z=+9.37  p≈0.0000  符号 213:86  → 通过
+[2026-11-07 05:36:12] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 05:36:13]   rc=0  1s  export_exit_best
+[2026-11-07 05:36:13] 晋升：exit_r09.pt → exit_best.pt
+[2026-11-07 05:36:13] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r09.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --a-mode greedy --b-mode search32 --seeds 50 --seed0 720000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r09_gateC.jsonl  → gateC_r09.log
+[2026-11-07 05:57:27]   rc=0  1274s  gateC_r09
+[2026-11-07 05:57:27] R9 闸门 C(趋势): [summary] seats=[0, 1, 2, 3]  n=50  diff=-0.893±1.016  z=-0.88  p≈0.3791  符号 23:25
+[2026-11-07 05:57:27] R9 轮次完成  best=exit_best.pt
+[2026-11-07 05:57:27] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 05:57:28]   rc=0  1s  export_exit_best
+[2026-11-07 05:57:28] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r10 --seed0 700000  → annotate_r10.log
+[2026-11-07 05:57:41] 【切换】kill 旧驱动（pid=[89564, 89566]）于 R10 标注启动边界；生效新源码：PPO 分支（train_ppo.py）+ 闸门 D（vs 上轮最佳）
+[2026-11-07 05:59:30] ============================================================
+[2026-11-07 05:59:30] 7×24 ExIt 驱动启动：R10 起，截止 2026-11-13 02:30（R1 已完成；断点续跑 + 每小时自检自动化）
+[2026-11-07 05:59:30] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 05:59:30]   rc=0  1s  export_exit_best
+[2026-11-07 05:59:30] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r10 --seed0 700000  → annotate_r10.log
+[2026-11-07 05:59:31] 【切换】新驱动 pid=[21302] 心跳新鲜=True（R10 标注将从头重跑，无脏数据）
+
+[2026-11-07 06:30:00] ======== 自检 #22（7×24 第 22 次）R9 硬决策点 + PPO 链式修正 ========
+[2026-11-07 06:30:00] 【状态】健康、产出符合预期、切换成功、主线零干预。驱动为切换后的唯一新进程
+                        PID 21302（05:59:30 起，PPID=keepalive 99107），lock 1~27s；
+                        R10 标注 13.9%（3,484/25,000·worker），吞吐 11,870~11,900/h·worker，
+                        ETA ≈08:06（3.5h 上限 09:29，余 83min）；异常 0、panic 0、磁盘 307Gi、
+                        TAU=1.0、Web 8770 `/`+`/api/meta` 双 200 且 models=web_best(9.85M)、
+                        看门狗 99107 活（4h47m）。r01~r09 **36/36** npz 全合规（9 轮×4 片）。
+[2026-11-07 06:30:00] 【切换核查（三项证据一致）】① `switch_ppo.log` 05:57:39 命中 → 05:57:41 杀净
+                        旧驱动 pid=[89564,89566]；② `exit_log` 05:57:41【切换】+ 05:59:30「驱动启动：
+                        R10 起」；③ `keepalive.log` 05:59:29「训练驱动心跳停 → 拉起」→ 06:00:02 恢复。
+                        净损失 ≈109s（05:57:28 起的 annotate 被弃，05:59:30 重起，标注只结束落盘 ⇒ 无脏文件，
+                        `runs/exit_r10/` 旧目录确实不存在）。新驱动 stdout 去
+                        `runs/night_logs/keepalive_night_run.log`（**不是** night_run.log，§6.25.5）。
+[2026-11-07 06:30:00] 【R9 完整结果】标注 05:01:20 rc=0（7886s、11,419~11,446/h·worker、4×25k）
+                        → 训练 05:35:19 rc=0（2039s、400k 封顶、init=exit_best、seed 20261115；
+                        train 1.7742→1.7503、**best val 1.7681@ep01**、ep04 早停，**连续第 6 轮
+                        best-val 落在 ep1**）→ 闸门 A **+3.736±0.399 z=+9.37 p≈0.0000 符号 213:86**
+                        **连续第 8 轮通过 → 05:36:13 晋升** exit_r09.pt→exit_best.pt（sha `a24e2ee1`、
+                        `r09.promoted=ok`、onnx 05:36 同步）→ 闸门 C **−0.893±1.016 p≈0.3791（23:25）**。
+                        整轮 3h14m。冻结口径独立复算（gate_decision）与驱动 [summary] 逐位一致。
+[2026-11-07 06:30:00] 【硬决策五项】
+                        ① 增速三选一 **不触发**：TAU/Q-MSE/n_det/lr 一项不改（§6.22 已把三项量化否决）。
+                        ② 天花板 **首次判「确认」**（工具以数据判定：A 环比 3/3 不显著 + C 三轮
+                           |mean|<1 且 p>0.05；R9−R8 A 仅 **+0.041±0.570 p≈0.9425**，为连续第 5 个
+                           零边际轮）⇒ 不再指望 DAgger 主线增益，**仍不改任何超参**（44 轮多重比较下
+                           反复调参只会过拟合 300 seed 池）。
+                        ③ P2a **维持观察态**（C 最近两段正增量 1/2，未连续收敛）。
+                        ④ **PPO 分支已上线**：PPO_FROM=10，R10 末自动跑首个 PPO 轮（闸门 D 亦自本轮起可用，
+                           `r09_gateD` 缺席是因为 R9 的闸门跑在**旧源码**上，符合预期）。
+                        ⑤ 下一步训练由驱动自动接续，零干预、未启第二驱动、未打断、未并发评估。
+[2026-11-07 06:30:00] 【本轮最重要发现与修复（P1，原设计缺陷）】`ppo_round()` 原写
+                        `init = latest_pt()`（= DAgger exit_best）⇒ **每轮 PPO 都从主线权重重启**，
+                        而单轮预算只有 960 局/≈6 万决策/2 epoch/lr 5e-5（冒烟实测 kl≈+0.005，
+                        权重位移极小）⇒ 40 轮 RL 经验互不叠加，P10/P11/… 全是「一次性微扰」，
+                        闸门 D 必然恒 ≈0 —— 这是一个**结构上注定为零**的实验，不是 PPO 无效。
+                        已修为 `ppo_init(r)`：**默认续上一条 PPO 链**（`models/exit_p{r-1}.pt` 存在则用之），
+                        否则回退 `latest_pt()`；`runs/ppo_rechain` 存在即强制回 DAgger 重启链（远程急停）。
+                        40 轮链式后累计 ≈3.8 万局 ≈240 万决策，才是真实 RL 实验。
+                        **r=10 时 exit_p09 不存在 ⇒ 行为与修正前完全等价**（已干跑验证 r=10/r=11 均回退
+                        exit_best.pt），故该修正零风险；但它**只在下一次进程启动时生效**（长驻不重载源码）。
+[2026-11-07 06:30:00] 【重启策略（零数据损失）】新建 `tools/switch_at_train.py`：等驱动 log 出
+                        `→ train_r10.log`（= 标注已 rc=0、4×npz 已落盘、训练刚 spawn 尚未写 ckpt/.done）
+                        后 2s 内 kill 驱动 + train_exit，交由 keepalive 拉起新源码 ⇒ **净损失 ≈2s**。
+                        已启动 **PID 23309（PPID=1，已脱会话）**，超时点 10:19，回退=不切也无损失。
+                        选「训练起点」而不是「标注起点」是因为前者此刻上一阶段数据已完整落盘，比
+                        §6.25 的 annotate 边界更省（标注边界要重跑 2h 标注）；三者耗时对比：
+                        标注期 kill 丢≤2h / 训练期丢≤34min / 闸门期丢≤25min / 训练起点丢≈2s。
+[2026-11-07 06:30:00] 【工具修正】`tools/gate_decision.py`：② 天花板文案改为「确认」并区分
+                        PPO 已上线/未上线；④ 判据从「是否启动」改为「已上线，判读走 ppo_report 的
+                        P{r}−R{r}」，并实读 `night_run.py` 的 PPO_FROM 与 `runs/ppo_disabled`、
+                        列出现有 `exit_p*.pt`。py_compile + 两种分支文案均验证通过（r=9 走「未到首发」）。
+                        `tools/ppo_report.py` 保持只读不动，仍为 PPO 净增量的唯一判据实现。
+[2026-11-07 06:30:00] 【判读纪律（新增，防误判 PPO）】单轮 P10 不晋升属**分辨率限制**
+                        （300 seed SE≈0.5 分 > 单轮真实增量），绝不是失败；**绝不因此加 lr 或放宽闸门 D**。
+                        PPO 成败只看 `P{r}−R{r}`（同池同口径逐 seed 配对）：连续 ≥3 轮 ≤0 ⇒ 降频或停用；
+                        连续 ≥2 轮 >0 且累积 >2 分 ⇒ 加预算（hands 1.5~2×）。首次可用判定点 = **P12/P13**
+                        （单轮 n=300 不够，需 3 轮累积 ≈n=900 才把 SE 压到 ≈0.29）。
+[2026-11-07 06:30:00] 【时间线（按 R9 实测 3h14m + PPO/闸门D ≈10min 外推）】
+                        R10 标注 ≈08:06 落盘 → **08:06 切换点（≈2s）** → 训练 ≈08:07~08:42 →
+                        闸门 A ≈08:43 → P10 PPO ≈08:44~08:53 → p10 闸门 D/A ≈08:54~08:56 →
+                        闸门 C ≈08:56~09:22 → R11 标注 09:22。自检间隔 ≈72min（06:17→07:29→08:41→09:53）
+                        ⇒ **R10 完整 A+C 的首次捕获 = ≈09:53 自检**（= R10 硬决策点）；
+                        08:41 自检只会在「R10 训练中/P10 未起」，只巡检不决策。
+                        剩余 ≈140h ⇒ 每轮 ≈3h30m（含 PPO）⇒ **≈40 轮**，DEADLINE 仍为唯一硬约束。
+[2026-11-07 06:30:00] 【线上服务】`models/web_best.pt` 仍为 R8 快照（sha `16292961`，01:12），
+                        **本轮不刷新**：R9 相对 R8 仅 +0.041±0.570（不可分辨），为不可测收益重启在线服务
+                        不划算；改为**终评两段式 best-of 定稿后一次性刷新**（闸门 D 通过 + 影子冒烟 +
+                        蓝绿），且**绝不跟随 PPO 晋升**（§6.25 纪律 B）。
+[2026-11-07 06:30:00] 【下一步】① 07:29 自检只核 R10 吞吐/异常与切换器是否还在武装；
+                        ② **08:41 自检**核切换是否真的发生（switch_at_train.log + 【切换】行 + PID 变化），
+                        未发生则手工在 R11 训练起点重试 `--round 11`；
+                        ③ ≈09:53 硬决策：R10 完整 A+C + R10−R9 环比 + 首个 P10 metrics/gateD/gateA；
+                        ④ P12/P13 前不做任何 PPO 预算调整（单轮 n 不够）。
+
+[2026-11-07 06:22:30] ======== 【事故】自检 #22 期间驱动被误杀（P0，已恢复，数据无损）========
+[2026-11-07 06:22:30] 【事实链】06:19:30 我启动 tools/switch_at_train.py（PID 23309）用于在 R10 训练
+                        起点切换新源码，其触发判据是「reports/exit_log.md 文本里出现
+                        `→ train_r10.log`」。06:20:48 我把本轮自检笔记写进 exit_log.md，
+                        笔记里**引用了这句话本身** ⇒ 切换器立即误判触发（真实状态：R10 仍在标注 13.9%），
+                        lock_age=17.6s 却仍照杀 ⇒ 06:20:50 驱动 PID 21302 被终止。
+                        随后脚本在 note_md 的 f-string 里引用了未定义变量 `{r-1}`（应为 `{a.round-1:02d}`），
+                        抛 NameError **在「等 keepalive 拉起」分支之前就退出** ⇒ 没有任何兜底重启。
+                        更要紧的是脚本只 kill night_run/train_exit，**没杀 annotate**：
+                        孤儿 annotate PID 21310（PPID=1）继续跑，若无干预，驱动重启后会再起一个
+                        annotate 写同一目录 `runs/exit_r10` ⇒ 双写/覆盖风险。
+[2026-11-07 06:22:30] 【处置（4 步，2 分钟内完成）】① 06:21:40 巡检发现 night_run 缺失、annotate PPID=1
+                        ⇒ 立即 `pkill -f rust_engine/target/release/annotate` 清掉孤儿（避免双写）；
+                        ② 核实 `runs/exit_r10/` **目录不存在** ⇒ 标注器只在结束时落盘，**零脏数据**；
+                        ③ 确认切换器已因 NameError 退出（pgrep 空）⇒ 不会二次误杀；
+                        ④ 交由 keepalive 在 lock 过期 120s 后拉起（06:23~06:24），不手工抢跑以免双驱动。
+[2026-11-07 06:22:30] 【损失】R10 标注已跑 1287s（≈21.5min×4 worker）被弃，R10 从头重跑；
+                        停机 ≈2.5~3min（lock 过期 120s + keepalive 30s 轮询）。
+                        **数据零损失**（r01~r09 的 36/36 npz 未受影响），**模型零影响**（exit_best 仍
+                        = exit_r09 = sha a24e2ee1），Web 8770 未受影响（双 200）。
+[2026-11-07 06:22:30] 【正面结果】切换的**目的仍然达成**：重启后的驱动加载新源码，
+                        `ppo_init()` 链式生效（R10 时 exit_p09 不存在 ⇒ 首个 P10 仍是 DAgger 起点，
+                        与设计等价；P11 起才真正续链）。原计划 08:06 的切换点因此**不再需要**，
+                        08:41 自检改为「确认新驱动 PID + R10 重跑进度」，**不必再跑任何切换器**。
+[2026-11-07 06:22:30] 【修复（已完成，py_compile 通过）】`tools/switch_at_train.py`：
+                        ① 触发判据从「日志文本匹配」改为**文件事实**——`runs/night_logs/train_r{R}.log`
+                           存在且 mtime 60s 内（训练进程确实在写）。**任何「监控者自己也会写入日志」的
+                           文本触发都不可用**，这是本次事故的根因类别；
+                        ② `{r-1}` → `{a.round-1:02d}`（NameError 消除）；
+                        ③ 保留 `pkill train_exit` 并**必须同时纳入 annotate**（本次孤儿进程的直接原因）。
+                        **该工具暂不再武装**：切换已在 06:23 由 keepalive 完成。
+[2026-11-07 06:22:30] 【教训（写入长期纪律）】A) 触发器只能依赖**不可由自检文本产生**的信号；
+                        B) 一切 kill 脚本必须把「拉起」放进 finally/必达路径，不能放在可能抛异常的行之后；
+                        C) kill 阶段必须枚举**该阶段全部子进程**（annotate/train_exit/train_ppo），
+                        否则留孤儿造成双跑写同一输出目录。三条已同步写入 §6.26.10。
+[2026-11-07 06:22:33] ============================================================
+[2026-11-07 06:22:33] 7×24 ExIt 驱动启动：R10 起，截止 2026-11-13 02:30（R1 已完成；断点续跑 + 每小时自检自动化）
+[2026-11-07 06:22:33] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 06:22:34]   rc=0  1s  export_exit_best
+[2026-11-07 06:22:34] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r10 --seed0 700000  → annotate_r10.log
+
+[2026-11-07 07:26:00] ======== 【自检 #23】R10 标注期巡检 · 健康、零干预 ========
+[2026-11-07 07:26:00] 【状态】驱动唯一 PID 23674（PPID=99107 keepalive，1h02m），lock 22s；
+                        R10 标注 50.2%（12,435~12,554 / 25,000·worker），seed0=700000，enc3/cpu；
+                        吞吐 11,795~11,824/h·worker（起始 12.5k 缓降，仍在 10~12.5k 健康区间）；
+                        ETA ≈08:29（3.5h 上限 09:52，余量 83min）；06:22:33 起异常 0。
+                        磁盘 307Gi（models 615M）、TAU=1.0、Web 8770 双 200（models=web_best R8 快照）、
+                        看门狗 99107 活（05:59 / 06:22 两次拉起均成功）。36/36 npz 合规。
+[2026-11-07 07:26:00] 【R9 复核】A +3.736±0.399 p≈0.0000（213:86）第 8 轮通过已晋升；
+                        C −0.893±1.016 p≈0.3791；A R9−R8 +0.041±0.570 p≈0.9425（第 5 个零边际轮）；
+                        exit_best≡exit_r09（a24e2ee1）+ r09.promoted + onnx 三件套一致。
+[2026-11-07 07:26:00] 【新发现 · 闸门 D 从未执行】runs/gates/ 下无任何 *_prevbest.pt 与 *_gateD.jsonl。
+                        根因：闸门 D 于 04:15 写入源码，但在跑的 PID 89566 是 23:41 启动的旧进程
+                        ⇒ R06~R09 四轮只跑 A+C。06:22 重启的 23674 才首次载入。
+                        ⇒ **R10 是闸门 D 与 PPO 的双首秀**；r06~r09 真环比永久缺失（终评事后配对补）。
+[2026-11-07 07:26:00] 【PPO 判读预登记】单轮 960 局 ≈6万决策 / kl≈0.005 ⇒ 必然低于 300 seed 分辨率
+                        （SE≈0.5）。「P10 未晋升」不构成证据，禁止据此加 lr / 放宽闸门。唯一判据
+                        = 同池配对 P{r}−R{r}（tools/ppo_report.py）。P12 用 P10~P12 累积 n≈900
+                        判：Σ>0 且 p<.05 → PPO_HANDS 960→3840（单变量）；~0 → 维持至 P16/P20；
+                        Σ<0 且 p<.10 → 放 runs/ppo_disabled 冻结 PPO。
+[2026-11-07 07:26:00] 【结构事实】PPO 晋升在结构上不可达（需 +1.0 分 > SE 0.5）⇒ exit_best 恒为
+                        DAgger rNN、web_best 永不跟随 PPO；PPO 价值只在终评 best-of 兑现。
+                        「PPO 一直没晋升」不得解读为无效。
+[2026-11-07 07:26:00] 【结构风险 · 本轮不动】keepalive(99107) 父链仍是 WorkBuddy 会话（zsh 99106）；
+                        Web 服务 PID 97638 PPID=1 已存活 6h11m 证明脱管可行，但重启 keepalive 会
+                        连带杀掉子进程驱动 23674（R10 标注 50% 丢失）⇒ 判定收益<风险，不处置。
+                        处置窗口只能在训练阶段且须人工会话确认。
+[2026-11-07 07:26:00] 【决策】零干预（R10→训练→A/C/D→P10→R11 自动接续）；超参一项不改；
+                        天花板维持「确认」；P2a 观察态；web_best 保持 R8 快照待终评一次性刷新。
+                        CPU 有 ≈7 核空闲（标注仅 59%，瓶颈在教师 CoreML），但实证并发会压垮吞吐 ⇒ 弃用。
+[2026-11-07 07:26:00] 【时间线】R10 落盘 ≈08:29 → 训练 ≈09:11 → A ≈09:13 → C ≈09:36 → D ≈09:37 →
+                        P10 ≈09:48 → p10 双闸门 ≈09:51 → R11 标注。08:41 只巡检；
+                        **硬决策点 = ≈09:53**。剩余 139.1h / 3h33m ≈ 39 轮（R10~R48）。
+[2026-11-07 07:26:00] ============================================================
+[2026-11-07 08:29:45]   rc=0  7632s  annotate_r10
+[2026-11-07 08:29:45] R10 标注完成 student=exit_best.onnx seed0=700000 → 4×25k
+[2026-11-07 08:29:45] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_exit.py --data runs/exit_r01/exit_w*.npz runs/exit_r02/exit_w*.npz runs/exit_r03/exit_w*.npz runs/exit_r04/exit_w*.npz runs/exit_r05/exit_w*.npz runs/exit_r06/exit_w*.npz runs/exit_r07/exit_w*.npz runs/exit_r08/exit_w*.npz runs/exit_r09/exit_w*.npz runs/exit_r10/exit_w*.npz --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_r10.pt --epochs 30 --window 400000 --batch 256 --seed 20261116 --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt  → train_r10.log
+[2026-11-07 08:36:00] ============================================================
+[2026-11-07 08:36:00] 【自检 #24】R10 落盘核对 + best-of 第一段工具化（只核对，不决策）
+[2026-11-07 08:36:00] 健康：驱动唯一 PID 23674(PPID=99107 keepalive, 2h13m) lock 1.9s；无 switch_* 残留；
+                        ps 仅 1 driver + 1 train_exit(33596)。06:22:33 起异常 0；磁盘 307Gi；TAU=1.0；
+                        Web 8770 / =200、/api/meta models=web_best(R8 快照)；看门狗 99107 活。
+[2026-11-07 08:29:45]   rc=0  7632s  annotate_r10   （11,786~11,797/h·worker；4×25k；check_npz 4/4，
+                        累计 40/40；NaN↔mask overlap=gap=0）
+[2026-11-07 08:29:45] R10 训练自动接续（400k 封顶 / --init exit_best.pt / seed 20261116 / PID 33596）
+[2026-11-07 08:36:00] 【判活口径补充】train_r10.log 起始只有 1 条 UserWarning(365B) 不是卡住：
+                        train_exit.py 仅 epoch/early-stop/done 带 flush=True(:181/:198/:200)，
+                        [data]/[init]/[net](:61/:126/:128) 不带 flush，留在 4KB 缓冲直至首个 epoch。
+                        判活只能看 ps -o time 累计 CPU（8min→39s 单调增）。与 §6.22「night_run.log 冻结」
+                        同类陷阱：一律不得据日志 mtime 判死。
+[2026-11-07 08:36:00] 【新工具】tools/bestof_rank.py（只读/零 CPU/不启对局，复用 final_eval_report
+                        的 per_seed+stats 唯一实现）：自动发现 r*/p*_gateA.jsonl（仅收 ≥300 唯一 seed
+                        的完整文件）→ 排名 + top1 对其余逐 seed 配对差分 + 选择偏差 SE·√(2lnN) +
+                        top-k 第二段复赛命令 + --md/--json。此前 §8「第一段」只能人工看全表，
+                        无排名/无 top-k/无显著性，现一条命令可复现。
+[2026-11-07 08:36:00] 【R01~R09 排名】R09 +3.736±.399 | R08 +3.694±.415 | R06 +3.658±.407 |
+                        R05 +3.398±.413 | R07 +3.353±.428 | R04 +3.312±.418 | R03 +2.843±.422 |
+                        R02 +2.374±.415 | R01 +0.179±.406(ns)
+[2026-11-07 08:36:00] 【核心结论】R09 对其余：−R08 +0.041±0.570 p=.94 / −R06 +0.078±0.536 p=.88 /
+                        −R05 +0.338±0.556 p=.54 / −R07 +0.382±0.537 p=.48 / −R04 +0.423±0.533 p=.43
+                        ⇒ R04~R09 六轮**全部并列(<1SE)**；仅 −R02 +1.361±0.540 p=.012 显著。
+                        平台期由「环比不显著」升级为「交付维度完全不可分辨」。
+[2026-11-07 08:36:00] 【定量发现】SE(R09−R08)=0.570 ≈ √(.399²+.415²)=0.576 ⇒ 逐 seed 配对
+                        几乎不降方差(ρ≈0，同一牌墙一着分叉后两局独立)。⇒ 独立池 500 seed 配对
+                        SE≈0.44 仍大于实际差距，第二段**大概率同样判并列**（预期而非失败）。
+                        ⇒ §8.1 的「P0 交付缺陷」降级为 P2 方法论完备性：平台期 exit_best 逐轮
+                        覆盖不带来交付损失（任取 R04~R09 统计等价）。
+[2026-11-07 08:36:00] 【预登记·交付规则】top1 显著(p<.05 且 gap>1SE)→交付 top1；否则交付
+                        「并列集合中轮次最晚者」。理由：数据最多 / = exit_best 零切换 / 取并列集合
+                        mean 最高者正是要消除的选择偏差本身（N=9 纯噪声 max 期望上偏 0.836 分≈2.10 SE）。
+                        规则在看到独立池结果之前固化，禁止事后调整。
+[2026-11-07 08:36:00] 【成本校准】闸门 A 实测 53~60s/1200 局 ⇒ 第一段 0 成本；第二段 greedy
+                        500 seed ≈90~100s/候选 ⇒ top-5 ≈8min；仅交付模型的 N32 验收 ≈3.7h（选择项
+                        不比、验收项才比）⇒ 终评总计 ≈4h，原「4~11h」上限撤销、预留 4~5h 足够。
+[2026-11-07 08:36:00] 【决策】零干预（R10 训练→A/C/D→P10→R11 自动接续）；超参一项不改；天花板
+                        维持「确认」；P2a 观察态；web_best 保持 R8 快照待终评一次性刷新。
+                        硬决策点 = ≈09:53（首次捕获 R10 完整 A+C+D 与 P10 首轮 + P10−R10 配对）。
+[2026-11-07 08:36:00] ============================================================
+[2026-11-07 09:12:01]   rc=0  2536s  train_r10
+[2026-11-07 09:12:01] R10 训练完成 init=exit_best.pt → exit_r10.pt  (['[done] best val 1.7695 → /Users/ligf9/zhuoji-mahjong-ai/models/exit_r10.pt'])
+[2026-11-07 09:12:01] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r10.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r10_gateA.jsonl  → gateA_r10.log
+[2026-11-07 09:12:55]   rc=0  53s  gateA_r10
+[2026-11-07 09:12:55] R10 闸门 A: [summary] seats=[0, 1, 2, 3]  n=300  diff=+3.864±0.411  z=+9.40  p≈0.0000  符号 214:83  → 通过
+[2026-11-07 09:12:55] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 09:12:56]   rc=0  1s  export_exit_best
+[2026-11-07 09:12:56] 晋升：exit_r10.pt → exit_best.pt
+[2026-11-07 09:12:56] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r10.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --a-mode greedy --b-mode search32 --seeds 50 --seed0 720000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r10_gateC.jsonl  → gateC_r10.log
+[2026-11-07 09:33:54]   rc=0  1258s  gateC_r10
+[2026-11-07 09:33:54] R10 闸门 C(趋势): [summary] seats=[0, 1, 2, 3]  n=50  diff=+2.227±1.009  z=+2.21  p≈0.0273  符号 30:20
+[2026-11-07 09:33:54] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_r10.pt --b /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r10_prevbest.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/r10_gateD.jsonl  → gateD_r10.log
+[2026-11-07 09:36:00]   rc=0  126s  gateD_r10
+[2026-11-07 09:36:00] R10 闸门 D(vs 上轮最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=+0.481±0.420  z=+1.14  p≈0.2523  符号 150:142
+[2026-11-07 09:36:00] P10 PPO 链起点 = exit_best.pt
+[2026-11-07 09:36:00] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python train_ppo.py --init /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --out /Users/ligf9/zhuoji-mahjong-ai/models/exit_p10.pt --hands 960 --workers 4 --threads 2 --max-states 60000 --epochs 2 --lr 5e-5 --seed0 1000000  → ppo_p10.log
+[2026-11-07 09:41:34]   rc=0  334s  ppo_p10
+[2026-11-07 09:41:34] P10 PPO 完成 init=exit_best.pt → exit_p10.pt {"hands": 960, "states": 60000, "A_std": 7.602680206298828, "ret_std": 11.13347055803655, "kl": [0.011250697744841826, 0.013262783052360123], "secs": 333.0}
+[2026-11-07 09:41:34] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p10.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p10_gateD.jsonl  → gateD_p10.log
+[2026-11-07 09:43:34]   rc=0  121s  gateD_p10
+[2026-11-07 09:43:34] P10 闸门 D(vs 现最佳): [summary] seats=[0, 1, 2, 3]  n=300  diff=-0.097±0.367  z=-0.26  p≈0.7924  符号 144:146  → 不通过
+[2026-11-07 09:43:34] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python eval_pairs.py --a /Users/ligf9/zhuoji-mahjong-ai/models/exit_p10.pt --b /Users/ligf9/zhuoji-mahjong-ai/models/dushan_master.pt --mode greedy --seeds 300 --seed0 710000 --workers 6 --out /Users/ligf9/zhuoji-mahjong-ai/runs/gates/p10_gateA.jsonl  → gateA_p10.log
+[2026-11-07 09:44:31]   rc=0  57s  gateA_p10
+[2026-11-07 09:44:31] P10 闸门 A(vs master): [summary] seats=[0, 1, 2, 3]  n=300  diff=+3.796±0.414  z=+9.16  p≈0.0000  符号 207:91
+[2026-11-07 09:44:31] P10 不晋升（未显著优于现最佳），ckpt 留档供终评 best-of
+[2026-11-07 09:44:31] R10 轮次完成  best=exit_best.pt
+[2026-11-07 09:44:31] $ /Users/ligf9/zhuoji-mahjong-ai/.venv/bin/python -c import torch,sys;sys.path.insert(0,'.');from zhuoji.net import build_from_ckpt;from zhuoji.forward import ensure_onnx;ck=torch.load('/Users/ligf9/zhuoji-mahjong-ai/models/exit_best.pt',map_location='cpu',weights_only=False);net,_=build_from_ckpt(ck);p=ensure_onnx(net,stem='exit_best');print('onnx:',p)  → export_exit_best.log
+[2026-11-07 09:44:32]   rc=0  1s  export_exit_best
+[2026-11-07 09:44:32] $ /Users/ligf9/zhuoji-mahjong-ai/rust_engine/target/release/annotate --student /Users/ligf9/zhuoji-mahjong-ai/models/onnx/exit_best.onnx --teacher models/onnx/dushan_master.onnx --student-enc 3 --student-device cpu --targets 100000 --threads 4 --out /Users/ligf9/zhuoji-mahjong-ai/runs/exit_r11 --seed0 710000  → annotate_r11.log
+
+[2026-11-07 09:58:00] ============================================================
+[2026-11-07 09:58:00] 【自检 #25】健康、产出符合预期、主线零干预。驱动唯一 PID 23674（PPID=99107
+                        keepalive，3h35m），lock 心跳 ~1s，唯一 annotate(39622)，无 switch_* 残留；
+                        阶段 = R11 标注（09:44:32 起，11.6k/h·worker，ETA ≈11:55）；42 阶段 rc=0、
+                        panic 0；磁盘 307Gi；TAU=1.0；40/40 npz；Web 双 200（models=web_best）；
+                        看门狗 99107 活。
+[2026-11-07 09:58:00] 【R10 结算】标注 08:29:45 rc=0（7632s、11.79k/h·worker、4×25k）→ 训练 09:12:01
+                        rc=0（2536s、400k、init=r09）train 1.7739→1.7463、best val 1.7695 **@ep02**
+                        （6 轮后首次非 ep01）、ep05 早停 → 闸门 A `+3.864±0.411 p≈0.0000（214:83）`
+                        第 9 轮通过 → 晋升 exit_r10.pt（sha b013ed75…、onnx 09:12 同步）→
+                        闸门 C `+2.227±1.009 p≈0.0273（29:20）` **首次名义显著为正** →
+                        闸门 D 首秀 `+0.481±0.420 p≈0.2523` 不显著 → P10 → R11。整轮 3h15m。
+[2026-11-07 09:58:00] 【闸门 C 跃升：先证真、再证不可采信】(a) 同池配对 R10−R09 C `+3.120±1.178
+                        p=0.0081`，bootstrap CI[+0.83,+5.33] P(>0)=.996、trim10/20% +3.26/+3.62、
+                        LOO[+2.78,+3.59]、胜负 33:16 ⇒ **不是离群点**。(b) 但 **族系不显著**：
+                        C 已做 10 次，仿真 P(max|z|≥2.213,10 tests)=**0.239**，Bonferroni 需 p<.005
+                        ⇒ 24% 纯运气即可出现；且与闸门 D（vs r09 仅 +0.481 p=.25）内部矛盾、
+                        与 R2~R10 合并 `+0.305±0.441 p=.4887` 矛盾；固定池 720000+50 已被用 10 次。
+[2026-11-07 09:58:00] 【预登记 · 交付判据】R10 的 C =「名义显著、族系不显著」。① 不宣布 §4
+                        「超额」（新贪心 ≥ 现 N32）达成；② 不改任何超参；③ 唯一确认途径 = 终评
+                        独立池 3_000_000+500（500 seed）跑「r10 贪心 vs master+N32」，同时充当
+                        §4「N32 验收」⇒ 一次计算双重用途，判据固化进终评手册 §9。
+[2026-11-07 09:58:00] 【P10 PPO 首轮】960 局/60k states/333s；kl 0.0113→0.0133、ratio 1.0001、
+                        clipfrac 0.136、A_std 7.60 —— 全部健康；闸门 D `−0.097±0.367 p=.79` 不晋升
+                        （预期内）；**P10−R10 `−0.069±0.419 p=.87`（1/3 轮）**；P12/P13 前不调预算、
+                        不放宽闸门、不加 lr。
+[2026-11-07 09:58:00] 【决策】①增速三选一不触发（A p≈0.0000，TAU/Q-MSE/n_det/lr 一项不改）；
+                        ②天花板按规则「不确认」但不撤销 A 侧结论（两分支处置一致）；③P2a 维持观察态；
+                        ④PPO 维持 960 局；⑤R11 已自动接续，零干预。
+[2026-11-07 09:58:00] 【时间线】剩余 136.5h ⇒ ≈41 轮（R11~R51），MAX_ROUND=60 不触发、DEADLINE 唯一
+                        硬约束；R11 落盘 ≈11:55 → 训练 ≈12:37 → A ≈12:38 → C ≈12:59 → D ≈13:01 →
+                        P11 ≈13:07 → R12。**下一硬决策点 = 首次捕获 R11 完整 A+C+D+P11（≈13:0x）**。
+[2026-11-07 09:58:00] 【防误判】闸门 C 单轮值此后不得单独作证据；exit_r10.pt mtime 08:46 是 best-val
+                        落盘时刻（非训练结束），判 ckpt 看 train_r*.done + [done]。
+[2026-11-07 09:58:00] ============================================================
+
+[2026-11-07 11:03:00] ============================================================
+[2026-11-07 11:03:00] 【自检 #26】健康、产出符合预期、主线零干预。驱动唯一 PID 23674（PPID=99107
+                        keepalive，4h40m），lock 23s；阶段 = R11 标注 59.2%（14,808/25k·worker，
+                        seed0=710000，enc3/cpu ✓），吞吐 11,318/h·worker，ETA 11:59（上限 13:11，
+                        余 72min）；42 阶段 rc=0、panic/NaN 超时 0；40/40 npz 合规；TAU=1.0；
+                        Web 8770 双 200（models=web_best R8 快照）；看门狗 99107 活；磁盘 307Gi。
+[2026-11-07 11:03:00] 【闸门复核】gate_decision / ppo_report / bestof_rank 三工具与 #25 逐位一致：
+                        A 十轮 +0.179→+3.864 全 p≈0.0000；C 十轮 −2.480…+2.227；
+                        A 环比 +2.196/+0.469/+0.469/+0.086/+0.260/−0.304/+0.341/+0.041/+0.129；
+                        P10 A +3.796±0.414、P10 D −0.097±0.367、P10−R10 −0.069±0.419 p≈0.87。
+[2026-11-07 11:03:00] 【新 · 收官排期精算】轮长 202min（标注 127+训练 42+闸门 24+PPO 9）。
+                        剩余 135.4h ÷ 202 = 40.2 轮 ⇒ R11~R50；MAX_ROUND 不触发、DEADLINE 唯一硬约束。
+                        时间盒 can_start(130/35/15) ⇒ 能跑完「标注+训练」的最后一轮须在
+                        11-12 23:41 前启动；能跑完标注的可在 11-13 00:20 前启动 ⇒ **39min 判定带
+                        （占轮长 19%）会白跑 2h07m 标注**（数据落盘但永不训练，驱动随即 break）。
+                        预登记：11-13 00:25 后若当前 annotate 所属轮次无 gateC ⇒ 3min 内干净终止
+                        （kill 驱动 + pkill annotate + 确认无残留分片）并立即转终评，
+                        终评起点 02:30→00:30、报告 07:30→05:30。红线：只在最后 2h 且判定带成立时执行。
+[2026-11-07 11:03:00] 【新 · 末轮无闸门】训练跨 DEADLINE 结束时 can_start(15) 会跳掉 A/C/D/PPO
+                        ⇒ 该轮 ckpt 存在但无 rNN_gateA.jsonl，bestof_rank 静默看不到它（可能丢最强模型）。
+                        处置已写入终评手册 §10.3：终评第一步扫「有 ckpt 无 gateA」并补跑闸门 A
+                        （1200 局 57s/轮，全补 ≤5min），再跑排名。
+[2026-11-07 11:03:00] 【新 · PPO 链核对】ppo_init(11)→exit_p10.pt ✓；ppo_init(12/13)→exit_best 是
+                        p11 尚未生成所致，非 bug。真实脆弱点：任一 PPO 轮失败 ⇒ 下一轮静默回退
+                        DAgger 现最佳（只写「链起点」不报错）。监控项：每轮查 exit_p*.pt 是否连续，
+                        缺号后样本不得并入 P12 累积判读。
+[2026-11-07 11:03:00] 【交付诚实陈述】R10/P10/R09/R08/R06 两两配对全部 <1SE（R10−R08 +0.170±0.541
+                        p=.75）⇒ 交付强度自 R08 起已冻结；剩余 40 轮 DAgger 不改变交付物强度。
+                        终评不为「多跑几轮」预留时间。唯一变量 = PPO 链。
+[2026-11-07 11:03:00] 【决策】五项全无变更：①增速三选一不触发（A p≈0.0000，TAU/Q-MSE/n_det/lr
+                        一项不改）②天花板不确认亦不撤销 A 侧结论 ③P2a 维持观察态 ④PPO 维持 960 局，
+                        P12 前不动预算、不放宽闸门 D ⑤R11 已由驱动自动接续（11:59 落盘 → 12:41 训练
+                        → 13:1x 闸门 → P11 → R12），零干预、不启第二驱动、不打断、不并发评估。
+[2026-11-07 11:03:00] 【时间线】R11 落盘 ≈11:59 → 训练 ≈12:41 → A ≈12:42 → C ≈13:03 → D ≈13:05
+                        → P11 ≈13:11 → R12。**下一硬决策点 ≈13:2x**。
+[2026-11-07 11:03:00] ============================================================

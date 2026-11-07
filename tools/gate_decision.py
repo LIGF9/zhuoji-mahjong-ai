@@ -200,9 +200,18 @@ def main(argv: list[str] | None = None) -> int:
     conv = [rr for rr in (r - 1, r) if rr in cmarg and cmarg[rr]["mean"] > 0]
     p2a_ready = (not c_pending and len(conv) >= 2
                  and sa_last["p"] < 0.05 and sa_last["mean"] > 0)
-    # 判据 4：PPO-lite（§6.4，约 R10+）
-    ppo = r >= 10 and len(marg) >= 3 and all(
-        abs(marg[rr]["mean"]) < 0.5 for rr in sorted(marg)[-3:])
+    # 判据 4：PPO-lite —— 自 §6.24 起已从「是否启动」变成「已在跑，看净增量」
+    ppo_live = False
+    ppo_from = 10
+    try:
+        m = re.search(r"^PPO_FROM\s*=\s*(\d+)", (ROOT / "night_run.py").read_text(
+            encoding="utf-8", errors="replace"), re.M)
+        if m:
+            ppo_from = int(m.group(1))
+        ppo_live = r >= ppo_from and not (ROOT / "runs/ppo_disabled").exists()
+    except OSError:
+        pass
+    ppo_rounds = sorted(int(p.name[6:8]) for p in (ROOT / "models").glob("exit_p[0-9][0-9].pt"))
 
     print("\n-- 决策建议（按 §6.4 / §6.7.6 / §6.10.6 / §6.15.4）--")
     d = []
@@ -213,7 +222,11 @@ def main(argv: list[str] | None = None) -> int:
     if c_pending:
         plateau_act = "暂缓：闸门 C 待落盘，缺数据不判（§6.17.4 巡检窗口）"
     elif plateau:
-        plateau_act = "R6 末把「临近」升级为「确认」，资源优先切终评准备 / P2a 试点；仍不改超参"
+        plateau_act = ("「确认」：DAgger 边际已连续为 0 ⇒ 不再指望主线增益，资源转 PPO 分支"
+                       "（已在跑）+ 终评准备；仍不改任何超参"
+                       if ppo_live else
+                       "「确认」：DAgger 边际已连续为 0 ⇒ 不再指望主线增益，"
+                       "资源转终评准备；仍不改任何超参")
     elif gate_r6:
         plateau_act = "不确认：条件未满足（C 平台 / 环比），顺延下一轮复核；仍不改超参"
     else:
@@ -225,8 +238,15 @@ def main(argv: list[str] | None = None) -> int:
               if p2a_ready else "维持观察态（暂停推进）：C 未连续 ≥2 段收敛 / C 待落盘",
               f"最近两段 C 正增量={len(conv)}/2，A 显著为正={sa_last['p'] < 0.05}，"
               f"C 待落盘={c_pending}"))
-    d.append(("④ PPO-lite", "R10+ 且增益见顶 → 评估启动（先 wrapper 定稿+单测）"
-              if ppo else "不启动", f"r={r}（门槛 R10+）"))
+    if ppo_live:
+        ppo_act = (f"已上线（PPO_FROM={ppo_from}，每轮 ≈8min）：R{r} 末自动产出 exit_p{r:02d}.pt，"
+                   f"判读走 tools/ppo_report.py 的 P{r:02d}−R{r:02d} 同池配对；"
+                   f"单轮不晋升=分辨率限制，绝不放宽闸门 D")
+        ppo_why = f"r={r}≥{ppo_from}；已有 PPO ckpt={ppo_rounds or '无（本轮首次）'}"
+    else:
+        ppo_act = "未到首发轮次（PPO_FROM={}）".format(ppo_from)
+        ppo_why = f"r={r}（门槛 R{ppo_from}+）"
+    d.append(("④ PPO-lite", ppo_act, ppo_why))
     d.append(("⑤ 下一步训练", "驱动自动接续：标注 → 训练 → 闸门 A/C → 下一轮；零干预、"
               "不启第二驱动、不打断、不并发评估", "DEADLINE 为唯一硬约束"))
     for name, act, why in d:
