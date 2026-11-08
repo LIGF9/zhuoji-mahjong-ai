@@ -12,6 +12,10 @@
      与训练驱动完全解耦：early_stop 存在时**仍然生效**（这是离线评估，不是训练）。
      组合② 父进程曾三次随宿主会话边界被回收，故必须由本常驻进程以
      start_new_session=True 拉起，并严格防并发两片评估。
+  4. 独立旁证 E-SIDE（§6.67，探索性 120 seed / 新池 6_000_000）：**排队**，
+     仅在组合② combo2_done() 为真、且无评估 worker 时才拉起
+     tools/sideprobe_chunk.py。§6.64.5 严禁并发两片评估，6 workers 抢同一
+     MPS 队列会同时污染两片数据；收口后 main 满 480 行 + 报告段落盘即停。
 
 背景：Web/训练进程曾随会话边界被回收（nohup 也保不住），launchd 在本机
 不可用（bootstrap EIO）、crontab 被 TCC 拒绝 → 用受管长驻脚本 + 每小时
@@ -47,6 +51,16 @@ COMBO2_WLOG = ROOT / "runs/gates/combo2_watchdog.log"
 COMBO2_PID = ROOT / "runs/gates/combo2_chunk.pid"          # chunk 驱动自写
 COMBO2_REPORT = ROOT / "runs/gates/combo2_report_section.md"
 COMBO2_NEED_ROWS = 2000
+
+# ---- 独立旁证 E-SIDE（§6.67；用户 2026-11-09 00:13「按这个来」）--------------
+# 探索性、120 seed、新池 6_000_000；严格排队在组合② 之后，绝不并发。
+SIDEPROBE_CHUNK = ROOT / "tools/sideprobe_chunk.py"
+SIDEPROBE_MAIN = ROOT / "runs/gates/sideprobe_main.jsonl"      # 480 行 = 120 seed × 四座
+SIDEPROBE_LOG = ROOT / "runs/gates/sideprobe.log"
+SIDEPROBE_WLOG = ROOT / "runs/gates/sideprobe_watchdog.log"
+SIDEPROBE_PID = ROOT / "runs/gates/sideprobe_chunk.pid"
+SIDEPROBE_REPORT = ROOT / "runs/gates/sideprobe_report_section.md"
+SIDEPROBE_NEED_ROWS = 480
 
 
 def already_running() -> bool:
@@ -188,6 +202,59 @@ def combo2_guard() -> None:
     start_combo2()
 
 
+# ------------------------------------------------- 独立旁证 E-SIDE（§6.67）--
+def sideprobe_log_stale(minutes: float) -> bool:
+    try:
+        return time.time() - SIDEPROBE_LOG.stat().st_mtime > minutes * 60
+    except OSError:
+        return True
+
+
+def sideprobe_done() -> bool:
+    """完成判据：主汇总 480 行 + 探索性报告段已生成。"""
+    if not (SIDEPROBE_MAIN.exists() and SIDEPROBE_REPORT.exists()):
+        return False
+    try:
+        with open(SIDEPROBE_MAIN, encoding="utf-8") as f:
+            return sum(1 for line in f if line.strip()) >= SIDEPROBE_NEED_ROWS
+    except OSError:
+        return False
+
+
+def start_sideprobe() -> None:
+    with open(SIDEPROBE_WLOG, "a", encoding="utf-8") as out:
+        subprocess.Popen(
+            [PY, str(SIDEPROBE_CHUNK)],
+            cwd=str(ROOT), stdin=subprocess.DEVNULL,
+            stdout=out, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+
+def sideprobe_guard() -> None:
+    """独立旁证排队守卫：组合② 未收口 ⇒ 一律不动（§6.64.5 禁并发）。"""
+    if not combo2_done():
+        return                       # 组合② 仍在跑，严禁抢 6 workers / MPS 队列
+    if sideprobe_done():
+        return
+    ep = eval_pairs_alive()
+    if ep is True:
+        return                       # 仍有评估 worker（组合② 收尾或旁证孤儿）
+    if ep is None and not sideprobe_log_stale(20):
+        return                       # 探测不可用且日志新鲜 ⇒ 保守不动
+    if _pid_alive(SIDEPROBE_PID) and not sideprobe_log_stale(45):
+        return                       # 旁证父进程活着且有进展
+    if _pid_alive(SIDEPROBE_PID):
+        try:
+            os.kill(int(SIDEPROBE_PID.read_text().strip()), 15)
+            log("独立旁证 chunk 父进程疑似卡死（>45min 无日志）→ 终止后重拉")
+            time.sleep(2)
+        except (OSError, ValueError):
+            pass
+    log("组合② 已收口 → 拉起独立旁证 sideprobe_chunk.py（§6.67 探索性，幂等续跑）")
+    start_sideprobe()
+
+
 def main() -> int:
     global WEB_OK, DRV_OK
     if already_running():
@@ -231,6 +298,8 @@ def main() -> int:
 
         # 组合② 终评评估兜底（与训练驱动解耦；early_stop 存在时仍生效）
         combo2_guard()
+        # 独立旁证 E-SIDE：仅在组合② 收口后排队启动，绝不并发（§6.64.5）
+        sideprobe_guard()
 
         time.sleep(30)
 
