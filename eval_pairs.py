@@ -192,6 +192,8 @@ def main():
     ap.add_argument("--b-n-det", type=int, default=0, help="基线侧覆盖（0=跟随 --n-det）")
     ap.add_argument("--device", default="mps")
     ap.add_argument("--out", default=str(ROOT / "runs/gate.jsonl"))
+    ap.add_argument("--no-truncate", action="store_true",
+                    help="不清空 --out，追加写（分块续跑用；调用方须按 (seed,cand_seat) 去重）")
     args = ap.parse_args()
 
     seats = tuple(int(x) for x in args.seats.split(",") if x != "")
@@ -201,7 +203,8 @@ def main():
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("")                       # 清空旧结果
+    if not args.no_truncate:
+        out.write_text("")                   # 清空旧结果（分块续跑传 --no-truncate 跳过）
     per = (args.seeds + args.workers - 1) // args.workers
     import multiprocessing as mp
     ps = []
