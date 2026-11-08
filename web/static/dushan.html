@@ -5710,14 +5710,25 @@ function isChampionValue(v) {
   return parts.length === 2 && ["model", "search32", "search128"].includes(parts[0])
       && CHAMP_STEM_RE.test(parts[1]);
 }
+/* 2026-11-08 用户反馈「可选模型太多」：注册表已涨到 5 个冠军 × 2 档 = 10 项，
+   和 3 个常用档混在一个平铺列表里。这里不删任何模型（「只增不替」口径不变），
+   只按用途分组：主列表恒为 3 个常用档；注册表按终评强度降序，第一条
+   （终评最强）进「终评最强」组，其余历史冠军进「历史冠军（实验）」组。
+   同时去掉 label 括号里的评估说明，缩短每一行的视觉长度。 */
+const CHAMP_GROUP_BEST = "终评最强（附加冠军）";
+const CHAMP_GROUP_OLD  = "历史冠军（实验）";
 function registerChampionOptions() {
   const list = (META && META.models) || [];
-  list.filter(m => m && m.champion && m.stem).forEach(m => {
-    const name = m.label || m.stem;
+  const champs = list.filter(m => m && m.champion && m.stem);
+  champs.forEach((m, i) => {
+    const raw = m.label || m.stem;
+    const name = raw.replace(/（[^）]*）/g, "").trim() || m.stem;
+    const group = i === 0 ? CHAMP_GROUP_BEST : CHAMP_GROUP_OLD;
     [["model", "🤖", "（贪心）"], ["search128", "⚡", " · 极算128"]].forEach(([kind, icon, tail]) => {
       const v = `${kind}:${m.stem}`;
       if (OPP_ALLOWED.includes(v)) return;
-      OPP_OPTIONS.push({ v, label: `${icon} ${name}${tail}`, champion: true, stem: m.stem });
+      OPP_OPTIONS.push({ v, label: `${icon} ${name}${tail}`, champion: true,
+                         stem: m.stem, group });
       OPP_ALLOWED.push(v);
     });
   });
@@ -5773,7 +5784,18 @@ function oppLabel(o) {
   }
   return o.label;
 }
-const OPP_HTML = () => OPP_OPTIONS.map(o => `<option value="${o.v}">${oppLabel(o)}</option>`).join("");
+/* 2026-11-08：下拉分组渲染。主列表只有 3 个常用档，附加冠军按
+   「终评最强 / 历史（实验）」收进 optgroup；optgroup 里的 option 与平铺
+   option 一样可被 select.value 选中，存量 localStorage 配置零影响。 */
+const OPP_HTML = () => {
+  const opt = o => `<option value="${o.v}">${oppLabel(o)}</option>`;
+  const main = OPP_OPTIONS.filter(o => !o.champion).map(opt).join("");
+  const groups = [CHAMP_GROUP_BEST, CHAMP_GROUP_OLD].map(g => {
+    const rows = OPP_OPTIONS.filter(o => o.champion && o.group === g);
+    return rows.length ? `<optgroup label="${g}">${rows.map(opt).join("")}</optgroup>` : "";
+  }).join("");
+  return main + groups;
+};
 /* 开局页三家对手的下拉：选项表 + 从 SET.oppModels 恢复选中值。
    改名/换模型统一走 setOppModel，它会同时刷新设置页那份与名字里的版本缩写。 */
 function fillOppSelects() {

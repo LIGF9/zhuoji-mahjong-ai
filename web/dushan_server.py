@@ -1111,6 +1111,9 @@ class Session:
         self.hint_used = False
         self.dealer = self.rng.randrange(4)   # 2026-11-08: 随机庄家，不再恒 0
         self.dealer_streak = 0
+        # 一个会话内 my_seat 恒定：前端按 (p - my_seat) % 4 排方位，cum/stats/names
+        # 按绝对座位累加，中途换座位会让分数与身份错位。跨会话随机一次即可让
+        # 四座均匀采样（离线评估另有独立的四座旋转协议，不复用线上 Session）。
         self.my_seat = my_seat if my_seat is not None else self.rng.randrange(4)
         self.stop = False
         self.error: str | None = None
@@ -1344,9 +1347,13 @@ class Session:
             else:
                 self.dealer_streak = 0
             self.dealer = int(game.next_dealer)   # 2026-11-08: 从 game 属性读，修恒 0 bug
-            # 2026-11-08 四座轮转：每手结束后 my_seat 顺时针 +1（mod 4），
-            # 让四家在连续局中均匀占据各绝对座位，消除座位/庄家结构性偏差。
-            self.my_seat = (self.my_seat + 1) % 4
+            # 2026-11-08 15:5x：撤销「每手 my_seat +1」的线上四座轮转（e6652a8）。
+            # 根因复盘：cum / stats / names 全部按**绝对座位**累加，只转 my_seat
+            # 会让「我」的累计分指到别人的座位、结算亮牌与名字跟着错位 ——
+            # 用户反馈「每局结束牌和分数旋转位置」即此。四座旋转属于**离线冻结
+            # 评估**协议（跨 seed 消除座位偏差），不该套在同一个线上会话里：
+            # 线上是同一批人连打多手、累计分跟随人，视角与分数必须稳定。
+            # 跨会话的座位均匀性已由 __init__ 的 rng.randrange(4) 初始 my_seat 保证。
         self._publish(game)
         if self.on_hand_end is not None:
             try:
