@@ -644,6 +644,18 @@ button.icononly svg { width: 16px; height: 16px; display: block; }
 #coach h3 { font-size: 15px; color: var(--gold); font-weight: normal; margin-bottom: 8px;
   cursor: move; touch-action: none; user-select: none; display: flex; justify-content: space-between; align-items: baseline; }
 #coach h3 .drag-hint { font-size: 11px; color: #7d8a74; letter-spacing: 0; }
+/* 2026-11-09：标题行的「本次建议是否来自所选模型」核验标记。
+   绿勾 = 真实前向权重与所选一致；红叉 = 不一致（含搜索档固定用主力权重）。*/
+#coach h3 .hd-left { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+#coach h3 .verify { flex: 0 0 auto; margin-left: auto; font-size: 12px; font-weight: 700;
+  line-height: 1.4; padding: 1px 8px; border-radius: 10px; letter-spacing: 0;
+  user-select: none; cursor: help; }
+#coach h3 .verify.ok { color: #7fe3b0; background: rgba(23,176,131,.18);
+  border: 1px solid rgba(23,176,131,.5); }
+#coach h3 .verify.bad { color: #ff8a78; background: rgba(232,120,90,.18);
+  border: 1px solid rgba(232,120,90,.55); }
+#coach h3 .verify.unknown { color: #b9c9ae; background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.22); }
 #coach.dragging { opacity: .92; box-shadow: 0 10px 30px rgba(0,0,0,.55); }
 #coach .val { font-size: 12px; color: #b9c9ae; margin-bottom: 8px; }
 #coach .src { font-size: 12px; color: #9fb8a8; margin-top: 3px; }
@@ -3555,7 +3567,7 @@ html.mob .scoregrid input { width: 42px; }
   <div id="actions"></div>
 
   <div id="coach">
-    <h3 id="coach-hd" title="点住面板任意空白处拖动；拖右下角可调整大小"><img class="hd-ji" src="/assets/tiles/1条.png" alt="幺鸡">大师建议 · 牌技讲解</h3>
+    <h3 id="coach-hd" title="点住面板任意空白处拖动；拖右下角可调整大小"><span class="hd-left"><img class="hd-ji" src="/assets/tiles/1条.png" alt="幺鸡">大师建议 · 牌技讲解</span><span class="verify unknown" id="coach-verify" title="本次建议的来源尚未核验">?</span></h3>
     <div class="val" id="coach-val"></div>
     <div class="src" id="coach-src" style="display:none"></div>
     <div class="situation" id="coach-sit" style="display:none"></div>
@@ -7001,11 +7013,29 @@ function syncCoachPanel(idleMsg) {
   if (coachTurnOn()) showCoach(idleMsg || "轮到你会自动给出建议");
   else hideCoach();
 }
+/* 2026-11-09 用户口径：面板标题行显示「本次建议是否来自所选模型」。
+   ok=true 绿勾 ✓ / false 红叉 ✗ / null 中性 ?（等待中或没拿到结果）。 */
+function setCoachVerify(ok, detail) {
+  const v = el("coach-verify");
+  if (!v) return;
+  const tail = detail ? `（${detail}）` : "";
+  if (ok === true) {
+    v.className = "verify ok"; v.textContent = "✓";
+    v.title = "✓ 本次建议来自所选模型" + tail;
+  } else if (ok === false) {
+    v.className = "verify bad"; v.textContent = "✗";
+    v.title = "✗ 本次建议不是来自所选模型" + tail;
+  } else {
+    v.className = "verify unknown"; v.textContent = "?";
+    v.title = "本次建议的来源尚未核验（等待推荐结果）";
+  }
+}
 /* 无建议时的占位内容 */
 function coachIdle(msg) {
   const vEl = el("coach-val");
   vEl.style.display = "block";
   vEl.textContent = msg || "";
+  setCoachVerify(null);
   const srcEl = el("coach-src");
   if (srcEl) srcEl.style.display = "none";
   el("coach-sit").style.display = "none";
@@ -7029,20 +7059,34 @@ function strategyLabel(modelStr) {
 function stratShort(modelStr) {
   return String(strategyLabel(modelStr)).replace(/（[^）]*）/g, "").trim();
 }
-/* 策略来源核对：本次建议是否真来自「我」选定的策略。
-   kind 必须完全一致（深算 / 简算 是不同档位，混用就是事故）；
-   stem 宽松匹配（选 master 时后端解析成 dushan_master 算一致）。
-   文案（2026-11-01 用户口径）：只显示「来自 xxx」，不堆延迟与对勾；
-   只有真的不一致时才给警告文案——那是事故，必须让用户看见。 */
+/* 策略来源核对：本次建议是否真来自「我」选定的模型。
+   2026-11-09：后端新增 src / src_ok，给出**实际参与前向的权重**。此前只比
+   model 字段（那只是请求回显），实测搜索档无论选哪个冠军，Q 值都由冻结
+   主力的 ORT 会话算出，面板却显示「来自：极算·128」——属于假绿勾。
+   现在优先采信 src_ok；旧服务端（无该字段）退回 model 粗判并标注未核验。 */
 function hintSourceNote(r) {
   const got = String(r.model || "");
-  const [gotKind, gotStem = ""] = got.split(":");
   const want = String(SET.strategy || "");
+  const src = r.src || {};
+  if (typeof r.src_ok === "boolean") {
+    const detail = `实际权重 ${src.stem || got} · ${src.engine || "未知通道"}` +
+                   (src.enc != null ? ` · enc${src.enc}` : "");
+    if (r.src_ok) return { ok: true, html: `来自：${strategyLabel(got)}`, detail };
+    return { ok: false, detail,
+      html: `⚠️ 本次建议实际由「${src.stem || "未知权重"}」计算，不是所选的` +
+            `「${strategyLabel(want)}」；所选模型未参与本次出牌排序。` +
+            `（${src.engine === "rust-ort" ? "搜索通道固定使用该权重" : src.engine || "未知通道"}）` };
+  }
+  // 旧服务端兜底：贪心档的 model 是裸 stem（无 "model:" 前缀），别误判成错档位。
+  const bare = !got.includes(":");
+  const gotKind = bare ? "model" : got.split(":")[0];
+  const gotStem = bare ? got : got.slice(got.indexOf(":") + 1);
   const [wantKind, wantStem = ""] = want.split(":");
   const kindOk = gotKind === wantKind;
   const stemOk = !wantStem || gotStem.includes(wantStem) || wantStem.includes(gotStem);
-  if (kindOk && stemOk) return { ok: true, html: `来自：${strategyLabel(got)}` };
-  return { ok: false,
+  const detail = "旧服务端 · 来源未核验";
+  if (kindOk && stemOk) return { ok: true, html: `来自：${strategyLabel(got)}`, detail };
+  return { ok: false, detail,
     html: `⚠️ 建议来自「${strategyLabel(got)}」，不是所选的「${strategyLabel(want)}」` +
       `（请到 设置 → 大师建议 → 推荐策略 重选并保存）` };
 }
@@ -7058,18 +7102,19 @@ function paintCoach(r) {
     vEl.style.display = "none";
     vEl.textContent = "";
   }
-  // 策略来源行（2026-11-03 用户口径）：「来自 xxx」整体删除；
-  // 仅当建议真来自错档位（事故）时才亮警告
+  // 2026-11-09 用户口径：标题行恒显示来源核验标记（绿勾 ✓ / 红叉 ✗）；
+  // 原因行只在红叉时出现。旧服务端没有 src_ok ⇒ 中性「?」，不放假绿勾。
   const srcEl = el("coach-src");
   if (r.model) {
     const note = hintSourceNote(r);
+    setCoachVerify(typeof r.src_ok === "boolean" ? note.ok : null, note.detail);
     if (note.ok) srcEl.style.display = "none";
     else {
       srcEl.style.display = "block";
       srcEl.className = "src bad";
       srcEl.textContent = note.html;
     }
-  } else srcEl.style.display = "none";
+  } else { srcEl.style.display = "none"; setCoachVerify(null); }
   // 局面速览
   const sit = r.situation || {};
   const sitBits = [];

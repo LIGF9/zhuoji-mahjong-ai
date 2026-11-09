@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -579,6 +580,41 @@ def search_device() -> str:
     except Exception:  # noqa: BLE001 - 没装 ORT 就退回 torch
         pass
     return "mps" if torch.backends.mps.is_available() else "cpu"
+
+
+# ---------------------------------------------------------------------------
+# 2026-11-09 线上推荐「来源核验」
+# ---------------------------------------------------------------------------
+# Rust 搜索的前向后端由 zhuoji.forward.ensure_onnx 决定权重文件。历史实现里
+# get_model() 没有给 net 设置 onnx_stem，ensure_onnx 因此回落到 "adhoc" 别名；
+# 而 models/onnx/adhoc.onnx 与 dushan_master.onnx 逐位相同 ⇒ 无论前端选哪个
+# 冠军，搜索档（search32/search128）的 Q 值实际都由冻结主力算出，可 /api/hint
+# 的 model 字段仍按请求回显所选 stem，面板显示「来自：极算·128」会误导用户。
+# 这里把「实际参与前向的权重」查出来下发，供面板标题行显示 ✓ / ✗。
+# 只做核验与展示，不改变任何推理口径（不改 n_det/ply/topk/ff_cap/device）。
+_ONNX_ID_CACHE: dict[tuple[str, int], str] = {}
+
+
+def onnx_weight_identity(net) -> str:
+    """返回 ORT 会话实际加载的权重 stem（"adhoc" 解析成逐位相同的正式权重）。"""
+    from zhuoji.forward import ONNX_DIR, ensure_onnx  # noqa: PLC0415
+
+    path = Path(ensure_onnx(net, stem=getattr(net, "onnx_stem", None)))
+    key = (str(path), int(path.stat().st_mtime))
+    if key in _ONNX_ID_CACHE:
+        return _ONNX_ID_CACHE[key]
+    name = path.stem
+    if name == "adhoc":                       # 历史别名：按内容找它的正式名字
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        size = path.stat().st_size
+        for other in sorted(ONNX_DIR.glob("*.onnx")):
+            if other == path or other.stem == "adhoc" or other.stat().st_size != size:
+                continue                          # 大小不同必非同一份，省掉大文件 IO
+            if hashlib.sha256(other.read_bytes()).hexdigest() == digest:
+                name = other.stem
+                break
+    _ONNX_ID_CACHE[key] = name
+    return name
 
 
 def warm_ort_backend(stem: str | None = None) -> None:
@@ -1717,6 +1753,8 @@ class Session:
                 bot = HeuristicBot(seed=0, weights=TEACHER_STYLES[style])
                 a = bot.choose(game)
                 return {"ok": True, "model": f"teacher:{style}", "head": "teacher", "value": 0.0,
+                        "src": {"stem": f"teacher:{style}", "engine": "heuristic"},
+                        "src_ok": True,
                         "items": [self._hint_item(game, a, 1.0, my)],
                         "situation": coach.situation_summary(game, my),
                         "tip": "",
@@ -1725,6 +1763,8 @@ class Session:
             if strategy == "random":
                 a = RandomBot(seed=0).choose(game)
                 return {"ok": True, "model": "random", "head": "random", "value": 0.0,
+                        "src": {"stem": "random", "engine": "heuristic"},
+                        "src_ok": True,
                         "items": [self._hint_item(game, a, 1.0, my)],
                         "situation": coach.situation_summary(game, my),
                         "tip": "",
@@ -1752,7 +1792,7 @@ class Session:
                 # 池子不可用时回落进程内批量搜索，结果同源同口径。
                 # 2026-11-02：三档全部走 Rust 内核（模拟/编码/克隆在 Rust，
                 # 前向走 ORT-CoreML）。Python 进程池退为异常兜底。
-                exp_items, v_now = self._search_explain(
+                exp_items, v_now, src = self._search_explain(
                     game, my, stem, ply=ply, n_det=n_det, engine="rust",
                     view=view)
                 ranked = [(it["action"], it["q"]) for it in exp_items]
@@ -1791,6 +1831,7 @@ class Session:
                 return {"ok": True, "model": f"{_tag}:{stem}",
                         "head": "search", "value": round(float(v_now), 3),
                         "n_det": n_det, "ply": ply,
+                        "src": src, "src_ok": bool(src.get("stem") == stem),
                         "items": items, "situation": situation, "tip": tip,
                         "note": _desc
                                 + "；理由只依据公开信息（自己手牌/四家弃牌副露/已现张数/鸡种），"
@@ -1820,6 +1861,9 @@ class Session:
                 tip = ""
             return {"ok": True, "model": stem, "head": head,
                     "value": round(float(value), 3), "items": items,
+                    "src": {"stem": stem, "engine": "torch",
+                            "enc": int(getattr(entry["net"], "encoder_version", 1))},
+                    "src_ok": True,
                     "situation": situation, "tip": tip,
                     "note": "value 是模型对该局面（你的视角）的估值，正数偏有利"}
         except Exception as exc:
@@ -1867,7 +1911,20 @@ class Session:
         with self.search_lock:
             q, qs, diag = ag.rank_detail(game)
         items = explain_items(view, legal, q, qs, diag, 4)
-        return items, self._value_now(game, stem)
+        # rank_detail 未传 enc ⇒ Rust 内核恒用 v1 编码（15/70）；ORT 会话的权重
+        # 由 ensure_onnx 决定（见 onnx_weight_identity）。两者都如实上报。
+        src = {"stem": onnx_weight_identity(entry["net"]),
+               "engine": "rust-ort", "enc": 1}
+        return items, self._value_now(game, stem), src
+
+    @staticmethod
+    def _src_python(stem: str, engine: str) -> dict:
+        """Python 回落路径：按 stem 加载权重，编码随权重走（与 ORT 路径不同）。"""
+        try:
+            enc = int(getattr(get_model(stem)["net"], "encoder_version", 1))
+        except Exception:  # noqa: BLE001
+            enc = 1
+        return {"stem": stem, "engine": engine, "enc": enc}
 
     def _search_explain(self, game: DushanGame, my: int, stem: str,
                         ply: int = 3, n_det: int = 32, engine: str = "py",
@@ -1903,11 +1960,13 @@ class Session:
             if res is not None and res.get("labels") == [a.label() for a in legal]:
                 items = explain_items(view, legal, res["q"], res["qs"],
                                       res["diags"], 4)
-                return items, self._value_now(game, stem)
+                return (items, self._value_now(game, stem),
+                        self._src_python(stem, "python-pool"))
         ag = self._search_agent(stem, ply=ply, topk=topk, n_det=n_det)
         # 进程内兜底：rank_explain 内部会自行构造 PublicView，口径一致
         with self.search_lock:
-            return ag.rank_explain(game, 4)
+            items, value = ag.rank_explain(game, 4)
+        return items, value, self._src_python(stem, "python-inline")
 
     def _hint_item(self, game: DushanGame, a: Action, prob: float,
                    my_seat: int | None = None) -> dict:
