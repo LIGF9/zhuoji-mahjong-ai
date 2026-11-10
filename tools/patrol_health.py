@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""训练/评测进度健康度巡检（**只读**，零干扰）。
+"""训练/评测进度健康度巡检（**只读**，零干扰；任务级自动起止）。
 
 为什么另写一个
 --------------
@@ -8,7 +8,25 @@
 `[metrics]` 行，判据围绕 kl/clipfrac/ent/gnorm。ExIt 与蒸馏链路（`train_exit.py`、
 `tools/distill_slim.py`）以及闸门评测（`eval_pairs.py`）根本不打 `[metrics]`，
 在那张表里是空的。本工具补的是**任务级**健康度：还在不在跑、有没有在推进、
-val 是不是在退化、有没有静默挂掉。
+val 是不是在退化、有没有静默挂掉、**是不是已经跑完了**。
+
+任务的自动起止（2026-11-10 晚）
+------------------------------
+此前任务清单是硬编码的——新开一个评测要改代码，跑完的旧任务永远挂在表里。
+现在改成两级：
+
+1. **登记表** `runs/patrol/jobs.json`：`--register` 一条命令登记（也可手工编辑）；
+2. **自动发现**：巡检时 `pgrep -fl` 扫已知脚本，从进程命令行解析
+   `--out` / `--log` / `--seeds` / `--epochs`，自动补登记（已有登记则跳过）。
+
+**自动结束判定**（不再依赖人去认"跑完没有"）三判据取或：
+  日志收口标记（`[summary]`/`[early-stop]`/`[wN] done`）· 进度跑满 · 产物文件存在
+进程已退出 + 任一判据 → `ended`（写 `ended_at`，此后不再参与 RED/YELLOW 判定）；
+进程已退出 + 无判据 → 第一次记 `ending`（YELLOW，可能刚好在写盘），
+连续第二次仍无 → `failed`（RED）。
+
+**全部任务结束即收工**：所有非常驻任务都 `ended`/`failed` 时，输出
+`session_done: true`，退出码 **3**，自动化据此暂停自己——不再每小时空转。
 
 三类任务各自认什么
 ------------------
@@ -21,9 +39,9 @@ val 是不是在退化、有没有静默挂掉。
 这些阈值只用于"要不要叫人看一眼"，**绝不参与任何闸门判定**，也不改任何 `δ`/池/seed：
 
 * **RED**：进程活着但连续 2 次巡检进度不动；日志出现 Traceback/Killed/OOM；
-  磁盘可用 < 5 GiB；val 连续 3 轮上升（价值头退化）。
+  磁盘可用 < 5 GiB；val 连续 3 轮上升（价值头退化）；任务 `failed`。
 * **YELLOW**：日志静默超过该任务的 `stall_sec`；负载 > 核数×1.5；
-  进程已退出但没有收口标记（`[done]`/`[early-stop]`/`[w*] done`）。
+  进程已退出但还没有收口证据（`ending`，等下一次确认）。
 * **GREEN**：其余。
 * **IDLE**：没有任何存活任务，也没有 2 小时内的日志（无事可做 ≠ 异常）。
 
@@ -34,11 +52,16 @@ val 是不是在退化、有没有静默挂掉。
 
 用法::
 
-    .venv/bin/python tools/patrol_health.py            # 人读表 + 结论
-    .venv/bin/python tools/patrol_health.py --json     # 机器读（自动化用）
-    .venv/bin/python tools/patrol_health.py --no-write # 只看，不写历史
+    .venv/bin/python tools/patrol_health.py                 # 人读表 + 结论
+    .venv/bin/python tools/patrol_health.py --json          # 机器读（自动化用）
+    .venv/bin/python tools/patrol_health.py --no-write      # 只看，不写历史
+    .venv/bin/python tools/patrol_health.py --list          # 看登记表
+    .venv/bin/python tools/patrol_health.py --register \\
+        --name "M1 评测" --kind eval --log runs/gates/x.log \\
+        --proc eval_pairs.py --expect 60 --artifact runs/gates/x.jsonl
 
 历史落在 ``runs/patrol/health.jsonl``，每行一次巡检；差分只取上一条，不回溯。
+登记表落在 ``runs/patrol/jobs.json``。
 """
 from __future__ import annotations
 
@@ -55,6 +78,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HIST = ROOT / "runs" / "patrol" / "health.jsonl"
+REGISTRY = ROOT / "runs" / "patrol" / "jobs.json"
 
 # ---- 巡检阈值（非预登记判据；改这里不影响任何闸门） ----
 DISK_MIN_GB = 5.0
@@ -73,6 +97,16 @@ BEST_RE = re.compile(r"best val\s+([\d.]+)")
 DONE_MARKS = ("[done]", "[early-stop]", "[summary]", "] done ", "[w0] done",
               "ALL PASS", "HAS FAIL")
 
+# 自动发现：脚本名 → (kind, 默认日志, 是否常驻)。命令行里有 --out/--log 时以命令行为准。
+AUTO_DISCOVER = {
+    "distill_slim.py": ("epoch", "runs/slim_s.log", False),
+    "train_exit.py": ("epoch", "runs/night_logs/exit_latest.log", False),
+    "train_ppo.py": ("epoch", "runs/night_logs/ppo_latest.log", False),
+    "eval_pairs.py": ("eval", "", False),
+    "export_onnx_cache.py": ("generic", "", False),
+    "dushan_server.py": ("generic", "", True),      # 常驻服务，不阻断收工
+}
+
 
 @dataclass
 class Job:
@@ -82,6 +116,8 @@ class Job:
     log: Path | None
     expect: int = 0                 # epoch 任务=预期轮数；eval=每 worker 总片数
     stall_sec: int = 900
+    artifact: Path | None = None    # 产物（.pt / .jsonl）；存在即强收口证据
+    persistent: bool = False        # 常驻任务（服务），不参与"全部结束"判定
     alive: bool = False
     # 解析结果
     epoch: int = 0
@@ -95,18 +131,37 @@ class Job:
     last_line: str = ""
     age: float = float("inf")       # 日志静默秒数
     finished: bool = False
+    artifact_ok: bool = False
     errors: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # 生命周期（由巡检写入登记表）
+    status: str = "running"         # running | ending | ended | failed | persistent
+    started: str = ""
+    ended: str = ""
+
+    def label(self) -> str:
+        return self.name or self.proc_pat
+
+
+def pgrep_lines(pat: str) -> list[str]:
+    """`pgrep -fl` 的行（pid + cmdline）。沙箱没有 ps，这是唯一能拿到命令行的路子。"""
+    try:
+        r = subprocess.run(["pgrep", "-fl", pat], capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    out = []
+    for ln in r.stdout.splitlines():
+        head = ln.split(None, 1)
+        if not head or not head[0].isdigit():
+            continue
+        if int(head[0]) == os.getpid():     # 别把自己算进去
+            continue
+        out.append(ln)
+    return out
 
 
 def pgrep_alive(pat: str) -> bool:
-    try:
-        r = subprocess.run(["pgrep", "-f", pat], capture_output=True, text=True)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    # 排除把自己也算进去的情况：pgrep -f 会匹配到本进程的 argv
-    pids = [p for p in r.stdout.split() if p.isdigit() and int(p) != os.getpid()]
-    return bool(pids)
+    return bool(pgrep_lines(pat))
 
 
 def read_tail(path: Path, limit: int = 400) -> list[str]:
@@ -117,8 +172,147 @@ def read_tail(path: Path, limit: int = 400) -> list[str]:
         return []
 
 
+def _arg(cmd: str, flag: str) -> str:
+    m = re.search(rf"{re.escape(flag)}[=\s]+(\S+)", cmd)
+    return m.group(1).strip("'\"") if m else ""
+
+
+def discover() -> list[Job]:
+    """扫已知脚本的存活进程，从命令行补出日志 / 产物 / 规模。"""
+    out: list[Job] = []
+    seen: set[str] = set()
+    for script, (kind, dlog, persistent) in AUTO_DISCOVER.items():
+        for ln in pgrep_lines(script):
+            cmd = ln.split(None, 1)[1] if " " in ln else ""
+            out_p = _arg(cmd, "--out")
+            log_p = _arg(cmd, "--log")
+            if not log_p:
+                log_p = (out_p.rsplit(".", 1)[0] + ".log") if out_p else dlog
+            if not log_p:
+                if not persistent:
+                    continue    # eval_pairs 没 --out 的进程无法定位日志，跳过
+                out.append(Job(name=script.replace(".py", ""), kind=kind,
+                               proc_pat=script, log=None, persistent=True))
+                continue
+            log = Path(log_p) if Path(log_p).is_absolute() else ROOT / log_p
+            if not log.exists():
+                continue
+            name = log.stem
+            if name in seen:
+                continue
+            seen.add(name)
+            expect = 0
+            if kind == "epoch":
+                expect = int(_arg(cmd, "--epochs") or 0)
+            elif kind == "eval":
+                expect = int(_arg(cmd, "--seeds") or 60)
+            art = None
+            if out_p:
+                ap = Path(out_p) if Path(out_p).is_absolute() else ROOT / out_p
+                art = ap if kind != "eval" else ap
+            out.append(Job(name=name, kind=kind, proc_pat=script, log=log,
+                           expect=expect, artifact=art,
+                           stall_sec=900 if kind == "epoch" else 3600,
+                           persistent=persistent))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 登记表
+# ---------------------------------------------------------------------------
+def load_registry() -> list[dict]:
+    try:
+        data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        rows = data.get("jobs", []) if isinstance(data, dict) else []
+        return [r for r in rows if isinstance(r, dict) and r.get("name")]
+    except (OSError, ValueError):
+        return []
+
+
+def save_registry(rows: list[dict]) -> None:
+    REGISTRY.parent.mkdir(parents=True, exist_ok=True)
+    REGISTRY.write_text(
+        json.dumps({"_note": "巡检任务登记表（由 tools/patrol_health.py 维护）",
+                    "jobs": rows}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8")
+
+
+def _p(v) -> Path | None:
+    if not v:
+        return None
+    p = Path(str(v))
+    return p if p.is_absolute() else ROOT / p
+
+
+def from_row(row: dict) -> Job:
+    return Job(name=str(row["name"]), kind=str(row.get("kind") or "generic"),
+               proc_pat=str(row.get("proc_pat") or ""),
+               log=_p(row.get("log")),
+               expect=int(row.get("expect") or 0),
+               stall_sec=int(row.get("stall_sec") or 900),
+               artifact=_p(row.get("artifact")),
+               persistent=bool(row.get("persistent")),
+               status=str(row.get("status") or "running"),
+               started=str(row.get("started") or ""),
+               ended=str(row.get("ended") or ""))
+
+
+def merge_registry(dry: bool = False) -> list[Job]:
+    """登记表 + 自动发现（同名以登记表为准：人写的 expect/artifact 更可信）。"""
+    rows = load_registry()
+    jobs = [from_row(r) for r in rows]
+    have = {j.name for j in jobs}
+    added = 0
+    for j in discover():
+        if j.name in have:
+            continue
+        # 自动发现的任务补进登记表，保证下次巡检仍认它（进程退出后日志还在）
+        rows.append({"name": j.name, "kind": j.kind, "proc_pat": j.proc_pat,
+                     "log": str(j.log.relative_to(ROOT)) if j.log else "",
+                     "expect": j.expect,
+                     "artifact": (str(j.artifact.relative_to(ROOT))
+                                  if j.artifact else ""),
+                     "stall_sec": j.stall_sec, "persistent": j.persistent,
+                     "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                     "status": "running", "ended": ""})
+        jobs.append(j)
+        have.add(j.name)
+        added += 1
+    if added and not dry:
+        save_registry(rows)
+        print(f"[patrol] 自动登记 {added} 个新任务", file=sys.stderr)
+    return jobs
+
+
+def sync_registry(jobs: list[Job]) -> None:
+    """把巡检算出的 status/ended 写回登记表（只改生命周期字段）。"""
+    rows = load_registry()
+    by = {str(r["name"]): r for r in rows}
+    for j in jobs:
+        r = by.get(j.name)
+        if r is None:
+            rows.append({"name": j.name, "kind": j.kind, "proc_pat": j.proc_pat,
+                         "log": str(j.log.relative_to(ROOT)) if j.log else "",
+                         "expect": j.expect,
+                         "artifact": (str(j.artifact.relative_to(ROOT))
+                                      if j.artifact else ""),
+                         "stall_sec": j.stall_sec, "persistent": j.persistent,
+                         "started": j.started or time.strftime("%Y-%m-%dT%H:%M:%S")})
+            r = rows[-1]
+        r["status"] = j.status
+        r["ended"] = j.ended
+        if j.started and not r.get("started"):
+            r["started"] = j.started
+    save_registry(rows)
+
+
+# ---------------------------------------------------------------------------
+# 采集
+# ---------------------------------------------------------------------------
 def fill(job: Job) -> Job:
-    job.alive = pgrep_alive(job.proc_pat)
+    job.alive = pgrep_alive(job.proc_pat) if job.proc_pat else False
+    if job.artifact is not None and job.artifact.exists():
+        job.artifact_ok = True
     if job.log is None:
         return job          # generic 任务（如线上服务）只判存活，不看日志
     if not job.log.exists():
@@ -156,25 +350,23 @@ def fill(job: Job) -> Job:
     if job.kind == "eval" and job.prog_total:
         if job.prog >= job.prog_total * max(1, len(job.workers)):
             job.finished = True
+    if job.kind == "epoch" and job.expect and job.epoch >= job.expect:
+        job.finished = True
     return job
 
 
-def job_specs() -> list[Job]:
-    """当前链路的任务清单（新增训练脚本时在这里登记即可）。"""
-    runs = ROOT / "runs"
-    specs = [
-        Job(name="E-SLIM 蒸馏", kind="epoch", proc_pat="distill_slim.py",
-            log=runs / "slim_s.log", expect=16, stall_sec=900),
-        Job(name="闸门 A 评测", kind="eval", proc_pat="eval_pairs.py",
-            log=runs / "gates" / "slim_gateA.log", expect=60, stall_sec=3600),
-        Job(name="ExIt 训练", kind="epoch", proc_pat="train_exit.py",
-            log=runs / "night_logs" / "exit_latest.log", expect=0, stall_sec=1800),
-        Job(name="PPO 加速轮", kind="epoch", proc_pat="train_ppo.py",
-            log=runs / "night_logs" / "ppo_latest.log", expect=0, stall_sec=1800),
-        Job(name="线上服务", kind="generic", proc_pat="dushan_server",
-            log=None, stall_sec=0),
-    ]
-    return specs
+def lifecycle(job: Job) -> str:
+    """自动判定任务状态（running / ending / ended / failed / persistent）。"""
+    if job.persistent:
+        return "persistent"
+    if job.alive:
+        return "running"
+    # 进程已退出：三判据取或
+    if job.finished or job.artifact_ok:
+        return "ended"
+    if job.status == "ending":      # 上一次已经"无证据退出"过一次 → 判定失败
+        return "failed"
+    return "ending"
 
 
 def load_hist() -> dict | None:
@@ -189,7 +381,7 @@ def load_hist() -> dict | None:
     return None
 
 
-def judge(jobs: list[Job], prev: dict | None) -> tuple[str, list[str], list[str]]:
+def judge(jobs: list[Job], prev: dict | None) -> tuple[str, list[str], list[str], list[str]]:
     red: list[str] = []
     yel: list[str] = []
     notes: list[str] = []
@@ -213,12 +405,30 @@ def judge(jobs: list[Job], prev: dict | None) -> tuple[str, list[str], list[str]
         pass
 
     for j in jobs:
+        if j.status in ("ended", "failed"):
+            # 已定案的任务不再重复告警；failed 只在"首次变 failed"那次报，
+            # 之后降为备注（否则一条中断会让巡检永远 RED，掩盖新问题）。
+            if j.status == "failed":
+                was = ((prev or {}).get("jobs", {}).get(j.name, {}) or {}).get("status")
+                if was != "failed":
+                    red.append(f"{j.name}：进程退出且无任何收口证据（日志无收口标记、"
+                               "产物不存在）⇒ 判定中断，需人工确认")
+                else:
+                    notes.append(f"{j.name}：已判中断（沿用上次结论）")
+            continue
         if j.errors:
             red.append(f"{j.name}：日志出现异常行 → {j.errors[0]}")
-        if not (j.alive or j.age <= RECENT_SEC):
+        if j.status == "ending":
+            yel.append(f"{j.name}：进程已退出但还没有收口证据（日志静默 "
+                       f"{j.age/60:.0f} min）⇒ 可能刚好在写盘；下次巡检仍无证据则判中断")
+            continue
+        if not j.alive and j.age > RECENT_SEC:
             continue
         if j.alive and not j.finished:
-            # 与上一次巡检比进度：连续不动 = 疑似卡死
+            # 与上一次巡检比进度：连续不动 = 疑似卡死。
+            # 但"进度还是 0"有两种完全正常的情形——① 刚起、第一个分片块还没跑完
+            # （eval_pairs 每 10 个 seed 才打一行）；② 常驻服务（generic）根本没有
+            # 进度概念。这两种只在日志确实静默超阈值时才告警，否则每晚会误报。
             p_prev = None
             if prev:
                 p_prev = (prev.get("jobs", {}).get(j.name, {}) or {}).get("progress")
@@ -231,9 +441,11 @@ def judge(jobs: list[Job], prev: dict | None) -> tuple[str, list[str], list[str]
             else:
                 streak = 0
             j.notes.append(f"streak={streak}")
-            if streak >= STALL_STREAK:
-                red.append(f"{j.name}：进程存活但进度连续 {streak} 次巡检未变"
-                           f"（当前 {cur}）⇒ 疑似卡死")
+            if streak >= STALL_STREAK and (cur > 0 or j.kind != "generic"):
+                sil = j.age if j.age != float("inf") else 0.0
+                if cur > 0 or sil > j.stall_sec:
+                    red.append(f"{j.name}：进程存活但进度连续 {streak} 次巡检未变"
+                               f"（当前 {cur}，日志静默 {sil/60:.0f} min）⇒ 疑似卡死")
             elif j.log and j.age > j.stall_sec:
                 yel.append(f"{j.name}：日志静默 {j.age/60:.0f} min > 阈值 "
                            f"{j.stall_sec/60:.0f} min")
@@ -245,45 +457,99 @@ def judge(jobs: list[Job], prev: dict | None) -> tuple[str, list[str], list[str]
                                " ⇒ 价值头退化")
         elif j.alive and j.finished:
             notes.append(f"{j.name}：进程仍在（收口后未退出），日志已收口")
-        elif not j.alive and j.age <= RECENT_SEC and not j.finished:
-            yel.append(f"{j.name}：进程已退出但日志无收口标记"
-                       f"（静默 {j.age/60:.0f} min）⇒ 可能被中断")
-        elif not j.alive and j.finished:
-            notes.append(f"{j.name}：已正常收口")
 
     verdict = "RED" if red else ("YELLOW" if yel else "GREEN")
-    return verdict, red, yel
+    return verdict, red, yel, notes
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="训练/评测进度健康度巡检（只读）")
     ap.add_argument("--json", action="store_true", help="输出 JSON（自动化用）")
-    ap.add_argument("--no-write", action="store_true", help="不追加历史")
+    ap.add_argument("--no-write", action="store_true", help="不追加历史、不改登记表")
+    ap.add_argument("--list", action="store_true", help="只打印登记表")
+    ap.add_argument("--register", action="store_true", help="登记一个任务")
+    ap.add_argument("--unregister", default="", help="按名字移除登记")
+    ap.add_argument("--name", default="")
+    ap.add_argument("--kind", default="eval", choices=("epoch", "eval", "generic"))
+    ap.add_argument("--log", default="")
+    ap.add_argument("--proc", default="", help="进程匹配串（pgrep -f）")
+    ap.add_argument("--expect", type=int, default=0)
+    ap.add_argument("--artifact", default="")
+    ap.add_argument("--stall-sec", type=int, default=0)
+    ap.add_argument("--persistent", action="store_true", help="常驻任务，不阻断收工")
     a = ap.parse_args()
 
-    jobs = [fill(j) for j in job_specs()]
-    active = [j for j in jobs if j.alive and not j.finished]
-    recent = [j for j in jobs if j.age <= RECENT_SEC]
+    if a.list:
+        rows = load_registry()
+        if not rows:
+            print("登记表为空（runs/patrol/jobs.json）")
+        for r in rows:
+            print(f"  {r.get('status','?'):<9} {str(r.get('name')):<24} "
+                  f"{str(r.get('kind','')):<8} {str(r.get('log','')):<38} "
+                  f"ended={r.get('ended') or '—'}")
+        return 0
+
+    if a.register:
+        if not a.name:
+            ap.error("--register 需要 --name")
+        rows = load_registry()
+        rows = [r for r in rows if str(r.get("name")) != a.name]
+        rows.append({"name": a.name, "kind": a.kind, "proc_pat": a.proc,
+                     "log": a.log, "expect": a.expect, "artifact": a.artifact,
+                     "stall_sec": a.stall_sec or (900 if a.kind == "epoch" else 3600),
+                     "persistent": a.persistent,
+                     "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                     "status": "running", "ended": ""})
+        save_registry(rows)
+        print(f"已登记 {a.name}（{a.kind}）→ {a.log or '—'}")
+        return 0
+
+    if a.unregister:
+        rows = [r for r in load_registry() if str(r.get("name")) != a.unregister]
+        save_registry(rows)
+        print(f"已移除 {a.unregister}")
+        return 0
+
+    jobs = [fill(j) for j in merge_registry(dry=a.no_write)]
+    # 自动起止：先判 alive/finished，再定 status
+    for j in jobs:
+        new = lifecycle(j)
+        if new in ("ended", "failed") and j.status not in ("ended", "failed"):
+            j.ended = time.strftime("%Y-%m-%dT%H:%M:%S")
+        j.status = new
+        if not j.started and new == "running":
+            j.started = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+    act = [j for j in jobs if j.status in ("running", "ending")]
+    recent = [j for j in jobs if j.age <= RECENT_SEC and j.status == "running"]
     prev = load_hist()
 
-    verdict, red, yel = judge(jobs, prev)
-    if not active and not recent:
+    verdict, red, yel, notes = judge(jobs, prev)
+    if not act and not recent:
         verdict = "IDLE"
         red, yel = [], []
+
+    work = [j for j in jobs if not j.persistent]
+    session_done = bool(work) and all(j.status in ("ended", "failed") for j in work)
+    if not work and not act:
+        session_done = True        # 只有常驻服务 → 本批任务已全部结束
 
     rec = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "verdict": verdict,
+        "session_done": session_done,
         "load1": round(os.getloadavg()[0], 2) if hasattr(os, "getloadavg") else None,
         "jobs": {
             j.name: {
                 "alive": j.alive, "kind": j.kind, "finished": j.finished,
+                "status": j.status, "persistent": j.persistent,
                 "progress": j.epoch if j.kind == "epoch" else j.prog,
                 "progress_total": (j.expect if j.kind == "epoch"
                                    else j.prog_total * max(1, len(j.workers))),
                 "val": None if j.val != j.val else round(j.val, 4),
                 "age_min": None if j.age == float("inf") else round(j.age / 60, 1),
-            } for j in jobs if j.alive or j.age <= RECENT_SEC
+                "ended": j.ended or None,
+            } for j in jobs
         },
         "streak": {j.name: int(j.notes[0].split("=")[1]) for j in jobs
                    if j.notes and j.notes[0].startswith("streak=")},
@@ -294,12 +560,14 @@ def main() -> int:
         print(json.dumps(rec, ensure_ascii=False, indent=2))
     else:
         icon = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴", "IDLE": "⚪"}[verdict]
-        print("=" * 92)
+        print("=" * 96)
         print(f"{icon} 巡检 {rec['ts']}  结论 {verdict}  "
-              f"负载 {rec['load1']}  ({os.cpu_count()} 核)")
-        print("=" * 92)
+              f"负载 {rec['load1']}  ({os.cpu_count()} 核)"
+              + ("  · 本批任务已全部结束" if session_done else ""))
+        print("=" * 96)
         for j in jobs:
-            if not (j.alive or j.age <= RECENT_SEC):
+            if not (j.alive or j.status in ("running", "ending", "failed")
+                    or j.age <= RECENT_SEC):
                 continue
             if j.kind == "epoch" and j.epoch:
                 prog = f"ep {j.epoch}" + (f"/{j.expect}" if j.expect else "")
@@ -312,10 +580,10 @@ def main() -> int:
                 detail = f"≈{j.prog/full:.0%}" if full else ""
             else:
                 prog, detail = "—", ""
-            state = "运行中" if j.alive and not j.finished else (
-                "已收口" if j.finished else "已退出")
+            state = {"running": "运行中", "ending": "待确认", "ended": "已结束",
+                     "failed": "已中断", "persistent": "常驻"}[j.status]
             age = "—" if j.age == float("inf") else f"{j.age/60:.0f} min 前"
-            print(f"  {j.name:<12} {state:<5} {prog:<26} {detail:<12} {age}")
+            print(f"  {j.name:<14} {state:<5} {prog:<26} {detail:<12} {age}")
         for r in red:
             print(f"  🔴 {r}")
         for y in yel:
@@ -324,12 +592,17 @@ def main() -> int:
             print("  🟢 全部在推进，无异常")
         if verdict == "IDLE":
             print("  ⚪ 无运行中任务，也无 2 小时内日志")
+        if session_done:
+            print("  ✅ 本批任务已全部结束 → 巡检可以暂停（退出码 3）")
 
     if not a.no_write:
         HIST.parent.mkdir(parents=True, exist_ok=True)
         with HIST.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        sync_registry(jobs)
 
+    if session_done:
+        return 3
     return {"GREEN": 0, "IDLE": 0, "YELLOW": 1, "RED": 2}[verdict]
 
 

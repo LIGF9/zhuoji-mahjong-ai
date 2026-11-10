@@ -5717,6 +5717,10 @@ const DEFAULT_OPP = "model:master";           // 所有玩家默认：大师
    由 registerChampionOptions() 追加到这里（贪心 + 极算 128 两个档位/模型）。
    主力恒为 master，默认值一字不改；冠军只作为可选追加项。 */
 const CHAMP_STEM_RE = /^(web_best|champ_[A-Za-z0-9_-]+)$/;
+/* 2026-11-10 E-SLIM：冠军可自带实测单步延迟（meta.latency），按 stem 覆盖
+   通用 v3 表。否则 0.81M 学生会沿用 P48 的 2.7s 标定，把「超时自动操作」
+   的提示夸大 10 倍。只影响提示文案。 */
+const CHAMP_LATENCY = {};
 function isChampionValue(v) {
   const parts = String(v || "").split(":");
   return parts.length === 2 && ["model", "search32", "search128"].includes(parts[0])
@@ -5736,7 +5740,15 @@ function registerChampionOptions() {
     const raw = m.label || m.stem;
     const name = raw.replace(/（[^）]*）/g, "").trim() || m.stem;
     const group = i === 0 ? CHAMP_GROUP_BEST : CHAMP_GROUP_OLD;
-    [["model", "🤖", "（贪心）"], ["search128", "⚡", " · 极算128"]].forEach(([kind, icon, tail]) => {
+    // 2026-11-10 E-SLIM：冠军可用 meta.dets 声明自己支持的搜索档。默认仍只出
+    // 极算 128（历史行为一字不变）；声明了 32 的（如 0.81M 学生，N32 实测
+    // 0.27s）才多一项「深算 32」——否则等于把学生最划算的档位藏起来。
+    const dets = (Array.isArray(m.dets) && m.dets.length) ? m.dets : [128];
+    const kinds = [["model", "🤖", "（贪心）"]].concat(
+      dets.filter(d => d === 32 || d === 128)
+          .map(d => ["search" + d, "⚡", d === 32 ? " · 深算32" : " · 极算128"]));
+    if (m.latency && typeof m.latency === "object") CHAMP_LATENCY[m.stem] = m.latency;
+    kinds.forEach(([kind, icon, tail]) => {
       const v = `${kind}:${m.stem}`;
       if (OPP_ALLOWED.includes(v)) return;
       OPP_OPTIONS.push({ v, label: `${icon} ${name}${tail}`, champion: true,
@@ -9426,6 +9438,9 @@ function isHeavyStem(s) {
   return !!stem && !/^(master|best|dushan_master)$/.test(stem);
 }
 function stratLatency(kind, strategy) {
+  const stem = String(strategy || "").split(":")[1] || "";
+  const own = stem ? CHAMP_LATENCY[stem] : null;
+  if (own && own[kind] != null) return own[kind];   // 2026-11-10：注册表自带实测值优先
   const t = isHeavyStem(strategy) ? STRAT_LATENCY_V3 : STRAT_LATENCY;
   return t[kind] || 0.02;
 }
@@ -9460,7 +9475,10 @@ function checkTimeoutLink() {
    这里给出明确提醒（与上面「超时 × 推荐策略」同一套交互）。 */
 const OPP_LATENCY = { search32: 0.13, search128: 0.09, model: 0.02 };
 function oppLatency(v) {
-  return OPP_LATENCY[String(v || "").split(":")[0]] || 0;
+  const parts = String(v || "").split(":");
+  const own = parts[1] ? CHAMP_LATENCY[parts[1]] : null;
+  if (own && own[parts[0]] != null) return own[parts[0]];   // 2026-11-10：冠军自带实测
+  return OPP_LATENCY[parts[0]] || 0;
 }
 function oppLatLabel(v) {
   switch (String(v || "").split(":")[0]) {

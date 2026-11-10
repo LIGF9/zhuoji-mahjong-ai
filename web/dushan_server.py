@@ -966,6 +966,17 @@ def available_models() -> list[dict]:
                 "params": peek.get("params"),
                 "champion": bool(row.get("champion")),
                 "label": str(row.get("label") or "")}
+        # 2026-11-10 E-SLIM：冠军可声明自己支持的搜索档与实测单步延迟。
+        # 前端据此生成档位 / 校准「超时自动操作」提示；缺省时沿用历史行为
+        # （只出 search128、延迟按 v3 通用表）。只影响下拉与提示文案，
+        # 不改变任何推理口径，也不改默认档位。
+        dets = [int(x) for x in (row.get("dets") or []) if int(x) in (8, 32, 128)]
+        if dets:
+            info["dets"] = sorted(set(dets))
+        lat = row.get("latency")
+        if isinstance(lat, dict):
+            info["latency"] = {k: float(v) for k, v in lat.items()
+                               if k in ("model", "search8", "search32", "search128")}
         try:
             info["ident"] = model_identity(p.stem)
         except Exception:
