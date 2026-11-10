@@ -37,6 +37,15 @@ node src-tauri/tauri android build --apk --target aarch64
 `src-tauri/tauri` 是 CLI 转发 shim：Tauri 的 Gradle rust 插件用 `node tauri ...`
 从 `src-tauri/` 目录调用 CLI，本机 CLI 是全局安装，shim 负责转发。
 
+## v1.1.0（2026-11-10）四项 Android 行为
+
+| 需求 | 实现 | 验证 |
+|---|---|---|
+| 横屏进入游戏后隐藏状态栏 | `MainActivity.applyImmersive()`：`WindowInsetsControllerCompat.hide(systemBars())` + `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE` + 刘海区 `SHORT_EDGES`；`onWindowFocusChanged` / `onResume` / `onMultiWindowModeChanged` 都重放（厂商 ROM 会抢回系统栏） | 模拟器截图：无状态栏、无导航栏；系统仅弹一次「Viewing full screen」提示 |
+| 自动保持亮屏，5 分钟无操作后允许息屏 | `dispatchTouchEvent` 观察 DOWN/MOVE → `FLAG_KEEP_SCREEN_ON` + 重置 `Handler` 5 分钟定时器；到点 `clearFlags`，交回系统息屏策略 | `dumpsys window`：启动后窗口 `fl=KEEP_SCREEN_ON`；静置 5 分 15 秒后该标志消失 |
+| App logo 用幺鸡 | `app-icon.png`（图像生成母版，已去水印）→ `tauri icon` 生成全尺寸；自适应图标前景缩到 88% 留安全边距、背景色取桌面毡色 `#FF04372B` | 应用抽屉截图：圆形遮罩内完整显示幺鸡牌，无裁切、无白边 |
+| 横屏游戏中可启动安卓小窗 | 清单 `resizeableActivity=true`；`onMultiWindowModeChanged` 时把方向请求放开为 `UNSPECIFIED`（固定方向在小窗里会被 letterbox，这是「开不了小窗」的根因），退出再锁回 `SENSOR_LANDSCAPE` | `am start --windowingMode 5`：`mWindowingMode=freeform`，小窗内页面正常自适应、无黑边 |
+
 ## 测试
 
 ```bash
@@ -63,9 +72,16 @@ cd tauri-app/src-tauri && cargo test   # 7 项：地址归一化 + touch 参数 
   保存的地址保持干净）。
 - 未覆盖：实体安卓真机（本机无设备），模拟器已验证同一份 APK（sha256 `1558f4aa…`）。
 
-## 架构说明（为什么不做"离线版"）
+## 架构说明（联网直连 vs 离线版）
 
 服务端是 Python + PyTorch/ONNX + macOS 原生扩展（约 3000 行），
-Rust 搜索内核（`rust_engine/`）的网络前向明确"攒批回传 Python"。
-完全离线需要把整个服务端与神经网络推理移植到 Android，工作量以周计且无法在本机验证。
-局域网直连方案下，游戏体验与网页版逐字节一致——这正是"视觉和逻辑零 bug"的保证方式。
+Rust 搜索内核（`rust_engine/`）的网络前向明确"攒批回传 Python"，因此**本客户端不含游戏逻辑**。
+
+离线版**技术上可行但不是「重新打个包」**：需要把服务端 `web/dushan_server.py` 里的
+`Session` 编排层（1528 行 / 42 个方法）与 16 个 `/api/*` 接口移植到 Rust，并在设备上用
+ONNX Runtime 跑推理。规则/结算/搜索/编码**已经在 Rust 里**（`state.rs` 1005 行、
+`settle.rs` 1140 行、`search.rs`、`encode_v3.rs`，均已与 Python 逐位对拍），
+
+缺的是会话层、JSON 视图与打包。实测数据（`libonnxruntime.so` arm64 17.6 MB、
+P48 ONNX 39 MB、预估离线包 65–70 MB、设备端搜索档会是数十秒级）与
+O0–O4 分阶段方案见 **`docs/离线版-可行性与实施方案.md`**。

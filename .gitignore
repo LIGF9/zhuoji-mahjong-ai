@@ -45,3 +45,6 @@ rust_engine/target_oracle/
 
 # 编辑备份
 web/*.bak-*
+
+# 蒸馏学生中间检查点（TA / S1，本地保留）
+models/slim_*.pt
