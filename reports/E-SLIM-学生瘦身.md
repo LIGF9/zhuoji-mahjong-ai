@@ -124,11 +124,72 @@ diff = +1.0356   sd = 6.2371   se = 0.3601
 参考锚点：P48 在组合① 同口径为 +1.478±0.297。学生 +1.036 约为其 **70%** 的效应，
 但**不能**把两片相减说成"瘦身损失"（跨池相减无方差可用，§2.5 已登记同类错误）。
 
+## 6.5 追测矩阵：同池四臂与配对差（新池 `7_400_000`，2026-11-10 晚）
+
+闸门 A 只回答"学生 vs 线上主力"，不能回答"学生离教师还差多少"——那需要同一批对手。
+故在新池（300/600 seed × 四座）补齐四臂，全部 1 家候选 vs 3 家同质对手：
+
+| 臂 | n | 均值 ± SE | 95% CI | 符号 正:负 |
+|---|---|---|---|---|
+| 学生贪心 vs **master+N32** | 600 | **+0.855 ± 0.266** | [+0.332, +1.378] | 317:280 |
+| P48 贪心 vs **master+N32** | 300 | **+1.946 ± 0.402** | [+1.154, +2.737] | 186:112 |
+| P48 贪心 vs **master 贪心** | 300 | **+4.942 ± 0.411** | [+4.133, +5.751] | 225:72 |
+| 学生贪心 vs **P48 贪心** | 600 | **−0.159 ± 0.269** | [−0.687, +0.369] | 266:325 |
+
+> 符号列取自 `tools/gate_matrix.py`（`per_seed`：四座先按 seed 平均，再数正负）。
+> `eval_pairs` 自己打的 summary 对"恰好为 0"的处理略有不同，例如学生 vs master+N32
+> 处为 316:279（差 1 个 seed）。**均值、CI、结论完全一致**，不影响任何判定。
+
+同 seed 配对差（消掉牌墙难度这一共同因素）：
+
+| 配对 | 差值 | 95% CI | 符号 | 含义 |
+|---|---|---|---|---|
+| P48g·masterg − P48g·master+N32 | **+2.997 ± 0.551** | [+1.912, +4.082] | 183:115 | **搜索值 ≈ 3.0 分** |
+| 学生g·master+N32 − P48g·master+N32 | **−1.053 ± 0.520** | [−2.076, **−0.031**] | 122:176 | 学生弱约 1.05 分（t=−2.03, p≈0.044） |
+
+### 一条必须记住的方法学结论：1v3 下的差值**不可相加**
+
+若"实力差"能线性映射到"分差"，应当有
+
+```
+h(学生 − master+N32) = h(学生 − P48) + h(P48 − master+N32)
+   +0.855  =?=  −0.159 + 1.946 = +1.787     实测差 0.93
+```
+
+先排除"这是评测框架的偏差"——两条自对局（同一模型对三家自己，理论值必须为 0）：
+
+```
+P48   vs 3×P48   : −0.000 ± 0.000  (100 seed)  ✓
+学生  vs 3×学生  : −0.000 ± 0.000  (100 seed)  ✓
+```
+
+⇒ 框架零和、座位对称、无系统偏差。**次可加是真实的博弈结构效应**：多个正优势不能相加，
+三家对手同质化后会互相压制，边际收益递减。
+
+**所以"学生离教师多远"没有单一答案，只能按问题分别回答**：
+
+| 问题 | 数字 | 解读 |
+|---|---|---|
+| 学生直接坐到 P48 那桌 | **−0.159**（CI 含 0） | 统计上不可区分；但对手就是被比较对象，存在自我参照 |
+| 面对同一批 master+N32，谁更好 | **−1.053**（CI 上界 −0.031） | 对手固定、只换候选，标准 A/B，更能代表实力差；边缘显著 |
+
+**修正上一版的表述**：不再说"0.82M 学生追平 9.84M 教师"，准确说法是
+**"差距在 1 分以内、边缘显著（p≈0.044）"**，代价是 1/12 参数、4.9× 更快。
+
+### 顺带钉死：搜索值 3 分
+
+`master` 打开 N32 搜索 ≈ **白拿 3.0 分**（对 P48 而言其优势从 +4.94 压到 +1.95）。
+这给"学生贪心 vs master+N32 = +0.855"一个更有分量的解读：**0.82M 的贪心学生，
+仍胜过开了搜索的主力**。同时它解释了线上 N32 档的价值，也说明 E-SLIM 若给它
+N32（0.275 s/步），潜力还没兑现（本轮未测学生的搜索档）。
+
 ## 7. 局限与没做的事
 
-1. **单池单次**：只有一个 300 seed 池、一次评估。未做跨池复现（按规则也不该做跨池相减）。
-2. **候选只有贪心档**：本闸门 `--a-mode greedy`。学生**带 N32 搜索**的表现未知；
-   N32 单步 0.275 s ⇒ 一盘约 44 步 × ~1/4 决策，搜索档在桌面上可用，但未测棋力。
+1. **两个池、各一次评估**：闸门 A 用 `7_300_000`（300 seed），追测矩阵用 `7_400_000`
+   （300/600 seed）。未做同一臂的跨池复算，且按规则不做跨池相减。
+2. **候选只有贪心档**：闸门 A 与追测矩阵全是 `--a-mode greedy`。学生**带 N32 搜索**的
+   棋力未测——它的 N32 只要 0.275 s（P48 的 1/6.6），而搜索本身值约 3 分（§6.5），
+   这是下一轮最值得做的一格。
 3. **ONNX 一致性是 CPU 后端**：CoreML 曾有 1.2e-3 的记录（足以翻转 argmax），
    本轮未在 ANE 上复核。
 4. **未做 7_200_000 及更早池的回归**：防止"对 master 好、对 P48 差"的错位。
@@ -138,9 +199,13 @@ diff = +1.0356   sd = 6.2371   se = 0.3601
 
 - **工程**：5/5 通过，成本降 12.1×（参数）/ 6.6×（N32）/ 4.9×（贪心）；
 - **统计**：非劣**成立**（单侧 p=1.3e-05），且**显著优于**基线（z=+2.88, p=0.004）；
+- **同池追测**（§6.5）：对学生而言 vs master+N32 **+0.855±0.266**（600 seed）；
+  对教师 P48 而言同一批对手 +1.946；同 seed 配对差 **−1.053±0.520**（p≈0.044）
+  ⇒ 差距在 1 分以内、边缘显著，而不是"追平"；
+- **搜索值**：同池配对差 **+2.997±0.551** ⇒ master 开 N32 ≈ 白拿 3 分；
 - **字面 TOST**：不成立，原因是"更好"，判据措辞缺陷，如实登记；
-- **动作**：建议 `champions.json` **新增** `slim_s` 条目（只增不替，线上主力仍
-  `dushan_master`，需重启 Web 才生效）——**本条待用户确认后执行**；
+- **动作**：`champions.json` 已按用户决定**新增** `champ_slim_s`（只增不替，线上主力仍
+  `dushan_master`），web 三档（贪心/深算32/极算128）均经真档核验；
 - **副产品**：`slim_s` 3.1 MB ONNX + 0.275 s N32，直接改善离线版「手机上有没有可用搜索档」
   这个最大的技术风险（见 `docs/离线版-可行性与实施方案.md` §3.1）。
 
@@ -160,4 +225,31 @@ diff = +1.0356   sd = 6.2371   se = 0.3601
     --seats 0,1,2,3 --workers 5 --out runs/gates/slim_gateA.jsonl
 # 判定（TOST）
 .venv/bin/python tools/tost_gate.py --jsonl runs/gates/slim_gateA.jsonl --eng-pass
+
+# 追测矩阵（§6.5，全部同池 7_400_000）
+.venv/bin/python eval_pairs.py --a models/slim_s.pt --b models/dushan_master.pt \
+    --a-mode greedy --b-mode search32 --n-det 32 --seeds 600 --seed0 7400000 \
+    --workers 5 --out runs/gates/slimB_vs_master32.jsonl          # 学生 vs master+N32
+.venv/bin/python eval_pairs.py --a models/champ_exit_p48.pt --b models/dushan_master.pt \
+    --a-mode greedy --b-mode search32 --n-det 32 --seeds 300 --seed0 7400000 \
+    --workers 5 --out runs/gates/slimB_p48_vs_master32.jsonl      # P48 vs master+N32
+.venv/bin/python eval_pairs.py --a models/champ_exit_p48.pt --b models/dushan_master.pt \
+    --mode greedy --seeds 300 --seed0 7400000 \
+    --workers 5 --out runs/gates/slimB_p48_vs_masterg.jsonl       # P48 vs master贪心
+.venv/bin/python eval_pairs.py --a models/slim_s.pt --b models/champ_exit_p48.pt \
+    --mode greedy --seeds 600 --seed0 7400000 \
+    --workers 5 --out runs/gates/slimB_vs_p48g.jsonl              # 学生对打 P48
+
+# 汇总 + 配对差
+.venv/bin/python tools/gate_matrix.py \
+    --arm "学生g vs master+N32=runs/gates/slimB_vs_master32.jsonl" \
+    --arm "P48g vs master+N32=runs/gates/slimB_p48_vs_master32.jsonl" \
+    --arm "P48g vs masterg=runs/gates/slimB_p48_vs_masterg.jsonl" \
+    --arm "学生g vs P48g=runs/gates/slimB_vs_p48g.jsonl" \
+    --pair "学生g vs master+N32,P48g vs master+N32" \
+    --pair "P48g vs masterg,P48g vs master+N32"
+
+# 框架无偏自检（理论值必须为 0）
+.venv/bin/python eval_pairs.py --a models/champ_exit_p48.pt --b models/champ_exit_p48.pt \
+    --mode greedy --seeds 100 --seed0 7400000 --workers 5 --out /tmp/selfcheck.jsonl
 ```
