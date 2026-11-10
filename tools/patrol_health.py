@@ -67,7 +67,11 @@ EP_RE = re.compile(
     r"\[ep\s+(\d+)\]\s+train\s+([\d.]+)\s+val\s+([\d.]+).*?total\s+(\d+)s")
 W_RE = re.compile(r"\[w(\d+)\]\s+(\d+)/(\d+)")
 BEST_RE = re.compile(r"best val\s+([\d.]+)")
-DONE_MARKS = ("[done]", "[early-stop]", "[w0] done", "ALL PASS", "HAS FAIL")
+# 收口标记：注意 eval_pairs 正常收口时最后一行是 `[summary] 判定: …`，
+# 只有中间的 `[wN] done N seeds` 带 done —— 所以必须扫**全部**行，
+# 不能只看最后一行（否则每轮跑完都误报"可能被中断"）。
+DONE_MARKS = ("[done]", "[early-stop]", "[summary]", "] done ", "[w0] done",
+              "ALL PASS", "HAS FAIL")
 
 
 @dataclass
@@ -124,7 +128,7 @@ def fill(job: Job) -> Job:
     job.age = time.time() - job.log.stat().st_mtime
     lines = read_tail(job.log)
     job.last_line = next((ln for ln in reversed(lines) if ln.strip()), "")
-    job.finished = any(m in job.last_line for m in DONE_MARKS)
+    job.finished = any(m in ln for ln in lines for m in DONE_MARKS)
 
     for ln in lines:
         low = ln.lower()
@@ -148,6 +152,10 @@ def fill(job: Job) -> Job:
             job.wk[w] = max(job.wk.get(w, 0), k)
             job.prog = sum(job.wk.values())
             job.prog_total = max(job.prog_total, int(m.group(3)))
+    # 进度跑满也算收口（不依赖日志措辞）
+    if job.kind == "eval" and job.prog_total:
+        if job.prog >= job.prog_total * max(1, len(job.workers)):
+            job.finished = True
     return job
 
 
