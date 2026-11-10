@@ -210,8 +210,13 @@ def discover() -> list[Job]:
             if out_p:
                 ap = Path(out_p) if Path(out_p).is_absolute() else ROOT / out_p
                 art = ap if kind != "eval" else ap
-            out.append(Job(name=name, kind=kind, proc_pat=script, log=log,
-                           expect=expect, artifact=art,
+            out.append(Job(name=name, kind=kind,
+                           # proc_pat 必须**唯一到任务**：只写 "eval_pairs.py" 会让
+                           # 任意一个评测进程都让别的评测显示"运行中"（实测踩到：
+                           # 闸门跑完后仍报 running）。--out 文件名在当前仓库唯一。
+                           proc_pat=(Path(out_p).name if out_p
+                                     else (log.name if log else script)),
+                           log=log, expect=expect, artifact=art,
                            stall_sec=900 if kind == "epoch" else 3600,
                            persistent=persistent))
     return out
