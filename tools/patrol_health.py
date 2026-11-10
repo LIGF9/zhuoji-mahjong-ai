@@ -374,6 +374,40 @@ def lifecycle(job: Job) -> str:
     return "ending"
 
 
+def scan_orphans(jobs: list[Job], window: float = 3600.0) -> list[str]:
+    """近期被写入、未登记、且无收口标记的日志 —— 覆盖「短于巡检间隔」的任务。
+
+    实测踩到：M4（P48g vs masterg）只跑 2 min 39 s，每小时巡检永远抓不到它。
+    正常结束无所谓（产物已落盘），但**失败**时它会静默消失、无人知晓。
+    这里只提示不阻断：近 1 小时写过 + 不在登记表 + 全文无收口标记 + 无 [summary]。
+    """
+    known = {str(j.log.resolve()) for j in jobs if j.log}
+    out: list[str] = []
+    now = time.time()
+    for d in (ROOT / "runs" / "gates", ROOT / "runs"):
+        if not d.is_dir():
+            continue
+        for p in sorted(d.glob("*.log")):
+            if str(p.resolve()) in known:
+                continue
+            try:
+                age = now - p.stat().st_mtime
+            except OSError:
+                continue
+            if age > window:
+                continue
+            lines = read_tail(p, 120)
+            if any(m in ln for ln in lines for m in DONE_MARKS):
+                continue        # 有收口标记 ⇒ 正常结束的短任务，不必提示
+            try:
+                rel = p.relative_to(ROOT)
+            except ValueError:
+                rel = p
+            out.append(f"{rel}：{age/60:.0f} min 前仍在写但无收口标记，且未登记 ⇒ "
+                       f"疑似短任务中断（起止都在巡检间隔内的任务会漏）")
+    return out
+
+
 def load_hist() -> dict | None:
     if not HIST.exists():
         return None
@@ -530,9 +564,16 @@ def main() -> int:
     prev = load_hist()
 
     verdict, red, yel, notes = judge(jobs, prev)
+    orphans = scan_orphans(jobs)
+    if orphans:
+        yel = yel + orphans
+        if verdict == "GREEN":
+            verdict = "YELLOW"
     if not act and not recent:
-        verdict = "IDLE"
-        red, yel = [], []
+        verdict = "YELLOW" if orphans else "IDLE"
+        red = []
+        if not orphans:
+            yel = []
 
     work = [j for j in jobs if not j.persistent]
     session_done = bool(work) and all(j.status in ("ended", "failed") for j in work)
@@ -558,7 +599,7 @@ def main() -> int:
         },
         "streak": {j.name: int(j.notes[0].split("=")[1]) for j in jobs
                    if j.notes and j.notes[0].startswith("streak=")},
-        "red": red, "yellow": yel,
+        "red": red, "yellow": yel, "orphans": orphans,
     }
 
     if a.json:
