@@ -84,9 +84,10 @@ class Job:
     val: float = float("nan")
     best: float = float("nan")
     vals: list[float] = field(default_factory=list)
-    prog: int = 0                   # eval: 各 worker 已完成片数之和
+    prog: int = 0                   # eval: 各 worker 已完成的**最大**片数之和
     prog_total: int = 0
     workers: set = field(default_factory=set)
+    wk: dict = field(default_factory=dict)    # worker -> 该 worker 已达的最大 k
     last_line: str = ""
     age: float = float("inf")       # 日志静默秒数
     finished: bool = False
@@ -139,8 +140,13 @@ def fill(job: Job) -> Job:
             job.best = float(m.group(1))
         m = W_RE.search(ln)
         if m:
-            job.workers.add(int(m.group(1)))
-            job.prog += int(m.group(2))   # 多个 worker 的 k 累加
+            w, k = int(m.group(1)), int(m.group(2))
+            job.workers.add(w)
+            # 每个 worker 取**最大** k 再求和：同一 worker 的 10/60、20/60 是
+            # 累计进度，直接相加会重复计数；read_tail 只读尾部 400 行，
+            # 窗口滑动会漏掉早期行，也只有"取最大"才稳定。
+            job.wk[w] = max(job.wk.get(w, 0), k)
+            job.prog = sum(job.wk.values())
             job.prog_total = max(job.prog_total, int(m.group(3)))
     return job
 
