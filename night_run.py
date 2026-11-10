@@ -3,8 +3,9 @@
 主循环（docs/14天训练计划.md §0）：
   每轮 r：DAgger 标注（学生 rollout + N32 教师 Q，100k）
         → 训练（400k 滑窗，init=exit_best/最新轮）
-        → 闸门 A（300 seed 四座，贪心 vs master 贪心，p<0.05 且均值>0 才晋升）
+        → 闸门 A（300 seed 四座，贪心 vs master 贪心，p<0.05 且均值>0）
         → 闸门 C（50 seed 四座，新贪心 vs N32，只记趋势）
+        → 闸门 D（300 seed 四座，vs 上轮最佳；显著负则拦截晋升，见 §6.60.2）
         → 下一轮
 时间盒：2026-11-13 02:30 之前持续运行（7 天 24 小时，无每日 08:00 截止）。
 
@@ -122,8 +123,10 @@ def run(cmd: list[str], tag: str, env_extra: dict | None = None,
     log(f"$ {' '.join(cmd)}  → {out_path.name}")
     t0 = time.perf_counter()
     with open(out_path, "w", encoding="utf-8") as f:
-        proc = subprocess.run(cmd, cwd=str(ROOT), env=env, stdout=f,
-                              stderr=subprocess.STDOUT, timeout=timeout_s)
+        # stdin 必须显式 DEVNULL：看门狗拉起的驱动可能继承到已失效的 fd 0，
+        # 子进程 python 会在 init_sys_streams 阶段直接 EBADF 崩溃（2026-11-08 00:44 事故）。
+        proc = subprocess.run(cmd, cwd=str(ROOT), env=env, stdin=subprocess.DEVNULL,
+                              stdout=f, stderr=subprocess.STDOUT, timeout=timeout_s)
     text = out_path.read_text(encoding="utf-8", errors="replace")
     log(f"  rc={proc.returncode}  {time.perf_counter()-t0:.0f}s  {tag}")
     return proc.returncode, text
@@ -312,11 +315,50 @@ def _gate_line(text: str) -> str:
     return "(no summary)"
 
 
+# ---- 晋升守卫（docs/14天训练计划.md §6.60.2 结论，2026-11-08 落地）----
+# R48（S3 收官 DAgger）闸门 A +4.121±0.401 机械通过并被自动晋升，但同池直接对局
+# 显示其显著劣于 p36（−0.944±0.383, p=.0136）= 首次 DAgger 刷新负迁移。
+# ⇒ 闸门 A 只保证「远强于冻结 master」，不保证「强于历史点」；晋升须同时看闸门 D。
+# 本守卫**只收紧晋升条件**，不改任何配方/超参/闸门统计口径（jsonl 一律照旧落盘）。
+_SUMMARY_RE = re.compile(
+    r"diff=([+-]?\d+(?:\.\d+)?)±(\d+(?:\.\d+)?).*?p[≈=]\s*([0-9.]+)")
+
+
+def _gate_stats(text: str) -> tuple[float, float, float] | None:
+    """从 eval_pairs 的 [summary] 行取 (diff, se, p)；取不到返回 None。"""
+    for l in text.splitlines():
+        m = _SUMMARY_RE.search(l)
+        if m:
+            return float(m.group(1)), float(m.group(2)), float(m.group(3))
+    return None
+
+
+def _sig_negative(text: str) -> bool:
+    """闸门 D 是否「显著劣于上轮最佳」= p<0.05 且均值<0（负迁移）。"""
+    st = _gate_stats(text)
+    return st is not None and st[2] < 0.05 and st[0] < 0.0
+
+
+def _step_log(tag: str) -> str:
+    """读本轮某一步的完整落盘日志；缺失返回空串（视为无证据，不阻断晋升）。"""
+    p = NIGHT_LOG_DIR / f"{tag}.log"
+    try:
+        return p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def gates_round(r: int) -> None:
-    """闸门 A（晋升判据）+ 闸门 C（趋势）+ 闸门 D（环比上轮最佳），各自幂等跳过。"""
+    """闸门 A（绝对强度）+ 闸门 C（趋势）+ 闸门 D（环比上轮最佳），各自幂等跳过。
+
+    晋升判据（2026-11-08 §6.60.2 收紧）：闸门 A 通过 **且** 闸门 D 非显著负。
+    为此把闸门 D 提到晋升之前跑；D 未跑/失败/无 summary 时按「无证据」放行，
+    保持旧行为（只在确证负迁移时拦截），避免因评估抖动白白丢轮。
+    """
     ck = ROOT / f"models/exit_r{r:02d}.pt"
     base = str(ROOT / MASTER_PT)
     prevb = snapshot_prev_best(r)        # 必须在下面的 promote 之前取快照
+    a_pass = False
     if not gate_a_done(r):
         out_a = ROOT / f"runs/gates/r{r:02d}_gateA.jsonl"
         cmd_a = [PY, "eval_pairs.py", "--a", str(ck), "--b", base,
@@ -324,10 +366,8 @@ def gates_round(r: int) -> None:
                  "--workers", "6", "--out", str(out_a)]
         rc_a, txt_a = run(cmd_a, f"gateA_r{r:02d}", timeout_s=5400)
         assert rc_a == 0, txt_a[-2000:]
-        passed = _gate_pass(txt_a)
-        log(f"R{r} 闸门 A: {_gate_line(txt_a)}  → {'通过' if passed else '不通过'}")
-        if passed and not (ROOT / f"runs/gates/r{r:02d}.promoted").exists():
-            promote(r)
+        a_pass = _gate_pass(txt_a)
+        log(f"R{r} 闸门 A: {_gate_line(txt_a)}  → {'通过' if a_pass else '不通过'}")
     if not gate_c_done(r):
         out_c = ROOT / f"runs/gates/r{r:02d}_gateC.jsonl"
         cmd_c = [PY, "eval_pairs.py", "--a", str(ck), "--b", base,
@@ -352,6 +392,17 @@ def gates_round(r: int) -> None:
             # 保留 rNN_prevbest.pt 还能让重跑该轮时复用同一「晋升前最佳」基线。
         else:
             log(f"R{r} 闸门 D 运行失败（不影响晋升）rc={rc_d}")
+    # ---- 晋升：A 通过 + D 非显著负（守卫见 _sig_negative 上方注释）----
+    if a_pass and not (ROOT / f"runs/gates/r{r:02d}.promoted").exists():
+        if prevb is not None:
+            d_txt = _step_log(f"gateD_r{r:02d}")
+            if _sig_negative(d_txt):
+                st = _gate_stats(d_txt)
+                log(f"R{r} **不晋升**：闸门 A 通过但闸门 D 显著劣于上轮最佳"
+                    f"（{st[0]:+.3f}±{st[1]:.3f} p={st[2]:.4f}）⇒ 负迁移守卫拦截，"
+                    f"ckpt 留档供终评 best-of")
+                return
+        promote(r)
 
 
 def promote_ckpt(src: Path, tag: str) -> None:
@@ -454,6 +505,16 @@ def main() -> int:
     LOCK.parent.mkdir(parents=True, exist_ok=True)
     LOCK.touch()
     threading.Thread(target=heartbeat, daemon=True).start()
+    # 启动自检：子进程必须能正常起 python（2026-11-08 00:44 事故：继承失效 fd0
+    # 导致子进程在 init_sys_streams 阶段 EBADF 瞬崩，3 轮在 1 秒内被烧掉）。
+    probe = subprocess.run([PY, "-c", "import sys;print(sys.version_info[:2])"],
+                           cwd=str(ROOT), stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+    if probe.returncode != 0:
+        log("启动自检失败：子进程 python 无法初始化（疑似 fd 环境损坏）"
+            f"rc={probe.returncode} out={probe.stdout.decode('utf-8', 'replace')[:300]}")
+        log("拒绝进入轮次循环（避免空烧轮号），等待看门狗/自检在干净环境重启")
+        return 2
     start = first_incomplete_round()
     log("=" * 60)
     log(f"7×24 ExIt 驱动启动：R{start} 起，截止 {DEADLINE:%F %H:%M}"
@@ -461,6 +522,7 @@ def main() -> int:
     failures = 0
     consecutive_fail = 0
     for r in range(start, MAX_ROUND + 1):
+        t_round0 = time.time()
         # §6.43 早停：只在轮首检查，绝不打断正在跑的标注/训练/闸门，零数据丢失。
         if EARLY_STOP.exists():
             log(f"检测到 runs/early_stop（§6.43 训练饱和提前终评）→ 保留全部产物，"
@@ -506,6 +568,11 @@ def main() -> int:
             failures += 1
             consecutive_fail += 1
             log(f"R{r} 阶段异常：{type(e).__name__}: {e}")
+            # 瞬崩退避：<60s 就失败说明是环境/依赖问题而非训练本身，
+            # 退避 180s 让看门狗与自检有机会介入，避免 1 秒烧掉 3 个轮号。
+            if time.time() - t_round0 < 60:
+                log(f"R{r} 在 {time.time()-t_round0:.0f}s 内失败（疑似环境故障）→ 退避 180s")
+                time.sleep(180)
         if consecutive_fail >= 3:
             log("连续 3 轮失败 → 退出，等待每小时自检定位后重启")
             break

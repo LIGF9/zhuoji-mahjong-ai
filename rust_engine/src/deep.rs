@@ -28,6 +28,8 @@ pub struct DeepSearch {
     /// 1 = mean（融合无关）：V 与 topk 分支取均值——同一预算、同一分支，
     ///     只把「逐世界优化」换成「逐世界平均」，用于量化融合的净效应。
     pub agg: u8,
+    /// 观测编码版本（1/2/3）—— 方案 D，透传到每层 Search
+    pub enc: u8,
     pub ft: FanTable,
     pub done: bool,
     /// [determinization][动作] 的当前 Q
@@ -54,8 +56,17 @@ impl DeepSearch {
     pub fn new_fair(game: &Game, p: u8, legal: &[Action], n_det: usize, ff_cap: usize,
                     topk: usize, ply: u8, seed: u64, ft: &FanTable, fair: bool,
                     agg: u8, lam: f64, reweight: bool) -> Self {
-        let stage0 = Search::new_fair(game, p, legal, n_det, ff_cap, seed, ft, fair,
-                                      lam, reweight);
+        Self::new_fair_enc(game, p, legal, n_det, ff_cap, topk, ply, seed, ft, fair,
+                           agg, lam, reweight, crate::search::ENC_V1)
+    }
+
+    /// 同 `new_fair`，额外指定观测编码版本（方案 D）；`enc` 会透传到每一层 `Search`。
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_fair_enc(game: &Game, p: u8, legal: &[Action], n_det: usize, ff_cap: usize,
+                        topk: usize, ply: u8, seed: u64, ft: &FanTable, fair: bool,
+                        agg: u8, lam: f64, reweight: bool, enc: u8) -> Self {
+        let stage0 = Search::new_fair_enc(game, p, legal, n_det, ff_cap, seed, ft, fair,
+                                          lam, reweight, enc);
         let n = legal.len();
         let dw = stage0.weights.clone();
         DeepSearch {
@@ -66,6 +77,7 @@ impl DeepSearch {
             topk,
             ff_cap,
             agg,
+            enc,
             ft: ft.clone(),
             done: false,
             q: vec![vec![0.0; n]; n_det],
@@ -162,7 +174,7 @@ impl DeepSearch {
                     return false;
                 }
                 self.stages
-                    .push(Search::from_seeds(seeds, self.p, self.ff_cap, &self.ft));
+                    .push(Search::from_seeds_enc(seeds, self.p, self.ff_cap, &self.ft, self.enc));
                 self.cur = 1;
                 true
             }
@@ -204,7 +216,7 @@ impl DeepSearch {
                     return false;
                 }
                 self.stages
-                    .push(Search::from_seeds(seeds, self.p, self.ff_cap, &self.ft));
+                    .push(Search::from_seeds_enc(seeds, self.p, self.ff_cap, &self.ft, self.enc));
                 self.cur = 2;
                 true
             }

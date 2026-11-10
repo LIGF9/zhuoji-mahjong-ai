@@ -244,15 +244,24 @@ struct PySearch {
 #[pymethods]
 impl PySearch {
     #[new]
-    #[pyo3(signature = (snapshot, p, legal, n_det=32, ff_cap=4, seed=0, lam=1.0, reweight=false))]
+    #[pyo3(signature = (snapshot, p, legal, n_det=32, ff_cap=4, seed=0, lam=1.0, reweight=false, enc=1))]
     fn new(snapshot: &Bound<'_, PyDict>, p: u8, legal: Vec<(u8, u8)>,
-           n_det: usize, ff_cap: usize, seed: u64, lam: f64, reweight: bool) -> PyResult<Self> {
+           n_det: usize, ff_cap: usize, seed: u64, lam: f64, reweight: bool,
+           enc: u8) -> PyResult<Self> {
         let g = game_from_py(snapshot)?;
         let ft = FanTable::build();
         let acts: Vec<Action> = legal.iter().map(|&(k, t)| Action::new(k, t)).collect();
-        Ok(PySearch { inner: Search::new_fair(&g, p, &acts, n_det, ff_cap, seed, &ft,
-                                              true, lam, reweight) })
+        Ok(PySearch { inner: Search::new_fair_enc(&g, p, &acts, n_det, ff_cap, seed, &ft,
+                                                  true, lam, reweight, enc) })
     }
+
+    /// 观测编码版本（1/2/3）
+    #[getter]
+    fn enc(&self) -> u8 { self.inner.enc }
+
+    /// 本编码下的 (通道数, 全局维) —— Python 侧 reshape 用
+    #[getter]
+    fn shape(&self) -> (usize, usize) { crate::search::enc_shape(self.inner.enc) }
 
     fn needs_net(&self) -> bool { self.inner.needs_net() }
     fn has_unsettled(&self) -> bool { self.inner.has_unsettled() }
@@ -267,27 +276,7 @@ impl PySearch {
         Bound<'py, PyArray1<u8>>,
     )> {
         let b = self.inner.take_batch();
-        let n = b.obs.len();
-        let mut tiles = vec![0f32; n * NUM_CHANNELS * NUM_TILES];
-        let mut glob = vec![0f32; n * GLOBAL_DIM];
-        let mut mask = vec![0u8; n * 28];
-        let mut head = Vec::with_capacity(n);
-        let mut kind = Vec::with_capacity(n);
-        for (i, o) in b.obs.iter().enumerate() {
-            tiles[i * NUM_CHANNELS * NUM_TILES..(i + 1) * NUM_CHANNELS * NUM_TILES]
-                .copy_from_slice(&o.tiles);
-            glob[i * GLOBAL_DIM..(i + 1) * GLOBAL_DIM].copy_from_slice(&o.glob);
-            mask[i * 28..i * 28 + 28].copy_from_slice(&o.mask);
-            head.push(b.head[i]);
-            kind.push(b.kind[i]);
-        }
-        Ok((
-            tiles.into_pyarray(py),
-            glob.into_pyarray(py),
-            head.into_pyarray(py),
-            mask.into_pyarray(py),
-            kind.into_pyarray(py),
-        ))
+        batch_arrays(py, &b)
     }
 
     fn feed(&mut self, actions: Vec<u8>, values: PyReadonlyArray1<f32>) {
@@ -333,15 +322,21 @@ fn batch_arrays<'py>(py: Python<'py>, b: &crate::search::Batch)
                  Bound<'py, PyArray1<u8>>, Bound<'py, PyArray1<u8>>,
                  Bound<'py, PyArray1<u8>>)> {
     let n = b.obs.len();
-    let mut tiles = vec![0f32; n * NUM_CHANNELS * NUM_TILES];
-    let mut glob = vec![0f32; n * GLOBAL_DIM];
+    // 动态维度（方案 D）：通道数/全局维由编码版本决定（v1=15/70, v3=63/130）。
+    // 空批（n=0）时按 v1 尺寸给零长度数组，调用方只看 head.shape[0]==0。
+    let (ch, gdim) = if n > 0 {
+        (b.obs[0].tiles.len() / NUM_TILES, b.obs[0].glob.len())
+    } else {
+        (NUM_CHANNELS, GLOBAL_DIM)
+    };
+    let mut tiles = vec![0f32; n * ch * NUM_TILES];
+    let mut glob = vec![0f32; n * gdim];
     let mut mask = vec![0u8; n * 28];
     let mut head = Vec::with_capacity(n);
     let mut kind = Vec::with_capacity(n);
     for (i, o) in b.obs.iter().enumerate() {
-        tiles[i * NUM_CHANNELS * NUM_TILES..(i + 1) * NUM_CHANNELS * NUM_TILES]
-            .copy_from_slice(&o.tiles);
-        glob[i * GLOBAL_DIM..(i + 1) * GLOBAL_DIM].copy_from_slice(&o.glob);
+        tiles[i * ch * NUM_TILES..(i + 1) * ch * NUM_TILES].copy_from_slice(&o.tiles);
+        glob[i * gdim..(i + 1) * gdim].copy_from_slice(&o.glob);
         mask[i * 28..i * 28 + 28].copy_from_slice(&o.mask);
         head.push(b.head[i]);
         kind.push(b.kind[i]);
@@ -359,18 +354,24 @@ struct PyDeepSearch {
 #[pymethods]
 impl PyDeepSearch {
     #[new]
-    #[pyo3(signature = (snapshot, p, legal, n_det=32, ff_cap=24, topk=3, ply=1, seed=0, fair=true, agg=0, lam=1.0, reweight=false))]
+    #[pyo3(signature = (snapshot, p, legal, n_det=32, ff_cap=24, topk=3, ply=1, seed=0, fair=true, agg=0, lam=1.0, reweight=false, enc=1))]
     fn new(snapshot: &Bound<'_, PyDict>, p: u8, legal: Vec<(u8, u8)>, n_det: usize,
            ff_cap: usize, topk: usize, ply: u8, seed: u64, fair: bool, agg: u8,
-           lam: f64, reweight: bool) -> PyResult<Self> {
+           lam: f64, reweight: bool, enc: u8) -> PyResult<Self> {
         let g = game_from_py(snapshot)?;
         let ft = FanTable::build();
         let acts: Vec<Action> = legal.iter().map(|&(k, t)| Action::new(k, t)).collect();
         Ok(PyDeepSearch {
-            inner: DeepSearch::new_fair(&g, p, &acts, n_det, ff_cap, topk, ply, seed,
-                                        &ft, fair, agg, lam, reweight),
+            inner: DeepSearch::new_fair_enc(&g, p, &acts, n_det, ff_cap, topk, ply, seed,
+                                            &ft, fair, agg, lam, reweight, enc),
         })
     }
+
+    #[getter]
+    fn enc(&self) -> u8 { self.inner.enc }
+
+    #[getter]
+    fn shape(&self) -> (usize, usize) { crate::search::enc_shape(self.inner.enc) }
 
     /// 逐 determinization 的 Q（[d][动作]，诊断/对拍用）
     fn per_det(&self) -> Vec<Vec<f64>> {
@@ -435,16 +436,22 @@ impl PyDeepSearch {
     fn n_stages(&self) -> usize { self.inner.stages.len() }
 }
 
-/// 单局面编码（对拍用）：返回 (tiles[405], glob[70], head, mask[28])
+/// 单局面编码（对拍用）：返回 (tiles, glob, head, mask[28])。
+/// `enc`：1=v1(15/70) / 2=v2(31/98) / 3=v3(63/130)，默认 1（旧行为不变）。
 #[pyfunction]
-fn encode_one<'py>(py: Python<'py>, snapshot: &Bound<'_, PyDict>, p: u8)
+#[pyo3(signature = (snapshot, p, enc=1))]
+fn encode_one<'py>(py: Python<'py>, snapshot: &Bound<'_, PyDict>, p: u8, enc: u8)
     -> PyResult<(Bound<'py, PyArray1<f32>>, Bound<'py, PyArray1<f32>>, u8, Bound<'py, PyArray1<u8>>)> {
     let g = game_from_py(snapshot)?;
     let ft = FanTable::build();
-    let o = crate::encode::encode_v1(&g, p, &ft);
+    let o = match enc {
+        3 => crate::encode_v3::encode_v3(&g, p, &ft),
+        2 => crate::encode_v2::encode_v2(&g, p, &ft),
+        _ => crate::encode::encode_v1(&g, p, &ft).into(),
+    };
     Ok((
-        o.tiles.to_vec().into_pyarray(py),
-        o.glob.to_vec().into_pyarray(py),
+        o.tiles.clone().into_pyarray(py),
+        o.glob.clone().into_pyarray(py),
         o.head,
         o.mask.to_vec().into_pyarray(py),
     ))

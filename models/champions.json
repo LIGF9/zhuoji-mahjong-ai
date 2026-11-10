@@ -1,29 +1,13 @@
 {
-  "_note": "线上附加冠军模型：只增不替；主力恒为 dushan_master.pt",
+  "_note": "线上附加冠军模型：只增不替；主力恒为 dushan_master.pt。2026-11-10 工作区归档整理后仅保留终评交付的最终结果模型 P48，过程冠军权重已删除且不可恢复（结论见 reports/终评报告-2026-11-13.md 与 docs/归档索引-2026-11-10.md）。",
   "champions": [
     {
-      "stem": "web_best",
-      "label": "ExIt 学生（R07 快照）",
-      "source": "models/web_best.pt",
-      "gate": "历史线上快照：原主力，现降级为附加可选模型",
-      "note": "2026-11-07 主力切回 dushan_master；本权重保留不删除",
-      "added": "2026-11-07 18:58:59"
-    },
-    {
-      "stem": "champ_exit_p32",
-      "label": "ExIt P32（双闸门冠军）",
-      "source": "models/champ_exit_p32.pt",
-      "gate": "闸门 A +4.573±0.392 p≈0；闸门 D vs p16 +0.728±0.345 p=0.035",
-      "note": "2026-11-08 注册；exit_best 快照，防训练覆盖",
-      "added": "2026-11-08 07:02:00"
-    },
-    {
-      "stem": "champ_exit_p35",
-      "label": "ExIt P35（绝对分最高）",
-      "source": "models/champ_exit_p35.pt",
-      "gate": "闸门 A +4.696±0.431 p≈0（最高）；D vs p32 +0.108 ns",
-      "note": "2026-11-08 注册；绝对强度最高但环比 ns",
-      "added": "2026-11-08 07:02:01"
+      "stem": "champ_exit_p48",
+      "label": "ExIt P48（终评交付·最强）",
+      "source": "models/champ_exit_p48.pt",
+      "gate": "闸门 A +4.890±0.414 p≈0；独立池 3M/500seed +5.143±0.314；4M/1000seed +4.532±0.221；D vs p47 +0.938±0.357 p=.0087",
+      "note": "2026-11-08 终评交付模型（best-of 第二段第 1、2b 与 p20 判并列 ⇒ 按预登记规则取最晚轮次）；2026-11-10 归档整理保留为唯一附加冠军",
+      "added": "2026-11-08 14:55:32"
     }
   ]
 }

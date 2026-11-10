@@ -146,6 +146,23 @@ def used_seeds(exclude: set[Path] | None = None) -> set[int]:
     return out
 
 
+def next_pool_seed0() -> int:
+    """按 §6.43.2「seed0 = 750000 + 600k，k 依次递增、永不复用」取下一个干净池。
+
+    修正（§6.57.1，2026-11-08 10:5x，R48 边界前、看结果前）：此前 measure_cmd 恒用
+    POOL_BASE(=750000)，而该池已在 R36 边界被 early_stop_r36.jsonl 消耗 ⇒ 按原命令
+    跑出来的测量必然 overlap>0、被 measure_stats 判 fresh_pool=False ⇒
+    verdict=continue_invalid_pool（白跑一次 600 seed 且不出结论）。
+    本函数只落实预登记里的「k 递增」，**不改任何阈值、不改任何判定分支**。
+    """
+    used = used_seeds()
+    for k in range(0, 40):
+        s0 = POOL_BASE + k * POOL_STEP
+        if not (used & set(range(s0, s0 + POOL_SIZE))):
+            return s0
+    return POOL_BASE + 40 * POOL_STEP
+
+
 def measure_stats(path: Path) -> dict:
     by_seed: dict[int, list[float]] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -286,7 +303,7 @@ def build_report(boundary: int, measure: Path | None, a: str, b: str) -> dict:
         rep["M"] = None
         rep["measure_cmd"] = (
             f".venv/bin/python eval_pairs.py --a {a} --b {b} --mode greedy "
-            f"--seeds 600 --seed0 {POOL_BASE} --workers 6 "
+            f"--seeds 600 --seed0 {next_pool_seed0()} --workers 6 "
             f"--out runs/gates/early_stop_r{boundary}.jsonl")
         rep["verdict"] = "need_measure"
         return rep

@@ -7,7 +7,9 @@
 //!    Search，避免 Python 版「每个叶子一次前向」造成的碎批。
 
 use crate::actions::*;
-use crate::encode::{self, Obs};
+use crate::encode;
+use crate::encode_v2::{self, ObsDyn};
+use crate::encode_v3;
 use crate::fan::FanTable;
 use crate::rng::Rng;
 use crate::state::Game;
@@ -15,6 +17,21 @@ use crate::tiles::NUM_TILES;
 
 pub const KIND_POLICY: u8 = 0;
 pub const KIND_VALUE: u8 = 1;
+
+/// 观测编码版本：1 = v1（15/70，master 口径）· 2 = v2（31/98）· 3 = v3（63/130，M1 学生）。
+/// **默认 1**：所有未显式传参的调用点保持既有行为（零回归）。
+pub const ENC_V1: u8 = 1;
+pub const ENC_V2: u8 = 2;
+pub const ENC_V3: u8 = 3;
+
+/// 编码版本 → (通道数, 全局维)，供 Python 侧 reshape 校验。
+pub fn enc_shape(enc: u8) -> (usize, usize) {
+    match enc {
+        ENC_V3 => (encode_v3::NUM_CHANNELS_V3, encode_v3::GLOBAL_DIM_V3),
+        ENC_V2 => (encode_v2::NUM_CHANNELS_V2, encode_v2::GLOBAL_DIM_V2),
+        _ => (encode::NUM_CHANNELS, encode::GLOBAL_DIM),
+    }
+}
 
 pub struct Task {
     pub game: Game,
@@ -28,7 +45,8 @@ pub struct Task {
 }
 
 pub struct Batch {
-    pub obs: Vec<Obs>,
+    /// v1/v2/v3 统一为动态维度；通道数 = tiles.len()/27，全局维 = glob.len()
+    pub obs: Vec<ObsDyn>,
     pub kind: Vec<u8>,
     pub head: Vec<u8>,
     pub task_index: Vec<usize>,
@@ -44,6 +62,8 @@ pub struct Search {
     /// 每个 origin 的 IS 权重（p_uniform/q_proposal；均匀路径恒 1.0）
     pub weights: Vec<f64>,
     pub ff_cap: usize,
+    /// 观测编码版本（1/2/3）—— 2026-11-08 方案 D
+    pub enc: u8,
     pending: Vec<(usize, u8, u8)>,
     unsettled: Vec<usize>,
     pub ft: FanTable,
@@ -255,6 +275,14 @@ impl Search {
     /// `lam`：信念混合系数（1.0=均匀现状）；`reweight`：是否按 IS 权重聚合。
     pub fn new_fair(game: &Game, p: u8, legal: &[Action], n_det: usize, ff_cap: usize,
                     seed: u64, ft: &FanTable, fair: bool, lam: f64, reweight: bool) -> Self {
+        Self::new_fair_enc(game, p, legal, n_det, ff_cap, seed, ft, fair, lam, reweight, ENC_V1)
+    }
+
+    /// 同 `new_fair`，额外指定观测编码版本（方案 D：enc=3 时把 v3 学生塞进搜索）。
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_fair_enc(game: &Game, p: u8, legal: &[Action], n_det: usize, ff_cap: usize,
+                        seed: u64, ft: &FanTable, fair: bool, lam: f64, reweight: bool,
+                        enc: u8) -> Self {
         let mut rng = Rng::new(seed);
         let mut ws: Vec<f64> = Vec::with_capacity(n_det);
         let seeds: Vec<(Game, Vec<Action>, usize, Vec<Action>)> = (0..n_det)
@@ -273,19 +301,24 @@ impl Search {
                 (sim, legal.to_vec(), d, Vec::new())
             })
             .collect();
-        Self::build_w(seeds, p, ff_cap, ft, ws)
+        Self::build_w(seeds, p, ff_cap, ft, ws, enc)
     }
 
     /// 后续层：把多个叶子的动作合并到一个 Search（跨叶子批量）。
     /// 每个 seed = (叶子局面, 候选动作, 第一层 origin 编号, 到达该叶子的动作前缀)
     pub fn from_seeds(seeds: Vec<(Game, Vec<Action>, usize, Vec<Action>)>, p: u8,
                       ff_cap: usize, ft: &FanTable) -> Self {
+        Self::from_seeds_enc(seeds, p, ff_cap, ft, ENC_V1)
+    }
+
+    pub fn from_seeds_enc(seeds: Vec<(Game, Vec<Action>, usize, Vec<Action>)>, p: u8,
+                          ff_cap: usize, ft: &FanTable, enc: u8) -> Self {
         let ws = vec![1.0; seeds.len()];
-        Self::build_w(seeds, p, ff_cap, ft, ws)
+        Self::build_w(seeds, p, ff_cap, ft, ws, enc)
     }
 
     fn build_w(seeds: Vec<(Game, Vec<Action>, usize, Vec<Action>)>, p: u8,
-               ff_cap: usize, ft: &FanTable, weights: Vec<f64>) -> Self {
+               ff_cap: usize, ft: &FanTable, weights: Vec<f64>, enc: u8) -> Self {
         let mut tasks = Vec::new();
         let mut groups = Vec::new();
         let mut origins = Vec::with_capacity(seeds.len());
@@ -308,6 +341,7 @@ impl Search {
             origins,
             weights,
             ff_cap,
+            enc,
             pending: Vec::new(),
             unsettled: Vec::new(),
             ft: ft.clone(),
@@ -319,7 +353,7 @@ impl Search {
     fn build(seeds: Vec<(Game, Vec<Action>, usize, Vec<Action>)>, p: u8,
              ff_cap: usize, ft: &FanTable) -> Self {
         let ws = vec![1.0; seeds.len()];
-        Self::build_w(seeds, p, ff_cap, ft, ws)
+        Self::build_w(seeds, p, ff_cap, ft, ws, ENC_V1)
     }
 
     fn classify(&mut self) {
@@ -382,7 +416,15 @@ impl Search {
         for &(i, k, h) in &self.pending {
             let g = &self.tasks[i].game;
             let who = if k == KIND_VALUE { self.p } else { g.actor() };
-            b.obs.push(encode::encode_v1(g, who, &self.ft));
+            // 2026-11-08（方案 D）：按 enc 分派编码。
+            // enc=1 走 `Obs → ObsDyn` 无损升维（逐位等于旧 `encode_v1` 输出，
+            // 由 `tests/v1_batch_parity` 字节级回归保证）。
+            let o: ObsDyn = match self.enc {
+                ENC_V3 => encode_v3::encode_v3(g, who, &self.ft),
+                ENC_V2 => encode_v2::encode_v2(g, who, &self.ft),
+                _ => encode::encode_v1(g, who, &self.ft).into(),
+            };
+            b.obs.push(o);
             b.kind.push(k);
             b.head.push(h);
             b.task_index.push(i);

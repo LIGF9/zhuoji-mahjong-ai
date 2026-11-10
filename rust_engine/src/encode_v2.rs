@@ -32,6 +32,21 @@ pub struct ObsDyn {
     pub mask_len: usize,
 }
 
+/// 2026-11-08（方案 D）：把固定尺寸的 v1 `Obs` 无损升维成 `ObsDyn`，
+/// 使 `search.rs::take_batch` 可以统一返回 `Vec<ObsDyn>`（v1/v2/v3 同一条路径）。
+/// 逐位等价：tiles/glob 按原样搬，不做任何重排或补零。
+impl From<crate::encode::Obs> for ObsDyn {
+    fn from(o: crate::encode::Obs) -> Self {
+        ObsDyn {
+            tiles: o.tiles.to_vec(),
+            glob: o.glob.to_vec(),
+            head: o.head,
+            mask: o.mask,
+            mask_len: o.mask_len,
+        }
+    }
+}
+
 #[inline]
 fn rk0(t: u8) -> usize {
     (t % 9) as usize // 0 基点数，对齐 Python rank_of

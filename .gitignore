@@ -15,6 +15,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# 项目工作区数据（重要：不是缓存，绝不删除；也不进 git）
+.workbuddy/
+
 # 运行时导出的 ONNX（首次启动自动生成）
 models/onnx/
 

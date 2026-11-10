@@ -232,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
             "pool": {"seed0": FROZEN_SEED0, "seeds": FROZEN_SEEDS, "baseline": MASTER},
             "generated_by": "tools/bestof_rank.py",
             "ranking": [{"rank": i, "label": e["label"], "round": e["round"],
-                         "kind": e["kind"], "path": e["path"], "stat": e["stat"]}
+                         "kind": e["kind"], "path": e["stat"]["path"], "stat": e["stat"]}
                         for i, e in enumerate(series, 1)],
             "top_pairwise": proc,
             "selection_bias_est": bias,
