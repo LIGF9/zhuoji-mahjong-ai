@@ -5732,7 +5732,9 @@ function isChampionValue(v) {
    （终评最强）进「终评最强」组，其余历史冠军进「历史冠军（实验）」组。
    同时去掉 label 括号里的评估说明，缩短每一行的视觉长度。 */
 const CHAMP_GROUP_BEST = "终评最强（附加冠军）";
-const CHAMP_GROUP_OLD  = "历史冠军（实验）";
+/* 2026-11-10：原名「历史冠军（实验）」——对 E-SLIM 学生这种**新上线、可用**的
+   轻量档是误导（学生不是历史遗留，也不是实验品，只是参数少）。改为中性文案。 */
+const CHAMP_GROUP_OLD  = "附加冠军（可选）";
 function registerChampionOptions() {
   const list = (META && META.models) || [];
   const champs = list.filter(m => m && m.champion && m.stem);
