@@ -7070,12 +7070,15 @@ function hintSourceNote(r) {
   const src = r.src || {};
   if (typeof r.src_ok === "boolean") {
     const detail = `实际权重 ${src.stem || got} · ${src.engine || "未知通道"}` +
-                   (src.enc != null ? ` · enc${src.enc}` : "");
+                   (src.enc != null ? ` · enc${src.enc}` +
+                     (src.enc_expected != null && src.enc !== src.enc_expected
+                       ? `（应为 enc${src.enc_expected}）` : "") : "");
     if (r.src_ok) return { ok: true, html: `来自：${strategyLabel(got)}`, detail };
+    const viaRust = String(src.engine || "").indexOf("rust") === 0;
     return { ok: false, detail,
       html: `⚠️ 本次建议实际由「${src.stem || "未知权重"}」计算，不是所选的` +
             `「${strategyLabel(want)}」；所选模型未参与本次出牌排序。` +
-            `（${src.engine === "rust-ort" ? "搜索通道固定使用该权重" : src.engine || "未知通道"}）` };
+            `（${viaRust ? "搜索通道固定使用该权重" : src.engine || "未知通道"}）` };
   }
   // 旧服务端兜底：贪心档的 model 是裸 stem（无 "model:" 前缀），别误判成错档位。
   const bare = !got.includes(":");
@@ -9413,12 +9416,24 @@ bindPickers("boot-players");
    端到端 /api/hint 中位（9 次采样）：深算 n32 0.13s / 极算 n128 0.09s / 大师 0.02s。
    「超时自动操作」比它还快 = 推荐还没算完就被执行，策略形同虚设。 */
 const STRAT_LATENCY = { search32: 0.13, search128: 0.09, model: 0.02 };
-function stratLatency(kind) { return STRAT_LATENCY[kind] || 0.02; }
+/* 2026-11-10 E-WEIGHT：修真档后冠军（v3 9.85M）搜索真的用所选权重前向，
+   线上实测 search128 ≈1.76s / search32 ≈2.64s（主力 v1 仍 0.17/0.08s）。
+   按所选 stem 区分延迟，避免「超时自动操作」比计算还快却不提醒（§6.68.3 隐患）。
+   数值取实测上浮一档，只影响提示文案，不决定任何出牌或降级。 */
+const STRAT_LATENCY_V3 = { search32: 2.7, search128: 1.8, model: 0.02 };
+function isHeavyStem(s) {
+  const stem = String(s || "").split(":")[1] || "";
+  return !!stem && !/^(master|best|dushan_master)$/.test(stem);
+}
+function stratLatency(kind, strategy) {
+  const t = isHeavyStem(strategy) ? STRAT_LATENCY_V3 : STRAT_LATENCY;
+  return t[kind] || 0.02;
+}
 function checkTimeoutLink() {
   const box = el("timeout-warn"), txt = el("timeout-warn-text"), fix = el("timeout-warn-fix");
   if (!box || !txt || !fix) return;
   const kind = String(SET.strategy || "").split(":")[0];
-  const lat = stratLatency(kind);
+  const lat = stratLatency(kind, SET.strategy);
   const to = parseFloat(el("set-timeout") && el("set-timeout").value) || 0;
   const on = el("set-timeouton") && el("set-timeouton").checked;
   if (!on || to >= lat) { box.style.display = "none"; return; }

@@ -123,11 +123,15 @@ class OrtForward:
     LADDER = (128, 256, 512, 1024, 2048)
 
     def __init__(self, onnx_path: str | Path, provider: str = "coreml", threads: int = 1,
-                 warm: bool = False):
+                 warm: bool = False, ch: int = 15, gdim: int = 70):
         self.path = str(Path(onnx_path).resolve())
         self.provider = provider
         self.threads = max(1, int(threads))
         self.mode = f"ort-{provider}"
+        # 2026-11-10：输入维度随编码器版本变（v1=15/70，v3=63/130）。
+        # 预热必须按权重真实维度造张量，否则 CoreML 会拒绝全部形状。
+        self.ch = int(ch)
+        self.gdim = int(gdim)
         if OrtForward._SHAPES is None:
             from collections import OrderedDict  # noqa: PLC0415
             OrtForward._SHAPES = OrderedDict()
@@ -150,8 +154,8 @@ class OrtForward:
         """按形状预热（每形状一次编译）；形状与真实模型不符时静默跳过。"""
         for b in shapes:
             try:
-                self.raw(np.zeros((b, 15, 27), np.float32),
-                         np.zeros((b, 70), np.float32))
+                self.raw(np.zeros((b, self.ch, 27), np.float32),
+                         np.zeros((b, self.gdim), np.float32))
             except Exception:  # noqa: BLE001
                 pass
 

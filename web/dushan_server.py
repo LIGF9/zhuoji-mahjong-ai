@@ -582,16 +582,47 @@ def search_device() -> str:
     return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
+def search_device_for(entry: dict) -> str:
+    """按权重编码版本挑前向后端（2026-11-10 E-WEIGHT，只影响线上推荐延迟）。
+
+    修真档后实测（``tools/weight_fix_verify.py``，ply1×n_det128、同局面连跑 3 次）：
+      * v1 主力 / ORT-CoreML：冷 0.85 s、热 0.08 s  ← 保持 ORT
+      * v1 主力 / torch-MPS ：冷 0.26 s、热 0.13 s
+      * v3 冠军 / ORT-CoreML：27.0 / 28.1 / 27.5 s   ← 稳态也慢，不是冷编译
+      * v3 冠军 / torch-MPS ：1.43 / 1.29 / 1.24 s   ← 快 ~22×
+    v3（63/130、SE/SE-dual/dueling）在 CoreML EP 上被切成约 65 个分区，
+    ANE 收益被分区开销吃光。两者 Q 差 ≤0.003（fp16→fp32 的数值精度差，
+    非口径变化），且与离线 ``eval_pairs.py --device mps`` 的默认后端一致。
+
+    **绝不因超时降级模型**：这里只换前向后端，权重 / encoder_version /
+    ply / n_det / topk / ff_cap / fair 全部不变。显式设置
+    ``DUSHAN_SEARCH_DEVICE`` 时尊重调用方，不做自动选择（便于回归对拍）。
+    """
+    base = search_device()
+    if os.environ.get("DUSHAN_SEARCH_DEVICE", "").strip():
+        return base
+    try:
+        enc = int(entry["meta"].get("encoder_version", 1))
+    except (KeyError, TypeError, ValueError):
+        enc = 1
+    if enc >= 3 and base.startswith("ort"):
+        return "mps" if torch.backends.mps.is_available() else "cpu"
+    return base
+
+
 # ---------------------------------------------------------------------------
-# 2026-11-09 线上推荐「来源核验」
+# 2026-11-09 线上推荐「来源核验」 / 2026-11-10 修根因（E-WEIGHT）
 # ---------------------------------------------------------------------------
 # Rust 搜索的前向后端由 zhuoji.forward.ensure_onnx 决定权重文件。历史实现里
 # get_model() 没有给 net 设置 onnx_stem，ensure_onnx 因此回落到 "adhoc" 别名；
 # 而 models/onnx/adhoc.onnx 与 dushan_master.onnx 逐位相同 ⇒ 无论前端选哪个
-# 冠军，搜索档（search32/search128）的 Q 值实际都由冻结主力算出，可 /api/hint
-# 的 model 字段仍按请求回显所选 stem，面板显示「来自：极算·128」会误导用户。
-# 这里把「实际参与前向的权重」查出来下发，供面板标题行显示 ✓ / ✗。
-# 只做核验与展示，不改变任何推理口径（不改 n_det/ply/topk/ff_cap/device）。
+# 冠军，搜索档（search32/search128）的 Q 值实际都由冻结主力算出；同时
+# RustSearchAgent.rank_detail 漏传 enc，Rust 内核恒用 v1（15/70）编码。
+# 2026-11-10 已修三处根因：① get_model 设 net.onnx_stem=stem；
+# ② rank_detail 传 enc=self.enc；③ 为每个冠军 stem 预导出独立 ONNX。
+# 本节保留「按实际 ORT 权重反查真实 stem」的核验逻辑，作为防回归的最后一道闸：
+# 只要以后再出现别名/缓存串用，标题行会立刻显示红叉而不是静默误导。
+# 核验层不改变任何推理口径（不改 n_det/ply/topk/ff_cap/device）。
 _ONNX_ID_CACHE: dict[tuple[str, int], str] = {}
 
 
@@ -617,6 +648,30 @@ def onnx_weight_identity(net) -> str:
     return name
 
 
+def weight_identity(entry: dict, dev: str) -> str:
+    """本次前向真正用的权重 stem（按通道分别核验，不能互相冒充）。
+
+    * ORT 通道：以会话实际加载的 ``.onnx`` 为准（``onnx_weight_identity``
+      会把历史 ``adhoc`` 别名按 sha 反查成正式名）；
+    * torch/MPS/CPU 通道：以 ``get_model`` 载入内存权重的 ``.pt`` 为准。
+    """
+    if str(dev).lower().startswith("ort"):
+        return onnx_weight_identity(entry["net"])
+    return Path(entry["path"]).stem
+
+
+def source_ok(src: dict, stem: str) -> bool:
+    """本次建议是否真的来自所选权重：stem 与编码版本**同时**对得上。
+
+    2026-11-10：只比对 stem 不够 —— 曾经 stem 正确但 Rust 内核漏传 enc，
+    v3 权重被按 v1（15/70）编码解释，同样是「假档」。两侧都由推理链路
+    如实上报，任何一项不符就显示红叉。
+    """
+    return bool(src.get("stem") == stem
+                and src.get("enc") is not None
+                and src.get("enc") == src.get("enc_expected"))
+
+
 def warm_ort_backend(stem: str | None = None) -> None:
     """后台预热 ORT：把「按形状建会话（每个 ~150 ms 编译）」挪到没人等的时候。"""
     if not search_device().lower().startswith("ort"):
@@ -630,7 +685,12 @@ def warm_ort_backend(stem: str | None = None) -> None:
             from zhuoji.forward import OrtForward, ensure_onnx  # noqa: PLC0415
 
             entry = get_model(stem)
-            OrtForward(ensure_onnx(entry["net"], stem), "coreml", warm=True)
+            net = entry["net"]
+            # 2026-11-10：v3 冠军是 63/130 输入，旧预热写死 15/70 会
+            # 被 CoreML 全部拒绝（异常被 warm 静默吞掉）⇒ 首个真档请求
+            # 现编译 5 个形状。按权重自身维度预热。
+            OrtForward(ensure_onnx(net, stem), "coreml", warm=True,
+                       ch=int(net.in_channels), gdim=int(net.global_dim))
         except Exception:  # noqa: BLE001
             pass
 
@@ -814,6 +874,12 @@ def get_model(stem: str) -> dict:
     ck = torch.load(path, map_location="cpu", weights_only=False)
     # 用检查点自带的元数据还原结构（v1/v2、有无空间头、编码器版本都由它声明）
     net, enc_v = build_from_ckpt(ck)
+    # 2026-11-10 E-WEIGHT 根因①：ONNX 缓存必须按 stem 隔离。
+    # 不设这个属性时 zhuoji.forward.ensure_onnx 回落到 "adhoc"，而
+    # models/onnx/adhoc.onnx 与 dushan_master.onnx 逐位相同 ⇒ 选任何冠军
+    # 搜索档都串用冻结主力权重（§6.68 假档事故）。离线 eval_pairs.py 早已
+    # 这么做，这里补齐 Web 侧。
+    net.onnx_stem = stem
     cfg = net_config_from_ckpt(ck)
     params = sum(int(v.numel()) for v in ck["state_dict"].values() if hasattr(v, "numel"))
     entry = {
@@ -1754,7 +1820,7 @@ class Session:
                 a = bot.choose(game)
                 return {"ok": True, "model": f"teacher:{style}", "head": "teacher", "value": 0.0,
                         "src": {"stem": f"teacher:{style}", "engine": "heuristic"},
-                        "src_ok": True,
+                        "src_ok": True,   # 启发式无权重/编码版本，来源恒等于策略名
                         "items": [self._hint_item(game, a, 1.0, my)],
                         "situation": coach.situation_summary(game, my),
                         "tip": "",
@@ -1764,7 +1830,7 @@ class Session:
                 a = RandomBot(seed=0).choose(game)
                 return {"ok": True, "model": "random", "head": "random", "value": 0.0,
                         "src": {"stem": "random", "engine": "heuristic"},
-                        "src_ok": True,
+                        "src_ok": True,   # 同上：无权重策略
                         "items": [self._hint_item(game, a, 1.0, my)],
                         "situation": coach.situation_summary(game, my),
                         "tip": "",
@@ -1831,7 +1897,7 @@ class Session:
                 return {"ok": True, "model": f"{_tag}:{stem}",
                         "head": "search", "value": round(float(v_now), 3),
                         "n_det": n_det, "ply": ply,
-                        "src": src, "src_ok": bool(src.get("stem") == stem),
+                        "src": src, "src_ok": source_ok(src, stem),
                         "items": items, "situation": situation, "tip": tip,
                         "note": _desc
                                 + "；理由只依据公开信息（自己手牌/四家弃牌副露/已现张数/鸡种），"
@@ -1859,11 +1925,13 @@ class Session:
                 tip = coach.compare_tip(view, items)
             except Exception:
                 tip = ""
+            _enc = int(getattr(entry["net"], "encoder_version", 1))
+            _gsrc = {"stem": stem, "engine": "torch",
+                     "enc": _enc, "enc_expected": _enc}
             return {"ok": True, "model": stem, "head": head,
                     "value": round(float(value), 3), "items": items,
-                    "src": {"stem": stem, "engine": "torch",
-                            "enc": int(getattr(entry["net"], "encoder_version", 1))},
-                    "src_ok": True,
+                    "src": _gsrc,
+                    "src_ok": source_ok(_gsrc, stem),
                     "situation": situation, "tip": tip,
                     "note": "value 是模型对该局面（你的视角）的估值，正数偏有利"}
         except Exception as exc:
@@ -1888,7 +1956,7 @@ class Session:
         from zhuoji.rust_search import RustSearchAgent
 
         entry = get_model(stem)
-        dev = search_device()
+        dev = search_device_for(entry)
         seed = (7919 * (int(getattr(self, "hand_index", 0)) + 1)
                 + 13 * int(getattr(game, "wall_pos", 0)) + int(my))
         legal = game.legal_actions()
@@ -1900,7 +1968,7 @@ class Session:
         cache = getattr(self, "_rust_cache", None)
         if cache is None:
             cache = self._rust_cache = {}
-        key = (stem, ply, int(topk), int(n_det))
+        key = (stem, ply, int(topk), int(n_det), str(dev))
         ag = cache.get(key)
         if ag is None:
             ag = RustSearchAgent(entry["net"], seed=seed, device=dev,
@@ -1911,10 +1979,13 @@ class Session:
         with self.search_lock:
             q, qs, diag = ag.rank_detail(game)
         items = explain_items(view, legal, q, qs, diag, 4)
-        # rank_detail 未传 enc ⇒ Rust 内核恒用 v1 编码（15/70）；ORT 会话的权重
-        # 由 ensure_onnx 决定（见 onnx_weight_identity）。两者都如实上报。
-        src = {"stem": onnx_weight_identity(entry["net"]),
-               "engine": "rust-ort", "enc": 1}
+        # 2026-11-10 E-WEIGHT 根因②已修：rank_detail 现在透传 enc=self.enc，
+        # Rust 内核与 ORT 会话同用权重自带的编码版本（v1=15/70、v3=63/130）。
+        # 两者都如实上报，source_ok() 逐项比对，任何串用都显示红叉。
+        src = {"stem": weight_identity(entry, dev),
+               "engine": f"rust-{dev}", "enc": int(ag.enc),
+               "enc_expected": int(getattr(entry["net"], "encoder_version", 1)),
+               "backend": dev}
         return items, self._value_now(game, stem), src
 
     @staticmethod
@@ -1924,7 +1995,8 @@ class Session:
             enc = int(getattr(get_model(stem)["net"], "encoder_version", 1))
         except Exception:  # noqa: BLE001
             enc = 1
-        return {"stem": stem, "engine": engine, "enc": enc}
+        return {"stem": stem, "engine": engine, "enc": enc,
+                "enc_expected": enc}
 
     def _search_explain(self, game: DushanGame, my: int, stem: str,
                         ply: int = 3, n_det: int = 32, engine: str = "py",

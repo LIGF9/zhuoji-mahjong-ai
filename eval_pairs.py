@@ -5,6 +5,8 @@
   * 基线池冻结：master 贪心 / N32（master+search32 线上口径）/ 上轮最佳。
   * 自对弈胜率不得作为任何决策依据。
   * A/B 两侧模式独立（--a-mode/--b-mode），支持「新贪心 vs N32」混合对局。
+  * 2026-11-10 §6.71.3 E-POOL 多对手池：新增 `noisy10`（10% 均匀随机动作）
+    与 `heuristic`（纯规则教师）两个对手模式；既有 greedy/search32 路径零改动。
 
 输出 JSONL 与 analyze.py / duel.py 口径一致：
     {"seed", "cand_seat", "deltas", "steps", "type", "winner", "s"}
@@ -42,6 +44,29 @@ ALL_SEATS = (0, 1, 2, 3)
 _NET_CACHE: dict = {}
 _AG_CACHE: dict = {}
 
+# 支持的对手/候选模式。前两个是冻结口径（§0 / §6.11.7），后两个是
+# §6.71.3 E-POOL 新增的**对手风格**，不参与任何既有判据。
+MODES = ("greedy", "search32", "noisy10", "heuristic")
+
+
+class _Noisy:
+    """以固定概率走均匀随机动作的策略包装器（E-POOL O4）。
+
+    只在 ``len(legal)>1`` 时生效；随机流用 numpy Generator，逐局由
+    ``get_agent`` 重置，保证同一 (seed, seat) 可复现。
+    """
+
+    def __init__(self, base, p: float, seed: int):
+        self.base = base
+        self.p = float(p)
+        self.rng = np.random.default_rng(seed)
+
+    def choose(self, game):
+        acts = game.legal_actions()
+        if len(acts) > 1 and self.rng.random() < self.p:
+            return acts[int(self.rng.integers(len(acts)))]
+        return self.base.choose(game)
+
 
 def _load_net(model_path):
     import torch
@@ -62,18 +87,34 @@ def get_agent(model_path, mode, seat, seat_seed, dev, n_det=32):
     key = (str(model_path), mode, seat, n_det)
     ag = _AG_CACHE.get(key)
     if ag is None:
-        net = _load_net(model_path)
-        if mode == "greedy":
+        if mode in ("greedy", "noisy10"):
             from zhuoji.agent import NetAgent
-            ag = NetAgent(net, seed=seat_seed, temperature=0.0, name="greedy")
+
+            net = _load_net(model_path)
+            base = NetAgent(net, seed=seat_seed, temperature=0.0, name=mode)
+            ag = _Noisy(base, 0.10, seat_seed) if mode == "noisy10" else base
+        elif mode == "heuristic":
+            # 规则基线：完全不加载 NN；model_path 只是占位参数。
+            from zhuoji.bots import TEACHER_STYLES, HeuristicBot
+
+            ag = HeuristicBot(seed=seat_seed,
+                              weights=TEACHER_STYLES["balanced"])
+            ag.name = "heuristic:balanced"
         else:
             from zhuoji.rust_search import RustSearchAgent
+            net = _load_net(model_path)
             ag = RustSearchAgent(net, seed=seat_seed, device=dev, name="s32",
                                  ply=3, n_det=n_det, topk=3, ff_cap=24, fair=True)
         _AG_CACHE[key] = ag
-    # 复用：重置 RNG 流（NetAgent 用 .rng；RustSearchAgent 用 .seed/._call）
-    if hasattr(ag, "rng"):
+    # 复用：重置 RNG 流（NetAgent / _Noisy 用 numpy；HeuristicBot 用 stdlib）
+    if mode == "heuristic":
+        import random
+
+        ag.rng = random.Random(seat_seed)
+    elif hasattr(ag, "rng"):
         ag.rng = np.random.default_rng(seat_seed)
+    if getattr(ag, "base", None) is not None and hasattr(ag.base, "rng"):
+        ag.base.rng = np.random.default_rng(seat_seed + 7919)
     if hasattr(ag, "seed"):
         ag.seed = int(seat_seed)
     if hasattr(ag, "_call"):
@@ -175,11 +216,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--a", required=True, help="候选模型 .pt")
     ap.add_argument("--b", default=str(ROOT / "models/dushan_master.pt"))
-    ap.add_argument("--mode", choices=["greedy", "search32"], default="greedy",
+    ap.add_argument("--mode", choices=MODES, default="greedy",
                     help="A/B 同模式（被 --a-mode/--b-mode 覆盖）")
-    ap.add_argument("--a-mode", choices=["greedy", "search32"], default="",
+    ap.add_argument("--a-mode", choices=MODES, default="",
                     help="候选侧模式（空 = 跟随 --mode）")
-    ap.add_argument("--b-mode", choices=["greedy", "search32"], default="",
+    ap.add_argument("--b-mode", choices=MODES, default="",
                     help="基线侧模式（空 = 跟随 --mode）")
     ap.add_argument("--seats", default="0,1,2,3",
                     help="四座旋转（默认 0,1,2,3；旧口径 0,2）")

@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>独山麻将 AI 训练实验 · 精简解读</title>
+<style>
+  :root{
+    --bg:#f6f8fb; --card:#ffffff; --line:#e3e9f0; --ink:#1b2733; --ink2:#4a5b6c;
+    --muted:#7b8b9c; --blue:#2563eb; --blue-soft:#e8f0ff; --gray:#94a3b8;
+    --green:#0f8a5f; --green-soft:#e6f6ef; --amber:#b26a00; --amber-soft:#fff4e0;
+    --red:#c0392b; --red-soft:#fdecea;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    line-height:1.75;font-size:16px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:940px;margin:0 auto;padding:36px 22px 72px}
+  header{text-align:center;padding:22px 0 12px}
+  .kicker{display:inline-block;font-size:12px;letter-spacing:.14em;color:var(--blue);
+    background:var(--blue-soft);padding:5px 12px;border-radius:20px;font-weight:600}
+  h1{font-size:31px;line-height:1.35;margin:16px 0 8px;font-weight:700;letter-spacing:-.02em}
+  .sub{color:var(--ink2);font-size:15px;margin:0}
+  .meta{color:var(--muted);font-size:12.5px;margin-top:12px}
+  h2{font-size:21px;margin:0 0 6px;font-weight:700;letter-spacing:-.01em}
+  h3{font-size:16px;margin:0 0 8px;font-weight:700}
+  p{margin:0 0 12px}
+  section{margin-top:38px}
+  .lead{color:var(--ink2);font-size:14.5px;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-bottom:16px}
+  .verdict{background:linear-gradient(0deg,#fff,#fff);border:1px solid #cfe0ff;border-left:5px solid var(--blue);
+    border-radius:14px;padding:24px 26px}
+  .verdict .big{font-size:23px;font-weight:700;line-height:1.5;margin-bottom:10px}
+  .verdict .big em{font-style:normal;color:var(--blue)}
+  .pill{display:inline-block;font-size:12px;padding:3px 10px;border-radius:20px;font-weight:600;vertical-align:middle}
+  .pill.ok{background:var(--green-soft);color:var(--green)}
+  .pill.warn{background:var(--amber-soft);color:var(--amber)}
+  .pill.info{background:var(--blue-soft);color:var(--blue)}
+  .pill.mute{background:#eef1f5;color:var(--muted)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .mini{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .mini .t{font-size:13px;color:var(--muted);margin-bottom:6px}
+  .mini .v{font-size:25px;font-weight:700;letter-spacing:-.02em}
+  .mini .d{font-size:12.5px;color:var(--ink2);margin-top:4px}
+  .who{display:flex;gap:14px;align-items:flex-start}
+  .badge{flex:none;width:42px;height:42px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+    font-weight:700;font-size:14px;color:#fff}
+  .badge.a{background:var(--blue)} .badge.b{background:#7b8b9c}
+  .tag{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:1px 7px;margin-left:6px}
+  .chart{width:100%;height:auto;display:block;margin:6px 0 4px}
+  .note{font-size:13px;color:var(--muted);line-height:1.65}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:11px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600;font-size:12.5px;background:#fafbfd}
+  td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  .bar{height:9px;border-radius:5px;background:#e9eef5;overflow:hidden;margin-top:7px}
+  .bar i{display:block;height:100%;border-radius:5px;background:var(--blue)}
+  .bar i.g{background:var(--gray)} .bar i.a{background:var(--amber)}
+  .steps{counter-reset:s;list-style:none;padding:0;margin:0}
+  .steps li{counter-increment:s;position:relative;padding-left:40px;margin-bottom:16px}
+  .steps li::before{content:counter(s);position:absolute;left:0;top:1px;width:26px;height:26px;border-radius:50%;
+    background:var(--blue-soft);color:var(--blue);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .dont{background:var(--red-soft);border:1px solid #f3c8c2;border-radius:12px;padding:16px 18px;margin-bottom:12px}
+  .dont .h{color:var(--red);font-weight:700;font-size:14px;margin-bottom:4px}
+  .dont .b{font-size:13.5px;color:#6b3b34}
+  .ok{background:var(--green-soft);border:1px solid #bfe6d4;border-radius:12px;padding:16px 18px}
+  .ok .h{color:var(--green);font-weight:700;font-size:14px;margin-bottom:4px}
+  .ok .b{font-size:13.5px;color:#2c5a47}
+  details{background:#fafbfd;border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-top:12px}
+  summary{cursor:pointer;font-size:14px;font-weight:600;color:var(--ink2)}
+  details p{font-size:13.5px;color:var(--ink2);margin-top:10px}
+  .timeline{border-left:2px solid #dbe4ef;margin-left:8px;padding-left:20px}
+  .timeline .item{position:relative;margin-bottom:16px}
+  .timeline .item::before{content:"";position:absolute;left:-27px;top:8px;width:10px;height:10px;border-radius:50%;
+    background:var(--blue);border:2px solid #fff;box-shadow:0 0 0 2px #dbe4ef}
+  .timeline .d{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .timeline .x{font-size:14.5px}
+  footer{margin-top:46px;padding-top:18px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted)}
+  strong{font-weight:700}
+  .hl{background:#fff6d9;padding:0 3px;border-radius:3px}
+  @media(max-width:720px){.grid2,.grid3{grid-template-columns:1fr}h1{font-size:25px}.wrap{padding:22px 14px 50px}}
+  @media print{body{background:#fff}.card,.mini,.verdict{break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <span class="kicker">实验结果通俗版</span>
+  <h1>新模型到底强不强？<br>四场对局、四类成本，一次讲清楚</h1>
+  <p class="sub">独山麻将 AI · ExIt + PPO 训练终评 · 最终版 v1.1（2026-11-10 补遗 v1.1a）</p>
+  <p class="meta">主实验数据截止 2026-11-10 01:26 · 补遗数据截止 2026-11-10 10:35 · 依据 reports/终评报告-2026-11-13.md + docs/14天训练计划.md §6.71</p>
+</header>
+
+<section style="margin-top:18px">
+  <div class="card" style="border-left:4px solid var(--blue)">
+    <h3>2026-11-10 补遗：两项后续工作已完成</h3>
+    <p style="margin-bottom:8px"><strong>① 线上「假档」已修好。</strong>以前选「冠军 + 极算 128」，面板写着冠军，实际算牌的却是老模型（界面用红叉如实标出）。现在真正加载所选冠军，标题行变绿勾；同时把特别慢的计算通道换成快约 22 倍的通道，一次建议约 <strong>1.8~2.6 秒</strong>（老模型仍约 0.17 秒）。<strong>不会因为算得慢就偷偷换回老模型。</strong></p>
+    <p style="margin:0"><strong>② 补测了 5 种不同风格的对手。</strong>5 种全部方向为正、没有一种显著输 ⇒ 通过事前定好的「方向一致性」检验。但要看清一个关键限定：<strong>面对最强、也是同代最接近的对手时，优势小到看不清</strong>（+0.186±0.258，只能说「无足够证据」）。详见下方「补测：换对手还强吗」。</p>
+  </div>
+</section>
+
+<section>
+  <div class="verdict">
+    <div class="big">一句话结论：<em>新模型 P48 确实比老模型 master 强</em>，<br>但「强多少」取决于对手有没有开「搜索」。</div>
+    <p style="margin:0;color:var(--ink2);font-size:14.5px">
+      对手不推演时，P48 每副牌多赢约 <strong>5.1 分</strong>；给对手装上推演能力后，优势降到 <strong>1.5 分</strong>；
+      双方都推演时，P48 仍领先约 <strong>0.7 分</strong>，达到赛前定好的达标线。
+      最后换一批全新牌墙复核，方向一致，但样本太少，<strong>看不清</strong>——这是设计预期，不是失败。
+    </p>
+  </div>
+  <div class="grid3" style="margin-top:16px">
+    <div class="mini"><div class="t">最终判定（事前定好的规则）</div><div class="v" style="color:var(--green)">达成</div><div class="d">双侧搜索口径勉强过线，属弱显著</div></div>
+    <div class="mini"><div class="t">训练用时</div><div class="v">≈ 60 h</div><div class="d">11-06 02:34 → 11-08 14:29 统计早停</div></div>
+    <div class="mini"><div class="t">线上主力</div><div class="v" style="font-size:20px">仍是 master</div><div class="d">新模型只增加、不替换，需人工授权才切换</div></div>
+  </div>
+</section>
+
+<section>
+  <h2>先认识两位选手和两种出牌方式</h2>
+  <p class="lead">把「模型」想成打牌的人，把「搜索」想成出牌前在脑子里多推演几种看不见的牌。</p>
+  <div class="grid2">
+    <div class="card who">
+      <div class="badge b">老</div>
+      <div>
+        <h3>master（老模型）<span class="tag">0.77M 参数</span></h3>
+        <p style="margin:0;font-size:14px;color:var(--ink2)">原来的主力。只看当前信息直接出牌很快，但让它「多想几步」能明显变强。</p>
+      </div>
+    </div>
+    <div class="card who">
+      <div class="badge a">新</div>
+      <div>
+        <h3>P48（新模型，冠军）<span class="tag">9.85M 参数</span></h3>
+        <p style="margin:0;font-size:14px;color:var(--ink2)">跟着「会推演的老师」学了约 60 小时，把推演的经验压进了网络里，所以不推演也很强；代价是网络大约 13 倍大、每次思考更慢。</p>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>两种出牌方式</h3>
+    <p style="font-size:14px;color:var(--ink2);margin-bottom:10px">
+      <strong>贪心</strong>＝看一眼局面直接选最好的动作，一次计算，几毫秒。<br>
+      <strong>N32 搜索</strong>＝假设 32 种可能的隐藏牌墙、往前推演 3 层，把约 1 万种局面的评估结果汇总后再选，一次决策要几百毫秒到几秒。
+    </p>
+    <p class="note">麻将的关键难点是「别人的牌你看不见」。搜索就是靠多次假设来补这个信息差；训练新模型的目的，就是让网络不用现场推演也能做出接近老师的判断。</p>
+  </div>
+</section>
+
+<section>
+  <h2>四场擂台：谁赢了多少</h2>
+  <p class="lead">每张牌墙让新模型轮流坐 4 个座位各打一次，共 500 副牌 × 4 座 = 2000 局。数字是「新模型每副牌比另外三家平均多赢多少分」，零和计分。</p>
+  <div class="card">
+    <svg class="chart" viewBox="0 0 880 330" role="img" aria-label="四场对局中新模型相对优势的条形图与95%可信范围">
+      <title>四场对局的优势与可信范围</title>
+      <desc>对老模型贪心 +5.143 分；对老模型加搜索 +1.478 分；双方都加搜索 +0.679 分；独立旁证 +0.867 分但可信范围跨过零。</desc>
+      <line x1="180" y1="30" x2="180" y2="278" stroke="#c8d3df" stroke-width="1.5"/>
+      <g font-size="11" fill="#7b8b9c" font-family="sans-serif">
+        <text x="180" y="298" text-anchor="middle">0</text>
+        <text x="280" y="298" text-anchor="middle">1</text>
+        <text x="380" y="298" text-anchor="middle">2</text>
+        <text x="480" y="298" text-anchor="middle">3</text>
+        <text x="580" y="298" text-anchor="middle">4</text>
+        <text x="680" y="298" text-anchor="middle">5</text>
+        <text x="780" y="298" text-anchor="middle">6 分/副</text>
+      </g>
+      <g stroke="#eef2f7" stroke-width="1">
+        <line x1="280" y1="30" x2="280" y2="278"/><line x1="380" y1="30" x2="380" y2="278"/>
+        <line x1="480" y1="30" x2="480" y2="278"/><line x1="580" y1="30" x2="580" y2="278"/>
+        <line x1="680" y1="30" x2="680" y2="278"/><line x1="780" y1="30" x2="780" y2="278"/>
+      </g>
+      <g font-size="12.5" fill="#1b2733" font-family="sans-serif">
+        <text x="0" y="62">① 对老模型·不推演</text>
+        <text x="0" y="122">② 对老模型·加搜索</text>
+        <text x="0" y="182">③ 双方都加搜索</text>
+        <text x="0" y="242">④ 新牌墙复核（旁证）</text>
+      </g>
+      <g font-size="11" fill="#7b8b9c" font-family="sans-serif">
+        <text x="0" y="78">500 副 · 主口径</text>
+        <text x="0" y="138">500 副 · 组合①</text>
+        <text x="0" y="198">500 副 · 组合②（主目标）</text>
+        <text x="0" y="258">120 副 · 探索性</text>
+      </g>
+      <rect x="180" y="45" width="514" height="22" rx="4" fill="#2563eb"/>
+      <rect x="180" y="105" width="148" height="22" rx="4" fill="#2563eb"/>
+      <rect x="180" y="165" width="68" height="22" rx="4" fill="#2563eb"/>
+      <rect x="180" y="225" width="87" height="22" rx="4" fill="#94a3b8"/>
+      <g stroke="#1b2733" stroke-width="1.6" fill="none">
+        <path d="M 633 56 H 756 M 633 50 V 62 M 756 50 V 62"/>
+        <path d="M 270 116 H 386 M 270 110 V 122 M 386 110 V 122"/>
+        <path d="M 187 176 H 309 M 187 170 V 182 M 309 170 V 182"/>
+      </g>
+      <g stroke="#64748b" stroke-width="1.6" fill="none" stroke-dasharray="4 3">
+        <path d="M 136 236 H 397 M 136 230 V 242 M 397 230 V 242"/>
+      </g>
+      <g font-size="12.5" font-weight="700" font-family="sans-serif" text-anchor="end">
+        <text x="860" y="61" fill="#2563eb">+5.143</text>
+        <text x="860" y="121" fill="#2563eb">+1.478</text>
+        <text x="860" y="181" fill="#2563eb">+0.679</text>
+        <text x="860" y="241" fill="#64748b">+0.867</text>
+      </g>
+      <text x="180" y="320" font-size="11.5" fill="#7b8b9c" font-family="sans-serif">细横线 = 95% 可信范围；④ 的虚线跨过 0（左端到零点左侧）⇒ 看不清，不能说「有差」也不能说「没差」</text>
+    </svg>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <span class="pill ok">达成</span>
+      <h3 style="margin-top:10px">③ 双方都推演：仍领先 0.679 分</h3>
+      <p style="font-size:14px;color:var(--ink2);margin:0">这是赛前写死的「主目标」。规则是 <strong>p&lt;0.05 且优势 ≥0.5 分</strong>，实测 p=0.0282、优势 0.679 ⇒ 机械判定<strong>达成</strong>。但要如实说：属于<strong>弱显著</strong>，500 副里赢 259 副、输 238 副（其余平分），几乎五五开，不能说「大幅领先」。</p>
+    </div>
+    <div class="card">
+      <span class="pill warn">看不清</span>
+      <h3 style="margin-top:10px">④ 换一批全新牌墙：方向一致但证据不足</h3>
+      <p style="font-size:14px;color:var(--ink2);margin:0">只打 120 副，随机波动太大（±0.665），p=0.1923。按事前规则判<strong>「分辨率不足」</strong>，只能写「无足够证据」。它<strong>不推翻也不加强</strong>第 ③ 场，只是把「换牌墙后方向是否仍稳」记成一层薄薄的旁证。</p>
+    </div>
+  </div>
+  <div class="card">
+    <h3>为什么三个数字越来越小？</h3>
+    <p style="font-size:14px;color:var(--ink2);margin-bottom:8px">因为<strong>对手变强了</strong>，不是新模型变弱了。给老模型装上搜索，它的水平提高约 <strong>3.665 分/副</strong>（把对手从「贪心」换成「加搜索」，新模型的优势就从 5.143 掉到 1.478）。</p>
+    <p style="font-size:14px;color:var(--ink2);margin:0">新模型约<strong>吃掉了老师搜索红利的 29%</strong>——这部分就是本次训练真正学到的东西。注意：<span class="hl">1.478 和 0.679 来自两批完全不同的牌墙，不能直接相减</span>。把差值拿去检验会得到 −0.799±0.429、p=0.0623，统计上和「完全没变化」无法区分。</p>
+  </div>
+</section>
+
+<section>
+  <h2>补测：换 5 种对手，还强吗？</h2>
+  <p class="lead">2026-11-10 新增的外部效度检验。用同一批 500 副全新牌墙，让新模型分别对战 5 种风格；每种都让新模型轮流坐四个位置，共 10000 局。对手池和判定规则<strong>在看结果之前就写死</strong>。</p>
+  <div class="card">
+    <table>
+      <thead><tr><th>对手风格</th><th>每副多赢</th><th>结论（白话）</th></tr></thead>
+      <tbody>
+        <tr><td>老模型 master（正常打）</td><td class="num">+4.397±0.322</td><td>明显更强</td></tr>
+        <tr><td>同代早期冠军 P36</td><td class="num">+0.186±0.258</td><td><strong>看不清</strong>（无足够证据，不是「打平」）</td></tr>
+        <tr><td>更早的学生快照</td><td class="num">+1.479±0.297</td><td>明显更强</td></tr>
+        <tr><td>老模型 + 10% 随机乱打</td><td class="num">+8.117±0.313</td><td>明显更强（对手被削弱了）</td></tr>
+        <tr><td>不用神经网络的规则打法</td><td class="num">+12.198±0.342</td><td>明显更强（对手最弱）</td></tr>
+      </tbody>
+    </table>
+    <p class="note" style="margin-top:12px">5 种对手全部方向为正、没有一种显著落败 ⇒ 按事前规则<strong>通过「方向一致性」检验</strong>。但请注意：这只说明「没见到反向」，<strong>不等于每种风格都显著更强</strong>。</p>
+  </div>
+  <div class="card">
+    <h3>最重要的一句话</h3>
+    <p style="font-size:14px;color:var(--ink2);margin:0">数字从 +0.186 跳到 +12.198，主要反映的是<strong>对手本身强弱不同</strong>，不是新模型忽强忽弱。面对<strong>最强、也最接近自己</strong>的同代冠军 P36，优势小到本次实验看不清；大幅领先主要来自战胜较旧、较弱或被加噪的打法。这与四场擂台里「对手越强、优势越小」是同一件事，<strong>也说明前面的「达成」是弱显著、别当成碾压</strong>。这些数字不能互相相减，也不能合并成一个「平均强多少」。</p>
+  </div>
+</section>
+
+<section>
+  <h2>成本：快和慢差了多少倍</h2>
+  <p class="lead">下面都是实测，不是估算。「单步」＝出一张牌的一次决策；「整局」＝四家打完一副牌。</p>
+  <div class="card">
+    <table>
+      <thead><tr><th>方式</th><th>一次决策</th><th>相对长度</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>老模型 · 贪心</td><td class="num">0.00066 s</td><td><div class="bar"><i style="width:2%"></i></div></td><td>几乎瞬间</td></tr>
+        <tr><td>新模型 · 贪心</td><td class="num">0.00435 s</td><td><div class="bar"><i style="width:5%"></i></div></td><td>约 6.6 倍，仍是毫秒级</td></tr>
+        <tr><td>老模型 + 搜索 N32</td><td class="num">0.23 s</td><td><div class="bar"><i style="width:26%"></i></div></td><td>约 1 万次网络评估</td></tr>
+        <tr><td>新模型 + 搜索 N32</td><td class="num">2.1 s</td><td><div class="bar"><i class="a" style="width:62%"></i></div></td><td>比老模型慢约 <strong>9 倍</strong></td></tr>
+        <tr><td>页面「极算 128」· 老模型</td><td class="num">0.17 s</td><td><div class="bar"><i class="g" style="width:20%"></i></div></td><td>一直正常</td></tr>
+        <tr><td>页面「极算 128」· 新冠军</td><td class="num">1.76 s</td><td><div class="bar"><i class="a" style="width:55%"></i></div></td><td>2026-11-10 修真档后实测；「深算 32」为 2.64 s。旧版 0.138 s 是<strong>假档</strong>（偷偷用了老模型），已修复</td></tr>
+      </tbody>
+    </table>
+    <p class="note" style="margin-top:12px">横条是对数刻度的示意，只用来看量级差距，不代表线性比例。</p>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h3>一次搜索里，时间花在哪</h3>
+      <p style="font-size:14px;color:var(--ink2);margin-bottom:10px">搜索的「策略逻辑」（展开假设、结算、汇总）其实很便宜，贵的是它让网络重复算约 1 万次。</p>
+      <table>
+        <thead><tr><th>组合</th><th>网络计算</th><th>搜索策略</th></tr></thead>
+        <tbody>
+          <tr><td>老模型 + N32</td><td class="num">0.22 s（95%）</td><td class="num">13 ms（5%）</td></tr>
+          <tr><td>新模型 + N32</td><td class="num">2.05 s（98%）</td><td class="num">59 ms（2%）</td></tr>
+        </tbody>
+      </table>
+      <p class="note" style="margin-top:10px">搜索骨架本来就是 Rust 写的，把这部分全部优化到零也只省 2~5%。真正的瓶颈是大网络本身，所以「再用 Rust 加速」帮不上忙。</p>
+    </div>
+    <div class="card">
+      <h3>整局与整个实验</h3>
+      <table>
+        <thead><tr><th>项目</th><th>耗时</th></tr></thead>
+        <tbody>
+          <tr><td>组合① 一局（新贪心 vs 老+搜索）</td><td class="num">29.9 s</td></tr>
+          <tr><td>组合② 一局（双方都搜索）</td><td class="num">160.2 s</td></tr>
+          <tr><td>组合② 全部 2000 局</td><td class="num">≈ 21.6 h</td></tr>
+          <tr><td>独立旁证全部 480 局</td><td class="num">≈ 5.2 h</td></tr>
+          <tr><td>整个训练</td><td class="num">≈ 60 h</td></tr>
+        </tbody>
+      </table>
+      <p class="note" style="margin-top:10px">6 个任务并行抢同一块 GPU，实测整局平均每次决策比单进程慢 4~6 倍，这是排队，不是算法变慢。</p>
+    </div>
+  </div>
+  <details>
+    <summary>为什么旁证只跑 120 副，不也跑 500 副？</summary>
+    <p>因为每副牌的随机波动很大（标准差约 6.9 分），而要分辨的优势只有 0.7 分。500 副才能勉强看清（有约 59% 把握检出真实优势），120 副只有约 15% 把握。所以旁证从一开始就定位成「便宜的方向复核」，成本降 76%，代价是「大概率看不清」——这在设计时就写死了，不是事后找借口。若只打 100 副，有 93% 概率会把「达成」误读成「没差别」。</p>
+  </details>
+</section>
+
+<section>
+  <h2>怎么读「±」和 p</h2>
+  <div class="grid3">
+    <div class="mini"><div class="t">+0.679</div><div class="v" style="font-size:19px">平均优势</div><div class="d">500 副牌平均下来，每副多赢 0.679 分</div></div>
+    <div class="mini"><div class="t">±0.309</div><div class="v" style="font-size:19px">误差范围</div><div class="d">换一批牌重打，数字会上下浮动约 0.3 分</div></div>
+    <div class="mini"><div class="t">p=0.0282</div><div class="v" style="font-size:19px">运气概率</div><div class="d">若其实没差别，纯靠运气出现这么大优势的概率约 2.8%</div></div>
+  </div>
+  <p class="note" style="margin-top:14px">通俗但重要的一点：<strong>「一个结果显著、另一个不显著」不等于「这两个结果彼此不同」</strong>。要比较两者必须直接检验差值——这里检验结果 p=0.0623，不显著。</p>
+</section>
+
+<section>
+  <h2>哪些话不能说</h2>
+  <div class="dont"><div class="h">✗ 「新模型对任何对手都显著更强」／「总体最强的麻将 AI」</div><div class="b">主实验的对手是同一个固定的老模型。2026-11-10 补测了 5 种风格，方向都为正、无显著负向，但<strong>面对同代最强对手 P36 时只能写「无足够证据」</strong>；而且 5 种对手里没有一种是完全不同类型的高水平 AI。</div></div>
+  <div class="dont"><div class="h">✗ 「加搜索反而拖累了新模型」</div><div class="b">1.478 和 0.679 来自两批不同牌墙，差值不显著（p=0.0623）。更合理的解释是：新模型已经把老师的推演经验学进去了，再推演一遍属于重复劳动。</div></div>
+  <div class="dont"><div class="h">✗ 「旁证证明两个模型没差别」／「训练到顶了」</div><div class="b">120 副的分辨率不足，只能说「没看清」；早停也只是说明当前配方的边际收益低于检测精度（约 0.22~0.31 分），不等于能力上限。</div></div>
+  <div class="dont"><div class="h">✗ 「线上已经在用最强的新模型了」／「线上冠军档是假的」</div><div class="b">线上主力仍是老模型 master，新模型只作为可选冠军加入，「只增不替」不变。曾经存在的「冠军 + 搜索实际算的是老模型」假档已于 2026-11-10 修好：现在标题行显示绿勾、真正加载所选权重，且不会因算得慢而偷偷降级。代价是这一步要约 1.8~2.6 秒。</div></div>
+  <div class="dont"><div class="h">✗ 「5 种对手测完，说明优势很稳」／「P36 那场是打平」</div><div class="b">通过的是<strong>方向一致性</strong>，不是幅度一致性：P36 那片 p=0.4703 只能写「无足够证据」，禁写「打平 / 一样强 / 到顶」；而且 5 片的分数不可相减或平均。</div></div>
+  <div class="ok"><div class="h">✓ 可以这样说</div><div class="b">训练把「搜索带来的好处」搬进了一个不用搜索也很快的网络；在公平地让双方都开搜索之后，新模型仍然领先，只是优势变小、证据偏弱。换 5 种对手后没有出现反向，但越强的对手越看不出优势。线上不换主力，新模型作为可选更强的对手提供。</div></div>
+</section>
+
+<section>
+  <h2>时间线</h2>
+  <div class="card">
+    <div class="timeline">
+      <div class="item"><div class="d">11-06 02:34 → 11-08 14:29</div><div class="x">训练约 60 小时，按事前定好的统计规则提前早停（边际增益已看不出来）</div></div>
+      <div class="item"><div class="d">11-08 18:25 → 18:51</div><div class="x">主口径 500 副收口：+1.478±0.297，p&lt;1e-4，「方向性达成」</div></div>
+      <div class="item"><div class="d">11-09 17:24:29</div><div class="x">组合② 2000 局收口：+0.679±0.309，p=0.0282，主目标判定「达成」</div></div>
+      <div class="item"><div class="d">11-09 20:55 → 23:24</div><div class="x">笔记本合盖休眠 2 小时 17 分，旁证被冻结；开盖后自动续跑，数据无损</div></div>
+      <div class="item"><div class="d">11-10 00:19:45</div><div class="x">独立旁证 480 局收口：+0.867±0.665，p=0.1923，「分辨率不足」</div></div>
+      <div class="item"><div class="d">11-10 01:22</div><div class="x">每小时定时检测与实验兜底全部停止；最终版报告、通俗解读、后续实验计划交付</div></div>
+      <div class="item"><div class="d">11-10 10:0x</div><div class="x">线上「冠军 + 搜索」假档修复并验收：5 档来源核验全绿勾，真档 1.76~2.64 s/步，不降级模型</div></div>
+      <div class="item"><div class="d">11-10 10:35:20</div><div class="x">多对手池 10000 局收口：5/5 方向为正、无显著负向 ⇒ 通过方向一致性检验；同代最强对手 P36 一片「无足够证据」</div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>下一步做什么</h2>
+  <div class="card">
+    <ol class="steps">
+      <li><strong>给新模型「瘦身」（方案 E，优先级最高）</strong>：把 9.85M 压到 1M 量级，让前向速度回到老模型水平。<span class="pill info">需批准</span> 修真档后已把可用通道从 28 秒压到 1.8~2.6 秒，瘦身从「能不能用」变成「再降多少成本」，仍是最大杠杆。</li>
+      <li><strong>修线上假档</strong>：<span class="pill" style="background:var(--green-soft);color:var(--green)">已完成 11-10</span> 冠军搜索档现在真正加载冠军权重；换用更快的前向通道，不会因超时偷偷降级模型。</li>
+      <li><strong>补「多对手池」评测</strong>：<span class="pill" style="background:var(--green-soft);color:var(--green)">已完成 11-10</span> 5 种对手共 10000 局，通过方向一致性检验；最强同代对手一片分辨率不足，只写「无足够证据」。</li>
+      <li><strong>若还想分清 P36 那片是「真有小优势」还是「真没有」</strong>：属于另一次实验，须另用一批全新牌墙、在看到结果前写死要检出的最小分差与非劣边界，本轮不追加、不扩样。</li>
+      <li><strong>暂不做的</strong>：再跑一遍「冠军加搜索 vs 不加搜索」的同池实验——实测同池配对并不降方差，花 23 小时只能买回一句已知的「不显著」；也不再用 Rust 重写推理。</li>
+    </ol>
+    <p class="note">任何新实验都要：用一批从未用过的牌墙（从 7_000_000 开始）、在看到结果之前先写死判定规则、不与别的评估同时跑、线上主力仍不替换。详见 docs/后续实验计划-2026-11-10.md。</p>
+  </div>
+</section>
+
+<footer>
+  数据来源：reports/终评报告-2026-11-13.md（v1.1 最终版）· runs/gates/*.jsonl（含 pool_O1..O5）· docs/14天训练计划.md §6.60–§6.71。
+  本页为通俗解读，主实验判定以终评报告为准；补遗两项为探索性/工程修复，不改判终评报告 §3/§4。图中误差线为 95% 可信范围，横条长度仅表示量级。
+</footer>
+
+</div>
+</body>
+</html>

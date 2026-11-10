@@ -292,9 +292,14 @@ class _BatchRunner:
     # 4096 上限会越界（duel 实测 ValueError）→ 提到 8192（缓冲 ~2×12MB/进程）
     _MAX_PAD = 8192
 
-    def __init__(self, model, device: str, v_model=None):
+    def __init__(self, model, device: str, v_model=None,
+                 ch: int = NUM_CHANNELS, gdim: int = GLOBAL_DIM):
         self.model = model
         self.device = device
+        # 方案 D（2026-11-08）：搜索内核可选 v1/v2/v3 编码，缓冲维度随之改变。
+        # 默认取 v1（15/70）= 旧行为逐位不变。
+        self.ch = int(ch)
+        self.gdim = int(gdim)
         # 叶子 V ensemble（2026-11-03）：v_model 提供第二个 V，与前向取均值；
         # 策略头仍只用主网络。None = 关闭（逐位同旧行为）。
         self.v_ort = None
@@ -308,8 +313,8 @@ class _BatchRunner:
             else:
                 self.v_model_t = copy.deepcopy(v_model).to(device).eval()
         mp = self._MAX_PAD
-        self.tt = np.zeros((mp, NUM_CHANNELS, 27), dtype=np.float32)
-        self.gg = np.zeros((mp, GLOBAL_DIM), dtype=np.float32)
+        self.tt = np.zeros((mp, self.ch, 27), dtype=np.float32)
+        self.gg = np.zeros((mp, self.gdim), dtype=np.float32)
         self.lg = np.empty((mp, 28), dtype=np.float32)
         # device 以 "ort" 开头 → 走 onnxruntime（CoreML/CPU）后端：
         # 输入直接喂 numpy 缓冲，不再需要 torch 张量与显存拷贝（2026-11-02）。
@@ -322,14 +327,14 @@ class _BatchRunner:
         else:
             self.t_t = torch.from_numpy(self.tt)          # 与 numpy 共享内存
             self.t_g = torch.from_numpy(self.gg)
-            self.gpu_t = torch.empty((mp, NUM_CHANNELS, 27), device=device)
-            self.gpu_g = torch.empty((mp, GLOBAL_DIM), device=device)
+            self.gpu_t = torch.empty((mp, self.ch, 27), device=device)
+            self.gpu_g = torch.empty((mp, self.gdim), device=device)
 
     def run(self, tiles, glob, head, mask):
         n = int(head.shape[0])
         pad = (n + 63) // 64 * 64
-        self.tt[:n] = tiles.reshape(n, NUM_CHANNELS, 27)
-        self.gg[:n] = glob.reshape(n, GLOBAL_DIM)
+        self.tt[:n] = tiles.reshape(n, self.ch, 27)
+        self.gg[:n] = glob.reshape(n, self.gdim)
         if pad > n:                                    # 补齐行清零（缓冲是复用的）
             self.tt[n:pad] = 0
             self.gg[n:pad] = 0
@@ -364,7 +369,8 @@ class _BatchRunner:
 
 @torch.no_grad()
 def rust_q(model, game, p: int, legal, n_det: int = 32, ff_cap: int = 4,
-           seed: int = 0, device: str = "cpu", stats: dict | None = None):
+           seed: int = 0, device: str = "cpu", stats: dict | None = None,
+           enc: int = 1):
     """用 Rust 内核跑一次公平 PIMC，返回每个候选动作的平均 Q（分差单位）。
 
     与 `SearchAgent._search_fair_batched` 同构：n_det 个 determinization × 每个
@@ -373,12 +379,16 @@ def rust_q(model, game, p: int, legal, n_det: int = 32, ff_cap: int = 4,
     import dushan_engine as de  # noqa: PLC0415
 
     snap = snapshot_of(game, p)
-    sn = de.PySearch(snap, p, [_code(a) for a in legal], n_det, ff_cap, seed)
+    codes = [_code(a) for a in legal]
+    # 旧内核不接受 enc 关键字 → 只在 enc!=1 时才传（v1 路径调用签名逐字不变）
+    sn = (de.PySearch(snap, p, codes, n_det, ff_cap, seed) if int(enc) == 1
+          else de.PySearch(snap, p, codes, n_det, ff_cap, seed, enc=int(enc)))
     stats = stats if stats is not None else {}
     stats.setdefault("batches", 0)
     stats.setdefault("states", 0)
     stats.setdefault("terminals", 0)
-    runner = _BatchRunner(model, device)
+    ch, gdim = getattr(sn, "shape", (NUM_CHANNELS, GLOBAL_DIM))
+    runner = _BatchRunner(model, device, ch=ch, gdim=gdim)
 
     guard = 0
     while not sn.finished():
@@ -406,7 +416,7 @@ def _deep_search_run(model, game, p: int, legal, n_det: int, ff_cap: int,
                      topk: int, ply: int, seed: int, device: str,
                      stats: dict | None, fair: bool, want_diag: bool,
                      agg: int = 0, lam: float = 1.0, reweight: bool = False,
-                     v_model=None):
+                     v_model=None, enc: int = 1):
     """`deep_q` 的实现体：`(q, stats, diag, qs)`。
 
     ``agg``（2026-11-03，实验 A）：ply≥2 的聚合方式。
@@ -422,12 +432,17 @@ def _deep_search_run(model, game, p: int, legal, n_det: int, ff_cap: int,
     import dushan_engine as de  # noqa: PLC0415
 
     snap = snapshot_of(game, p)
-    ds = de.PyDeepSearch(snap, p, [_code(a) for a in legal], n_det, ff_cap, topk,
-                         ply, seed, fair, int(agg), float(lam), bool(reweight))
+    codes = [_code(a) for a in legal]
+    _kw = dict(n_det=n_det, ff_cap=ff_cap, topk=topk, ply=ply, seed=seed,
+               fair=fair, agg=int(agg), lam=float(lam), reweight=bool(reweight))
+    if int(enc) != 1:                       # 旧内核无 enc 关键字 → v1 路径签名不变
+        _kw["enc"] = int(enc)
+    ds = de.PyDeepSearch(snap, p, codes, **_kw)
     stats = stats if stats is not None else {}
     for k, v in (("batches", 0), ("states", 0), ("terminals", 0), ("stages", 0)):
         stats.setdefault(k, v)
-    runner = _BatchRunner(model, device, v_model=v_model)
+    ch, gdim = getattr(ds, "shape", (NUM_CHANNELS, GLOBAL_DIM))
+    runner = _BatchRunner(model, device, v_model=v_model, ch=ch, gdim=gdim)
 
     def run_batch():
         tiles, glob, head, mask, kind = ds.take_batch()
@@ -474,8 +489,10 @@ def _deep_search_run(model, game, p: int, legal, n_det: int, ff_cap: int,
 def deep_q(model, game, p: int, legal, n_det: int = 32, ff_cap: int = 24,
            topk: int = 3, ply: int = 1, seed: int = 0, device: str = "cpu",
            stats: dict | None = None, fair: bool = True, agg: int = 0,
-           lam: float = 1.0, reweight: bool = False, v_model=None):
+           lam: float = 1.0, reweight: bool = False, v_model=None, enc: int = 1):
     """多层搜索（ply 1/2/3），与 `SearchAgent._deep` 同口径。
+
+    ``enc``：观测编码版本（1=v1 15/70 旧行为；3=v3 63/130，M1 学生权重用）。
 
     与 `rust_q` 的区别：第二/三层把多个叶子的动作合并成一个批次，
     Python 版是每个叶子单独一次前向。
@@ -487,7 +504,7 @@ def deep_q(model, game, p: int, legal, n_det: int = 32, ff_cap: int = 24,
                                             topk, ply, seed, device, stats,
                                             fair, want_diag=False, agg=agg,
                                             lam=lam, reweight=reweight,
-                                            v_model=v_model)
+                                            v_model=v_model, enc=enc)
     return q, stats
 
 
@@ -495,7 +512,7 @@ def deep_q(model, game, p: int, legal, n_det: int = 32, ff_cap: int = 24,
 def deep_q_detail(model, game, p: int, legal, n_det: int = 32, ff_cap: int = 24,
                   topk: int = 3, ply: int = 1, seed: int = 0, device: str = "cpu",
                   stats: dict | None = None, fair: bool = True, agg: int = 0,
-                  lam: float = 1.0, reweight: bool = False):
+                  lam: float = 1.0, reweight: bool = False, enc: int = 1):
     """`deep_q` + 逐 determinization 诊断：返回 `(q, stats, diag, qs)`。
 
     ``diag`` / ``qs`` 是公平采样的推演诊断（2026-11-03 曾用于理由层的
@@ -505,7 +522,7 @@ def deep_q_detail(model, game, p: int, legal, n_det: int = 32, ff_cap: int = 24,
     """
     return _deep_search_run(model, game, p, legal, n_det, ff_cap, topk, ply,
                             seed, device, stats, fair, want_diag=True, agg=agg,
-                            lam=lam, reweight=reweight)
+                            lam=lam, reweight=reweight, enc=enc)
 
 
 class RustSearchAgent:
@@ -524,7 +541,7 @@ class RustSearchAgent:
                  fair: bool = True, own_model: bool = False, p2_topk: int | None = None,
                  agg: int = 0, lam: float = 1.0, reweight: bool = False,
                  v_ens_model=None, prior_weight: float = 0.0,
-                 decide: str = "q"):
+                 decide: str = "q", enc: int | None = None):
         # 与 SearchAgent 同口径：持有**设备就位的独立副本**。两个原因：
         # ① 不能 .to(device) 移动共享对象——同进程里的 CPU NetAgent 会挂；
         # ② 不能把 CPU 模型直接喂给 deep_q(device="mps")——前向必崩
@@ -546,6 +563,10 @@ class RustSearchAgent:
         self.v_ens_model = v_ens_model   # 叶子 V ensemble（None=关闭）
         self.prior_weight = float(prior_weight)  # V5：Q + w·log π 先验混合（0=关）
         self.decide = str(decide)        # V6："q"=均值 Q argmax（现状）| "vote"=世界投票
+        # 方案 D（2026-11-08）：观测编码版本。None = 自动跟权重走
+        # （v1 老权重 15/70；M1 学生/exit_* 系列 encoder_version=3 → 63/130）。
+        self.enc = (int(enc) if enc is not None
+                    else int(getattr(model, "encoder_version", 1)))
         self._own_model = own_model      # 仅为兼容 SearchAgent 的签名，无实际作用
         self.stats: dict = {}
         self._call = 0           # 决策计数：RNG 必须**跨决策递进**
@@ -608,7 +629,7 @@ class RustSearchAgent:
                                      self._next_seed(), self.device, self.stats,
                                      self.fair, want_diag=False, agg=self.agg,
                                      lam=self.lam, reweight=self.reweight,
-                                     v_model=self.v_ens_model)
+                                     v_model=self.v_ens_model, enc=self.enc)
             n = len(legal)
             votes = np.zeros(n)
             for row in qs:
@@ -640,7 +661,8 @@ class RustSearchAgent:
                        ff_cap=self.ff_cap, topk=self.topk, ply=self.ply,
                        seed=self._next_seed(), device=self.device, stats=self.stats,
                        fair=self.fair, agg=self.agg, lam=self.lam,
-                       reweight=self.reweight, v_model=self.v_ens_model)
+                       reweight=self.reweight, v_model=self.v_ens_model,
+                       enc=self.enc)
         if getattr(self, "prior_weight", 0.0) > 0.0:
             # 先验混合（2026-11-04 V5）：score = Q + w·log π —— 把「策略网络直觉」
             # 按权重掺回搜索分，抑制 PIMC 少样本 Q 的极端抖动（AlphaGo prior 混合思路）。
@@ -683,5 +705,5 @@ class RustSearchAgent:
             self.model, game, p, legal, n_det=self.n_det, ff_cap=self.ff_cap,
             topk=self.topk, ply=self.ply, seed=self._next_seed(),
             device=self.device, stats=self.stats, fair=self.fair, agg=self.agg,
-            lam=self.lam, reweight=self.reweight)
+            lam=self.lam, reweight=self.reweight, enc=self.enc)
         return q, qs, diag
