@@ -2443,6 +2443,11 @@ html.mob #coach .tip { font-size: 10.5px; }
 html.mob #coach .val { margin-bottom: 4px; }
 html.mob #coach .src { font-size: 9.5px; opacity: .82; }
 html.mob #coach-list > * { margin-bottom: 3px; }
+/* 离线档专有：贪心模型没有理由行，条目只有「序号 + 动作 + 概率 + 条形」，
+   条目本身已经很短，不该再被 34vh 卡住。手机横屏 393px 高时 34vh≈133px，
+   比 min-height(140px) 还小 ⇒ 3 条候选必然被截断，还得在巴掌大的框里滚动。
+   这里只给 html.coach-off（= 离线注入时加的类）放开上限，联网版保持原样。 */
+html.mob.coach-off #coach { max-height: min(70vh, 300px); }
 html.mob #coach .rsz { width: 22px; height: 22px; }
 
 /* ---- 6) 牌河：手机端专用几何（600 坐标内重排，四块只在角上贴边、永不交叠）
@@ -4307,6 +4312,8 @@ const REL_CN = ["我", "下家", "对家", "上家"];
    不提供「一句话推荐」，完整面板只给概率、不给理由。 */
 const IS_OFFLINE = !!(typeof window !== "undefined" && window.__DUSHAN_TIERS
   && window.__DUSHAN_TIERS.length);
+/* 面板高度上限按离线档放开（见样式注释 html.mob.coach-off #coach）。 */
+if (IS_OFFLINE) document.documentElement.classList.add("coach-off");
 const SCORE_DEFAULT = { zimo: 3, dianpao: 3, gangkai: 5, gangpao: 5,
   dadui: 5, qing: 10, qidui: 10, long: 20, dudiao: 10, baojiao: 10,
   kong: 3, jinji: 2, jihold: 1, jiplain: 1, jicf: 3, jiheng: 2, jifanji: 1 };
