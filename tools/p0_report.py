@@ -150,6 +150,30 @@ def main(argv: list[str] | None = None) -> int:
     say(f"  裁决：{verdict}")
     say("  禁写「无差异 / 持平 / 到顶 / 搜索无用」；p>.05 不等于效应为零。")
 
+    # 分辨力 / 配对效率（探索性说明，不参与裁决，事后追加不改变任何判据）
+    if len(common) >= 2 and d.get("se"):
+        av = [folds["A"][s][0] for s in common]
+        bv = [folds["B"][s][0] for s in common]
+        mx, my = st.mean(av), st.mean(bv)
+        num = sum((u - mx) * (v - my) for u, v in zip(av, bv))
+        den = math.sqrt(sum((u - mx) ** 2 for u in av)
+                        * sum((v - my) ** 2 for v in bv))
+        rho = num / den if den else 0.0
+        se_indep = math.sqrt(st.variance(av) / len(av)
+                             + st.variance(bv) / len(bv))
+        sd_d = st.stdev(paired)
+        say()
+        say("--- 分辨力与配对效率（探索性，不参与裁决）---")
+        say(f"  A/B 每 seed 相关系数 ρ = {rho:.3f}；若两臂完全独立，理论 SE = {se_indep:.3f}，"
+            f"实测 SE = {d['se']:.3f} ⇒ 配对只降噪 {(1 - d['se']/se_indep):.0%}")
+        say(f"  Δ 的 sd = {sd_d:.3f}，当前 2×SE = {2*d['se']:.3f} 分（n={len(common)}）。"
+            "ρ 低说明「同 seed 同座」在本实验几乎没起到配对降噪作用："
+            "候选策略不同会让牌局轨迹分叉，同 seed 不等于同一局。")
+        for target in (1.0, 0.5, 0.3):
+            need = math.ceil(len(common) * (2 * d["se"] / target) ** 2)
+            say(f"  要 2×SE≈{target:.1f} 分 ⇒ 约 {need} seed"
+                f"（{need/len(common):.1f}× 本次量；同池同口径线性外推）")
+
     say()
     say("--- 探索性 C（对手 = 3× 学生贪心；不与 A/B 相减或相加）---")
     say(f"  C: {fmt(desc['C'])}")
