@@ -3567,7 +3567,7 @@ html.mob .scoregrid input { width: 42px; }
   <div id="actions"></div>
 
   <div id="coach">
-    <h3 id="coach-hd" title="点住面板任意空白处拖动；拖右下角可调整大小"><span class="hd-left"><img class="hd-ji" src="/assets/tiles/1条.png" alt="幺鸡">大师建议 · 牌技讲解</span><span class="verify unknown" id="coach-verify" title="本次建议的来源尚未核验">?</span></h3>
+    <h3 id="coach-hd" title="点住面板任意空白处拖动；拖右下角可调整大小"><span class="hd-left"><img class="hd-ji" src="/assets/tiles/1条.png" alt="幺鸡"><span id="coach-title">大师建议 · 牌技讲解</span></span><span class="verify unknown" id="coach-verify" title="本次建议的来源尚未核验">?</span></h3>
     <div class="val" id="coach-val"></div>
     <div class="src" id="coach-src" style="display:none"></div>
     <div class="situation" id="coach-sit" style="display:none"></div>
@@ -4302,6 +4302,11 @@ const AVA_DEFAULT = ["云天明", "大乔", "妲己", "王昭君"];
 const REL_CN = ["我", "下家", "对家", "上家"];
 
 /* ================= 设置（localStorage 持久化） ================= */
+/* 离线单机版判定：服务端（offline/src/assets.rs）注入四档表，联网版不注入。
+   离线只有贪心模型，没有「为什么打这张」的推理，UI 据此收敛推荐形态：
+   不提供「一句话推荐」，完整面板只给概率、不给理由。 */
+const IS_OFFLINE = !!(typeof window !== "undefined" && window.__DUSHAN_TIERS
+  && window.__DUSHAN_TIERS.length);
 const SCORE_DEFAULT = { zimo: 3, dianpao: 3, gangkai: 5, gangpao: 5,
   dadui: 5, qing: 10, qidui: 10, long: 20, dudiao: 10, baojiao: 10,
   kong: 3, jinji: 2, jihold: 1, jiplain: 1, jicf: 3, jiheng: 2, jifanji: 1 };
@@ -4415,9 +4420,13 @@ const SET = {
   //   "brief" = 一句话推荐：只在操作区上方显示一行理由
   //   "tile"  = 仅推荐出牌（2026-10-13）：只把推荐的牌上浮/标记，不显示任何理由文字
   // 旧配置迁移：老「简短推荐理由=开」且大师建议面板原本关着 → 迁移为「一句话推荐」
-  reasonMode: (localStorage.getItem("dushan_reasonmode")
-    || (localStorage.getItem("dushan_briefreason") === "1"
-        && localStorage.getItem("dushan_coach_on") !== "1" ? "brief" : "full")),
+  reasonMode: (() => {
+    const v = localStorage.getItem("dushan_reasonmode")
+      || (localStorage.getItem("dushan_briefreason") === "1"
+          && localStorage.getItem("dushan_coach_on") !== "1" ? "brief" : "full");
+    // 离线不提供「一句话推荐」（贪心模型没有可解释的理由）→ 存量配置回落「完整推荐」
+    return (IS_OFFLINE && v === "brief") ? "full" : v;
+  })(),
   // 对手出牌节奏（秒）：开局页与设置面板共用；对局中修改立即生效（0~5 秒，可自由填）
   speed: clampSetting(localStorage.getItem("dushan_speed"), 0, 5, 0.45),
   indColor: localStorage.getItem("dushan_ind_color") || "red",
@@ -6180,7 +6189,7 @@ function requestHint() {
 function showBriefTip(r) {
   const t = el("brief-tip");
   if (!t) return;
-  if (!SET.hintOn || SET.reasonMode !== "brief" || !r || !r.ok || !r.items || !r.items.length) { t.style.display = "none"; return; }
+  if (IS_OFFLINE || !SET.hintOn || SET.reasonMode !== "brief" || !r || !r.ok || !r.items || !r.items.length) { t.style.display = "none"; return; }
   const top = r.items[0];
   let txt = (r.tip || top.reason || "").trim();
   // 兜底：若原因以推荐动作/牌名开头（如"打 二万："），剥掉前缀避免与上浮牌重复
@@ -7204,19 +7213,22 @@ function paintCoach(r) {
   const maxp = Math.max(...r.items.map(i => i.prob), 0.001);
   const TAG_CLS = { "风险": "warn", "警告": "warn", "注意": "warn", "放弃": "warn",
     "鸡分": "ji", "得分": "ji", "杠分": "ji", "通行证": "ji" };
+  // 2026-11-11 用户口径：离线单机版只有贪心模型，给不出「为什么」——
+  // 面板只留动作 + 概率 + 条形，不渲染 tags/lines/reason，也不显示 💡 一句话。
+  const showWhy = !IS_OFFLINE;
   el("coach-list").innerHTML = r.items.map((it, i) => `
     <div class="hint-item">
       <div class="hint-main">
         <span class="hint-label">${i + 1}. ${it.label}</span>
         <span class="hint-prob">${(it.prob * 100).toFixed(1)}%</span></div>
       <div class="hint-bar"><i style="width:${(it.prob / maxp * 100).toFixed(0)}%"></i></div>
-      <div class="hint-reason">${(it.tags || []).length
+      ${showWhy ? `<div class="hint-reason">${(it.tags || []).length
         ? `<span class="hint-tags">${it.tags.map(tg => `<i class="${TAG_CLS[tg] || ""}">${tg}</i>`).join("")}</span>` : ""}${
         (it.lines && it.lines.length ? it.lines : [it.reason || ""]).map(l =>
-          `<span class="ln">${l}</span>`).join("")}</div>
+          `<span class="ln">${l}</span>`).join("")}</div>` : ""}
     </div>`).join("");
   const tipEl = el("coach-tip");
-  if (r.tip) { tipEl.style.display = "block"; tipEl.textContent = "💡 " + r.tip; }
+  if (showWhy && r.tip) { tipEl.style.display = "block"; tipEl.textContent = "💡 " + r.tip; }
   else tipEl.style.display = "none";
 }
 /* 拉一次建议并渲染（教练面板开启时使用） */
@@ -9570,6 +9582,17 @@ function checkOppSpeedLink() {
   };
 }
 function fillSetSelects() {
+  // 离线版：贪心模型没有可解释的推理，不提供「一句话推荐」；
+  // 存量配置里若还是 brief，回落「完整推荐」（面板只显示概率）。
+  if (IS_OFFLINE) {
+    const rm = el("set-reasonmode");
+    if (rm) {
+      for (const o of [...rm.options]) if (o.value === "brief") o.remove();
+    }
+    if (SET.reasonMode === "brief") SET.reasonMode = "full";
+    const t = el("coach-title");
+    if (t) t.textContent = "建议 · 仅概率";
+  }
   const s = el("set-strategy");
   // 2026-11-02：选项表只剩 大师 / 深算 n32 / 极算 n128；白名单外的旧档
   // （教师 / 随机 / bc / s7 / 简算 n8）统一由 migrateModelOptions 收敛。
@@ -9779,8 +9802,9 @@ function applySettings() {
   SET.recForm = el("set-rec-form").value === "ind" ? "ind" : "float";
   // 推荐理由：完整推荐 / 一句话推荐（合并了原「大师建议」面板开关）
   const reasonWas = SET.reasonMode;
-  SET.reasonMode = ["full", "brief", "tile"].includes(el("set-reasonmode").value)
-    ? el("set-reasonmode").value : "full";
+  const reasonRaw = el("set-reasonmode").value;
+  SET.reasonMode = (IS_OFFLINE && reasonRaw === "brief") ? "full"
+    : (["full", "brief", "tile"].includes(reasonRaw) ? reasonRaw : "full");
   // 对手出牌节奏：可直接填秒数；对局中改动立即下发到当前会话
   const speedWas = SET.speed;
   SET.speed = clampSetting(el("set-oppspeed").value, 0, 5, 0.45);

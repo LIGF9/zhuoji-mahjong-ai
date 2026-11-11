@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from zhuoji.dushan import DushanConfig, DushanGame  # noqa: E402
+from zhuoji.tiles import YAOJI  # noqa: E402
 from zhuoji.rules import (Action, DISCARD, PASS, Phase, HU, ANGANG, BUGANG,  # noqa: E402
                           MINGGANG, PENG)
 
@@ -93,9 +94,16 @@ def random_cases(n_games, rng):
     made = 0
     while made < n_games:
         kaiju = ("off", "up", "down", "both")[made % 4]
+        # 2026-11-11：追加鸡牌种 + 自定义冲锋鸡分值。离线版曾整份忽略前端
+        # rules，追加种（如八筒）在单机里根本不算鸡，自然不会记冲锋鸡/横鸡。
+        # 这里把这些设置也纳入对拍，锁住「同一份规则两边同分」。
+        extra = sorted(rng.sample([t for t in range(27) if t != YAOJI],
+                                  rng.choice([0, 1, 2])))
+        jicf = rng.choice([3.0, 5.0, 1.5])
         cfg = DushanConfig(kaiju_fanji=kaiju, jiesuan_fanji="both",
                            end_baogang=rng.random() < 0.3,
-                           huang_baogang=rng.random() < 0.2)
+                           huang_baogang=rng.random() < 0.2,
+                           extra_ji=tuple(extra), ji_chongfeng=jicf)
         g = DushanGame(cfg, seed=rng.randrange(1 << 30))
         wall = list(g.wall)
         actions = []
@@ -108,7 +116,9 @@ def random_cases(n_games, rng):
                               "huang_baogang": cfg.huang_baogang,
                               "first_round_follow": cfg.first_round_follow,
                               "follow_pay": cfg.follow_pay,
-                              "follow_hold_chickens": cfg.follow_hold_chickens}})
+                              "follow_hold_chickens": cfg.follow_hold_chickens,
+                              "extra_ji": list(cfg.extra_ji),
+                              "ji_chongfeng": cfg.ji_chongfeng}})
         results.append(result_row(g))
         made += 1
     return cases, results

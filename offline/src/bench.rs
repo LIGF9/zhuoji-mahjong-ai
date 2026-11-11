@@ -24,7 +24,8 @@ pub fn log_latency(nets: &Nets) {
     let ft = FanTable::build();
     let names = ["我".to_string(), "下家".into(), "对家".into(), "上家".into()];
     let strats: [String; 3] = std::array::from_fn(|_| "model:champ_slim_s".to_string());
-    let mut s = Session::new(ft, 20_261_111, 0, &names, &strats);
+    let mut s = Session::new(ft, 20_261_111, 0, &names, &strats,
+                             dushan_engine::state::Config::default());
     s.advance(nets, 400);
     if s.game.phase == dushan_engine::actions::PHASE_OVER || s.game.actor() != 0 {
         println!("[offline] bench 跳过：未走到我的决策点");

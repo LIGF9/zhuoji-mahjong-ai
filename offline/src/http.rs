@@ -186,7 +186,11 @@ fn route(app: &Arc<Mutex<App>>, method: &str, path: &str, q: &str, body: &Value)
                         }
                     }
                 }
-                a.session = Some(Session::new(FanTable::build(), seed, me, &names, &strats));
+                // 规则设置：与线上 config_from_rules 同一套映射。以前这里忽略
+                // rules，单机版永远跑 Config::default() —— 用户在设置里改的
+                // 冲锋鸡分值 / 追加鸡牌种 / 开局翻鸡在离线全部失效。
+                let cfg = crate::rules_cfg::config_from_rules(body.get("rules"));
+                a.session = Some(Session::new(FanTable::build(), seed, me, &names, &strats, cfg));
                 Resp::Json(200, json!({"ok": true, "sid": "offline", "my_seat": me}))
             }
             "/api/act" => {
@@ -203,6 +207,9 @@ fn route(app: &Arc<Mutex<App>>, method: &str, path: &str, q: &str, body: &Value)
             }
             "/api/next" => match a.session.as_mut() {
                 Some(s) => {
+                    // 设置面板标「下一局生效」的项（翻鸡策略/追加鸡/分值表/包赔）
+                    // 在这一刻覆盖，否则离线会一直用开局那一份。
+                    if let Some(r) = body.get("rules") { s.set_rules(Some(r)); }
                     let ok = s.next_hand();
                     Resp::Json(200, json!({"ok": ok,
                         "error": if ok { Value::Null } else { json!("当前这局还没结束") }}))

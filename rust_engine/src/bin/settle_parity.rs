@@ -5,7 +5,8 @@
 
 use dushan_engine::actions::*;
 use dushan_engine::fan::FanTable;
-use dushan_engine::state::{fanji_mask, Config, Game};
+use dushan_engine::state::{bit, fanji_mask, Config, Game};
+use dushan_engine::tiles::YAOJI;
 use dushan_engine::settle;
 use serde_json::{json, Value};
 
@@ -53,6 +54,22 @@ fn parse_cfg(d: &Value) -> Config {
     if let Some(x) = d.get("follow_hold_chickens").and_then(|v| v.as_u64()) {
         c.follow_hold = x.min(255) as u8;
     }
+    // 2026-11-11：追加鸡牌种 + 鸡分值（离线版以前忽略前端 rules，这里做对拍覆盖）
+    if let Some(arr) = d.get("extra_ji").and_then(|v| v.as_array()) {
+        let mut m = 0u32;
+        for x in arr {
+            if let Some(t) = x.as_u64() {
+                if t < 27 && t as u8 != YAOJI {
+                    m |= bit(t as u8);
+                }
+            }
+        }
+        c.extra_ji = m;
+    }
+    if let Some(x) = d.get("ji_chongfeng").and_then(|v| v.as_f64()) { c.ji_chongfeng = x as f32; }
+    if let Some(x) = d.get("ji_heng").and_then(|v| v.as_f64()) { c.ji_heng = x as f32; }
+    if let Some(x) = d.get("ji_discard_plain").and_then(|v| v.as_f64()) { c.ji_discard_plain = x as f32; }
+    if let Some(x) = d.get("ji_hold").and_then(|v| v.as_f64()) { c.ji_hold = x as f32; }
     c
 }
 

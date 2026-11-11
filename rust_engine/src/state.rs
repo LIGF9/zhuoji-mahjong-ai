@@ -67,6 +67,11 @@ pub struct Config {
     pub first_round_follow: bool, // 规则开关（默认开）
     pub follow_pay: f32,          // 庄家赔每家的鸡数（默认 3）
     pub follow_hold: u8,          // 被跟打的 4 张牌算庄家手中几只鸡（默认 4）
+    // ---- 2026-11-11：追加鸡牌种（对齐 DushanConfig.extra_ji）----
+    //: 位掩码，位 t = 牌种 t 也被视为鸡牌（幺鸡恒为鸡、不在掩码里）。
+    //: 线上由 rules.extra_ji 传入（如贵阳玩的八筒）；离线版曾整份忽略，
+    //: 导致「追加鸡的冲锋鸡/横鸡」在单机版完全不存在。0 = 只有幺鸡。
+    pub extra_ji: u32,
 }
 
 impl Default for Config {
@@ -104,6 +109,7 @@ impl Default for Config {
             first_round_follow: true,
             follow_pay: 3.0,
             follow_hold: 4,
+            extra_ji: 0,
         }
     }
 }
@@ -275,6 +281,9 @@ impl Game {
         g.hands[dealer as usize][t as usize] += 1;
         g.drawn = true;
         g.last_draw = t;
+        // 追加鸡牌种（rules.extra_ji）：幺鸡之外，用户额外指定的种也算鸡。
+        // 必须在发牌后、任何出牌前并入，否则第一家打出的追加种会被漏记冲锋鸡。
+        g.ji_tiles |= g.cfg.extra_ji;
         // 开局翻鸡：牌墙尾翻一张指示牌（只查看不移出，对齐 Python _start）
         if g.cfg.kaiju_fanji != 0 {
             let flip = g.wall[g.wall.len() - 1];
@@ -713,6 +722,11 @@ impl Game {
 
     /// 玩家 p 现在打出 tile 会记成什么鸡：0=非鸡(空) 1=冲锋鸡 2=横鸡 3=普通鸡(幺鸡)。
     /// 与 DushanGame.ji_name_if_discarded / _step_discard 判定同源（不改状态）。
+    ///
+    /// 2026-11-11 修正：横鸡分支原来多判了 `joined`（轮内已参与者再打同种 →
+    /// 普通鸡），与 dushan.py 不一致（那边只要该种横鸡轮还开着就记横鸡，
+    /// 见 `_hengji_rounds.get(tile)`）。这不只是 UI 预览的差别 ——
+    /// `encode_v3` 的 ji_name 特征也走这里，特征分布会与训练时（Python）分叉。
     pub fn ji_name_if_discarded(&self, p: usize, tile: u8) -> u8 {
         if self.ji_tiles & bit(tile) == 0 {
             return 0;
@@ -720,12 +734,11 @@ impl Game {
         if !self.first_discard_done[p] {
             return JI_CHONGFENG;
         }
-        if self.hengji_done & bit(tile) != 0 {
-            let open = self.hengji_open & bit(tile) != 0;
-            let joined = self.hengji_seats[tile as usize] & (1u8 << p) != 0;
-            return if open && !joined { JI_HENG } else { JI_PLAIN };
+        if self.hengji_open & bit(tile) != 0 {
+            JI_HENG
+        } else {
+            JI_PLAIN
         }
-        JI_HENG
     }
 
     fn close_hengji_rounds(&mut self, p: usize) {
@@ -833,11 +846,12 @@ impl Game {
                         discarder, p as u8, self.ji_tag_of_last[discarder as usize],
                         false, tile));
                 }
-                if tile == YAOJI && self.zeren_player < 0 && self.chongfeng_player >= 0 {
-                    self.zeren_player = discarder as i8;
-                    self.zeren_ponger = p as i8;
-                    self.chongfeng_player = -1;
-                }
+                // 注意：这里原来还有一段「碰幺鸡 → 冲锋鸡转责任鸡」的分支，
+                // 依赖 `chongfeng_player`，而该字段在状态推进中**从未被赋值**
+                // （只有旧快照导入才会给值），条件恒不成立；且线上 dushan.py
+                // 的新引擎已没有「责任鸡」这个概念（碰走的鸡由 claimed_ji
+                // 表达：分数归碰者、打出者付溢价）。留着只会在导入旧快照后
+                // 产生与线上不同的行为，故删除。
                 self.current = p as u8;
                 self.drawn = false;
                 self.pass_lock[p] = 0;
@@ -1001,5 +1015,47 @@ impl Game {
             outcome: None,
             steps: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fan::FanTable;
+
+    fn fresh(cfg: Config) -> Game {
+        let ft = FanTable::build();
+        Game::new_with_wall(full_deck(), 0, cfg, &ft)
+    }
+
+    /// 追加鸡牌种（rules.extra_ji）必须并入 ji_tiles，且第一张打出即冲锋鸡。
+    /// 离线版以前整份忽略 rules，八筒这类追加种根本不算鸡 —— 这是
+    /// 「冲锋鸡处理和线上不同步」的直接来源。
+    #[test]
+    fn extra_ji_joins_ji_tiles_and_counts_as_chongfeng() {
+        let mut cfg = Config::default();
+        cfg.extra_ji = bit(7);
+        let g = fresh(cfg);
+        assert!(g.ji_tiles & bit(7) != 0, "追加种应并入 ji_tiles");
+        assert_eq!(g.ji_name_if_discarded(1, 7), JI_CHONGFENG);
+        // 没追加的种仍然不是鸡
+        assert_eq!(g.ji_name_if_discarded(1, 8), 0);
+    }
+
+    /// 横鸡轮内「已参与过的人」再打同种鸡，仍记横鸡（对齐 dushan.py：
+    /// 只看 `_hengji_rounds.get(tile)` 是否还开着，不看 seats 里有没有自己）。
+    /// 旧实现多判了 `!joined` → 预览成普通鸡，与实盘结算、与线上特征都分叉。
+    #[test]
+    fn hengji_round_member_still_heng_until_closed() {
+        let mut cfg = Config::default();
+        cfg.extra_ji = bit(7);
+        let mut g = fresh(cfg);
+        g.first_discard_done = [true; 4];
+        g.hengji_done = bit(7);
+        g.hengji_open = bit(7);
+        g.hengji_seats[7] = (1 << 1) | (1 << 2);
+        assert_eq!(g.ji_name_if_discarded(1, 7), JI_HENG);
+        g.hengji_open = 0; // 轮收口
+        assert_eq!(g.ji_name_if_discarded(1, 7), JI_PLAIN);
     }
 }

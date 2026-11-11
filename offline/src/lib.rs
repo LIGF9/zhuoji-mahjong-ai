@@ -16,6 +16,7 @@ pub mod view;
 pub mod policy;
 pub mod ting;
 pub mod search;
+pub mod rules_cfg;
 pub mod session;
 pub mod assets;
 pub mod http;

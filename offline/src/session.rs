@@ -51,6 +51,9 @@ pub fn canon_stem(raw: &str) -> &'static str {
 pub struct Session {
     pub game: Game,
     pub ft: FanTable,
+    /// 本局的规则配置。前端 `/api/new` / `/api/next` 的 rules 载荷解析结果，
+    /// 下一局沿用（对齐线上 Session 的 self.rules）。
+    pub cfg: Config,
     pub me: u8,
     pub names: [String; 4],
     pub kinds: [&'static str; 4],
@@ -119,6 +122,7 @@ impl Session {
         me: u8,
         names_rel: &[String; 4],
         strats_rel: &[String; 3],
+        cfg: Config,
     ) -> Self {
         let mut names = ["我", "下家", "对家", "上家"].map(str::to_string);
         for rel in 0..4usize {
@@ -154,9 +158,10 @@ impl Session {
         let mut wall = tiles::full_deck();
         Rng::new(seed).shuffle(&mut wall);
         let dealer = (seed % 4) as u8;
-        let game = Game::new_with_wall(wall, dealer, Config::default(), &ft);
+        let game = Game::new_with_wall(wall, dealer, cfg, &ft);
         Self {
             game,
+            cfg,
             ft,
             me,
             names,
@@ -326,6 +331,12 @@ impl Session {
         self.push_event("result", -1, None, format!("本局结算：{how}"));
     }
 
+    /// 覆盖规则配置：`/api/next` 携带新 rules 时调用，**下一局**生效
+    /// （与线上 Session.self.rules 的语义一致：设置面板标了「下一局生效」）。
+    pub fn set_rules(&mut self, rules: Option<&Value>) {
+        self.cfg = crate::rules_cfg::config_from_rules(rules);
+    }
+
     /// 下一手：轮庄、清事件、重建牌墙。
     pub fn next_hand(&mut self) -> bool {
         if self.game.phase != actions::PHASE_OVER {
@@ -338,7 +349,7 @@ impl Session {
         self.dealer_streak = 0;
         let mut wall = tiles::full_deck();
         Rng::new(self.seed).shuffle(&mut wall);
-        self.game = Game::new_with_wall(wall, self.dealer, Config::default(), &self.ft);
+        self.game = Game::new_with_wall(wall, self.dealer, self.cfg, &self.ft);
         self.events.clear();
         self.seq = 0;
         self.pending = None;

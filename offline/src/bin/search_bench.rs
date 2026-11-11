@@ -15,11 +15,14 @@ fn main() {
     let ft = FanTable::build();
     let slim = Net::from_bytes(assets::SLIM_S_ONNX, 3).expect("slim 加载失败");
     let master = Net::from_bytes(assets::MASTER_ONNX, 1).expect("master 加载失败");
-    let nets = Nets { slim: Some(slim), master: Some(master) };
+    // 四档化后 Nets 是 stem 注册表（不再有 slim/master 字段、也没有 for_enc）。
+    let nets = Nets { map: vec![("dushan_master", master), ("champ_slim_s", slim)] };
 
     // 三个贪心对手，走到「我」的第一个决策点。
     let names = ["我".to_string(), "下家".into(), "对家".into(), "上家".into()];
-    let mut s = Session::new(ft, 2026_1111, 0, &names, &[3, 3, 3], &[0, 0, 0]);
+    let strats: [String; 3] = std::array::from_fn(|_| "model:champ_slim_s".to_string());
+    let mut s = Session::new(ft, 2026_1111, 0, &names, &strats,
+                             dushan_engine::state::Config::default());
     s.advance(&nets, 400);
 
     let legal = s.game.legal_actions(&s.ft);
@@ -28,14 +31,14 @@ fn main() {
              s.game.hands[0].iter().filter(|&&x| x > 0).count(),
              s.game.wall_left());
 
-    let cases: [(&str, u8, usize); 4] = [
-        ("master  N32", 1, 32),
-        ("master  N128", 1, 128),
-        ("slim_s  N32", 3, 32),
-        ("slim_s  N128", 3, 128),
+    let cases: [(&str, &str, usize); 4] = [
+        ("master  N32", "dushan_master", 32),
+        ("master  N128", "dushan_master", 128),
+        ("slim_s  N32", "champ_slim_s", 32),
+        ("slim_s  N128", "champ_slim_s", 128),
     ];
-    for (label, enc, det) in cases {
-        let net = nets.for_enc(enc).expect("网缺失");
+    for (label, stem, det) in cases {
+        let net = nets.get(stem).expect("网缺失");
         let cfg = Cfg { n_det: det, ff_cap: 24, topk: 3, ply: 1 };
         let t0 = Instant::now();
         match deep_q(net, &s.game, 0, &legal, &cfg, 42, &s.ft) {
@@ -55,7 +58,7 @@ fn main() {
     }
 
     // 贪心基线耗时（单步前向），用于对比「搜索值不值」。
-    let net = nets.for_enc(1).unwrap();
+    let net = nets.get("dushan_master").unwrap();
     let t0 = Instant::now();
     for _ in 0..50 {
         let _ = net.choose(&s.game, 0, &s.ft);
@@ -65,7 +68,7 @@ fn main() {
     // 前向成本结构：不同 batch 的每次耗时与每行成本。
     // 搜索每层的批大小是变化的，tract 按形状缓存执行计划，形状种类越多越吃亏。
     println!("\n=== search_batch 成本（master，全 1 mask） ===");
-    let net = nets.for_enc(1).unwrap();
+    let net = nets.get("dushan_master").unwrap();
     let (ch, gd) = (net.channels(), net.global_dim());
     for n in [1usize, 2, 4, 8, 16, 32, 64, 128, 256] {
         let tiles = vec![0.01f32; n * ch * 27];
@@ -125,7 +128,7 @@ fn main() {
     // 判据不靠肉眼看数：把 Q 向量按 1e-6 打印，`DUSHAN_MT=1` 与 `DUSHAN_MT=4` 两次
     // 运行必须逐字符相同 —— 这是唯一能证明「4 线程不改变棋力」的证据。
     println!("\n=== 确定性指纹（master N32，DUSHAN_MT={}） ===", offline_core::policy::mt_threads());
-    let net = nets.for_enc(1).unwrap();
+    let net = nets.get("dushan_master").unwrap();
     let cfg = Cfg { n_det: 32, ff_cap: 24, topk: 3, ply: 1 };
     let q = deep_q(net, &s.game, 0, &legal, &cfg, 42, &s.ft).unwrap();
     let fp: Vec<String> = q.iter().map(|v| format!("{v:.6}")).collect();
