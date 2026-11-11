@@ -55,13 +55,33 @@ cd ..
 ## 目录结构
 
 ```
-web/                 服务端与前端页面（dushan_server.py、static/dushan.html）
-zhuoji/              规则引擎、编码器、神经网络、搜索与 AI 智能体
+web/                 联机版服务端与前端（dushan_server.py、coach.py、static/）
+zhuoji/              Python 规则引擎、编码器、神经网络、搜索与 AI 智能体
 rust_engine/         Rust 搜索内核源码（编译后可大幅提速）
+offline/             离线版内核（Rust）：规则 + tract 推理 + 极简 HTTP
+tauri-offline/       离线版 Android 外壳（APK，断网可玩）
+tauri-app/           联机版 Android 外壳（局域网直连，v1.1.0）
 dushan_engine.so     预编译内核（macOS arm64）
-models/              对局 AI 权重
-docs/手机访问.md      同一 Wi-Fi 下用手机 / 平板玩
+models/              对局 AI 权重 + 冠军注册表
+tools/               训练、评测、闸门、出包等脚本
+docs/                方案与协议文档（结构总览见 docs/仓库结构-2026-11-12.md）
 ```
+
+> 详细的分层、数据流与「看着没人用但删不得」清单，见
+> [`docs/仓库结构-2026-11-12.md`](docs/仓库结构-2026-11-12.md)。
+
+## 离线单机版（Android）
+
+不打服务端、不联网，模型与素材全部编进 APK。
+
+```bash
+cd tauri-offline
+npm run android:build
+# 产物：src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+```
+
+四档难度（全部贪心、无搜索）：🐣 入门·速听 / 🙂 进阶·小网 / 🤖 大师·主力 / 👑 传奇·学生。
+强度差与实测耗时见 `reports/离线版-四档强度矩阵.md`。
 
 ## 常见问题
 
