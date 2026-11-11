@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- 与 app-icon.png 的桌面毡色一致（幺鸡图标背景），避免自适应图标圆形遮罩外露白边 -->
+  <color name="ic_launcher_background">#FF04372B</color>
+</resources>

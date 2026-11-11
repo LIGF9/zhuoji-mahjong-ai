@@ -1,0 +1,29 @@
+[package]
+name = "offline-core"
+version = "0.1.0"
+edition = "2021"
+description = "独山麻将 · 单机离线版 Rust 核心（规则/会话/推理/本地 HTTP 服务）"
+
+[lib]
+name = "offline_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "probe"
+path = "src/bin/probe.rs"
+
+[[bin]]
+name = "offline_server"
+path = "src/bin/offline_server.rs"
+
+[dependencies]
+dushan-engine = { path = "../rust_engine" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tract-onnx = "0.23.9"
+include_dir = "0.7"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

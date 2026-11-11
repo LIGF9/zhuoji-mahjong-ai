@@ -1,0 +1,29 @@
+[package]
+name = "tauri-app"
+version = "1.0.0"
+description = "独山麻将 · 大师之路 Android 客户端（Tauri 2）"
+authors = ["LIGF9"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "tauri_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+offline-core = { path = "../../offline" }
+
+[profile.release]
+# opt-level=3：tract 卷积在 ARM 上对优化等级敏感，压到 "s" 会明显拖慢每步推理。
+# lto="thin"：全量 LTO 对 tauri+tract 这种大依赖图要多吃 3–5 分钟编译时间，
+#   体积收益不到 3%，因此用 thin（跨 crate 内联仍然生效）。
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

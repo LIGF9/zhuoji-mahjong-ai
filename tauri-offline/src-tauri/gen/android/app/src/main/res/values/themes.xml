@@ -1,0 +1,8 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.tauri_app" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- 冷启动窗口底色：与启动页毡面同色，消除「点开先闪黑 ~1 s」 -->
+        <item name="android:windowBackground">@color/launch_bg</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/launch_bg</item>
+    </style>
+</resources>

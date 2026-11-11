@@ -23,6 +23,14 @@ models/onnx/
 
 # Rust 构建产物
 rust_engine/target/
+offline/target/
+tauri-offline/src-tauri/target/
+tauri-offline/node_modules/
+tauri-offline/src-tauri/gen/android/.kotlin/
+tauri-offline/src-tauri/gen/android/.gradle/
+tauri-offline/src-tauri/gen/android/.tauri/
+# 离线版出包目录（体积大，按需本地重建；构建脚本 runs/build_offline_apk.sh）
+tauri-offline/dist/
 
 # 实验运行日志（ctrl_*.jsonl 等）
 runs/

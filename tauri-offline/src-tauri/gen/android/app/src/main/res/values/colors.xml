@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <!-- 启动窗口底色 = 启动页 style.css 的 body 背景（#07261d）。
+         不设它时，冷启动前约 1 s 是系统默认的纯黑，视觉上像「应用闪黑」；
+         设成同色后，从点击图标到启动页出现是一条连续的墨绿毡面。 -->
+    <color name="launch_bg">#FF07261D</color>
+</resources>

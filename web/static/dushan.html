@@ -5711,7 +5711,14 @@ const OPP_OPTIONS = [
   { v: "search128:master", label: "⚡ 极算 · 128 路推演（默认）" },
 ];
 const OPP_ALLOWED = OPP_OPTIONS.map(o => o.v);
-const DEFAULT_STRATEGY = "search128:master";  // 2026-11-06：推荐默认升到极算 n128
+/* 推荐档默认值。联网版恒为「极算 n128」；**离线宿主**（APK 内的 Rust 服务）
+   会注入 `window.__DUSHAN_DEFAULT_STRATEGY`，把默认改成贪心小网 —— 手机端
+   N128 单次决策 7.2 s（模拟器实测），每个决策点都跑一次会卡死；而 P0 实测
+   「学生换搜索」没有可测强度收益（配对差 −0.98±0.85，CI 跨零）。
+   只影响「出厂默认 / 恢复默认」，用户手动选过的档位仍按 localStorage 走。 */
+const DEFAULT_STRATEGY =
+  (typeof window !== "undefined" && window.__DUSHAN_DEFAULT_STRATEGY)
+  || "search128:master";  // 2026-11-06：推荐默认升到极算 n128
 const DEFAULT_OPP = "model:master";           // 所有玩家默认：大师
 /* 2026-11-07「只增不替」：服务端 /api/meta 下发的附加冠军模型在拿到 META 后
    由 registerChampionOptions() 追加到这里（贪心 + 极算 128 两个档位/模型）。
