@@ -297,6 +297,9 @@ pub fn meta() -> Value {
         "stem": stem, "origin": "offline", "line": line,
         "ver": ver, "abbr": ver, "size": size,
     });
+    // `champion` 一律 false：离线四档由 `window.__DUSHAN_TIERS` 直接给出，
+    // 若这里标 true，前端 registerChampionOptions() 会把同一张网再追加一遍，
+    // 下拉里出现「传奇 · 学生」两条一模一样的选项。
     json!({
         "page_ver": PAGE_VER,
         "models": [
@@ -307,8 +310,8 @@ pub fn meta() -> Value {
                 "iter": 0,
                 "net": "s",
                 "params": 816300,
-                "champion": true,
-                "label": "瘦身学生（离线）",
+                "champion": false,
+                "label": "传奇 · 学生（离线）",
                 "latency": {"model": 0.02},
                 "ident": ident("champ_slim_s", "E-SLIM", "S1", "0.82M"),
             },
@@ -320,9 +323,21 @@ pub fn meta() -> Value {
                 "net": "m1",
                 "params": 769000,
                 "champion": false,
-                "label": "大师（离线）",
+                "label": "大师 · 主力（离线）",
                 "latency": {"model": 0.03},
                 "ident": ident("dushan_master", "MASTER", "M", "0.77M"),
+            },
+            {
+                "stem": "expert_s7",
+                "size_kb": 470,
+                "mtime": 0,
+                "iter": 1,
+                "net": "s",
+                "params": 119000,
+                "champion": false,
+                "label": "进阶 · 小网（离线）",
+                "latency": {"model": 0.01},
+                "ident": ident("expert_s7", "S7R", "S7", "0.12M"),
             }
         ],
         "tiles": tiles,

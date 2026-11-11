@@ -25,22 +25,21 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
-        let slim = match Net::from_bytes(assets::SLIM_S_ONNX, 3) {
-            Ok(n) => Some(n),
-            Err(e) => {
-                eprintln!("[offline] champ_slim_s 加载失败: {e}");
-                None
+        // 三张网：master（v1）/ champ_slim_s（v3）/ expert_s7（v3，0.12M）。
+        // 加载失败只打日志、不 panic —— 单张网坏掉时另外两张还能打。
+        let mut map: Vec<(&'static str, Net)> = Vec::new();
+        for (stem, bytes, enc) in [
+            ("dushan_master", assets::MASTER_ONNX, 1u8),
+            ("champ_slim_s", assets::SLIM_S_ONNX, 3),
+            ("expert_s7", assets::EXPERT_S7_ONNX, 3),
+        ] {
+            match Net::from_bytes(bytes, enc) {
+                Ok(n) => map.push((stem, n)),
+                Err(e) => eprintln!("[offline] {stem} 加载失败: {e}"),
             }
-        };
-        let master = match Net::from_bytes(assets::MASTER_ONNX, 1) {
-            Ok(n) => Some(n),
-            Err(e) => {
-                eprintln!("[offline] dushan_master 加载失败: {e}");
-                None
-            }
-        };
-        println!("[offline] tract 模型: slim={} master={}", slim.is_some(), master.is_some());
-        let nets = Arc::new(Nets { slim, master });
+        }
+        println!("[offline] tract 模型: {}", map.iter().map(|(s, _)| *s).collect::<Vec<_>>().join(","));
+        let nets = Arc::new(Nets { map });
         // 设备端耗时自检：后台线程跑一次，结果直接进 logcat（见 bench.rs）。
         {
             let n = nets.clone();
@@ -153,32 +152,41 @@ fn route(app: &Arc<Mutex<App>>, method: &str, path: &str, q: &str, body: &Value)
     if method == "POST" {
         return match path {
             "/api/new" => {
-                let me = body.get("my_seat").and_then(|x| x.as_u64()).unwrap_or(0) as u8;
-                let me = me.min(3);
+                let seed = a.next_seed();
+                // 页面 #my-seat 的「随机」是 value="-1"（不是缺字段），Python 侧按
+                // 「不在 0..4 就 None → 随机」处理。这里以前用 as_u64 解析，-1 直接
+                // 落到 unwrap_or(0) —— 选「随机」永远坐 0 号（东/先手），与线上不一致。
+                let me = match body.get("my_seat").and_then(|x| x.as_i64()) {
+                    Some(v) if (0..4).contains(&v) => v as u8,
+                    // 用 seed 的高位派座位：Session 内部 dealer = seed % 4，
+                    // 若这里也用 seed % 4，选「随机」就会**每次都坐庄**。
+                    _ => ((seed / 4) % 4) as u8,
+                };
                 let mut names = ["我", "下家", "对家", "上家"].map(str::to_string);
                 if let Some(arr) = body.get("names").and_then(|x| x.as_array()) {
                     for (i, v) in arr.iter().take(4).enumerate() {
                         if let Some(s) = v.as_str() { names[i] = s.to_string(); }
                     }
                 }
-                let mut encs = [3u8; 3];
-                let mut dets = [0u32; 3];
+                // 前端把档位与模型拼成一个串："ting:fast" / "model:dushan_master" /
+                // "model:expert_s7" / "model:champ_slim_s"。原样透传给 Session，
+                // 由它按前缀（规则/贪心/搜索）与 stem（哪张网）分派 —— 在这里
+                // 只拆成 (kind, stem) 再拼回去就会丢掉 ting 的语义。
+                let mut strats: [String; 3] = [
+                    "model:champ_slim_s".into(),
+                    "model:champ_slim_s".into(),
+                    "model:champ_slim_s".into(),
+                ];
                 if let Some(arr) = body.get("opponents").and_then(|x| x.as_array()) {
                     for (i, v) in arr.iter().take(3).enumerate() {
-                        // 前端把档位与模型拼成一个串："model:master" / "search32:champ_slim_s"。
-                        // 必须按前缀分派，否则 UI 选「深算 32」而后端只贪心 = 逻辑 bug。
-                        let sel = v.get("model").and_then(|x| x.as_str()).unwrap_or("");
-                        let (kind, stem) = sel.split_once(':').unwrap_or(("model", sel));
-                        encs[i] = if stem.contains("master") { 1 } else { 3 };
-                        dets[i] = match kind {
-                            "search32" => 32,
-                            "search128" => 128,
-                            _ => 0,
-                        };
+                        if let Some(sel) = v.get("model").and_then(|x| x.as_str()) {
+                            if !sel.is_empty() {
+                                strats[i] = sel.to_string();
+                            }
+                        }
                     }
                 }
-                let seed = a.next_seed();
-                a.session = Some(Session::new(FanTable::build(), seed, me, &names, &encs, &dets));
+                a.session = Some(Session::new(FanTable::build(), seed, me, &names, &strats));
                 Resp::Json(200, json!({"ok": true, "sid": "offline", "my_seat": me}))
             }
             "/api/act" => {
@@ -270,6 +278,23 @@ fn read_request(s: &mut TcpStream) -> Option<(String, String, Vec<u8>)> {
     Some((method, target, body))
 }
 
+/// 静态资源的缓存策略。
+///
+/// 2026-11-11 踩坑：原来**所有**静态资源（含 `dushan.html`）都发
+/// `Cache-Control: max-age=86400`。换新 APK 重装后 WebView 仍按 24 小时缓存
+/// 拿旧页面 —— 实机现象是「四档标签没变、界面还是旧 bug」，而从 adb 转发
+/// 出来的 HTML 明明已经是新的（日志里三张网也都在），排查绕了很久。
+/// 结论：**页面与「随时会变」的资源必须 no-store**，只有图片/音频这类
+/// 按文件名指代的二进制才配长缓存。
+fn cache_for(mime: &str) -> &'static str {
+    let m = mime.split(';').next().unwrap_or("").trim();
+    match m {
+        "text/html" | "text/css" | "application/javascript" | "text/javascript"
+        | "application/json" | "application/manifest+json" | "image/svg+xml" => "no-store",
+        _ => "max-age=86400",
+    }
+}
+
 fn write_resp(s: &mut TcpStream, code: u16, ctype: &str, cache: &str, body: &[u8]) {
     let reason = match code {
         200 => "OK", 204 => "No Content", 404 => "Not Found",
@@ -298,7 +323,7 @@ fn handle(mut s: TcpStream, app: &Arc<Mutex<App>>) {
             write_resp(&mut s, code, "application/json; charset=utf-8", "no-store", &b);
         }
         Resp::Static(bytes, mime) => {
-            write_resp(&mut s, 200, mime, "max-age=86400", bytes);
+            write_resp(&mut s, 200, mime, cache_for(mime), bytes);
         }
         Resp::Empty(code) => {
             write_resp(&mut s, code, "text/plain", "no-store", &[]);

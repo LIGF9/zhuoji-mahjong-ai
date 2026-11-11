@@ -42,7 +42,10 @@ CHAMPIONS = MODEL_DIR / "champions.json"
 
 
 def stems() -> list[str]:
-    out = ["dushan_master"]
+    # expert_s7（2026-11-11）：离线版「进阶」档的 0.12M 小网，不在 champions.json
+    # 里（它不是冠军，只是离线四档之一），但它同样被 offline/src/assets.rs
+    # include_bytes! 编进 APK —— 缺 ONNX 会直接让离线 crate 编译失败。
+    out = ["dushan_master", "expert_s7"]
     try:
         reg = json.loads(CHAMPIONS.read_text(encoding="utf-8"))
         out += [str(c["stem"]) for c in reg.get("champions", [])]

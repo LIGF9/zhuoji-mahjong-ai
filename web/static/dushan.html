@@ -5705,21 +5705,45 @@ el("ji-mask").addEventListener("click", (ev) => {
    「主力 + 注册过的冠军」，前端再列旧网就等于给用户递一个早已停更的选项。
    2026-11-07 起主力恒为 models/dushan_master.pt（冻结基线，绝不覆盖），
    训练产物通过 models/champions.json 只增不替，详见 registerChampionOptions()。 */
-const OPP_OPTIONS = [
-  { v: "model:master", label: "🤖 大师（贪心·2ms）", dyn: "master" },
-  { v: "search32:master", label: "🔍 深算 · 32 路推演" },
-  { v: "search128:master", label: "⚡ 极算 · 128 路推演（默认）" },
-];
+/* 2026-11-11 离线版四档：**全部贪心**，由宿主注入 `window.__DUSHAN_TIERS`
+   （见 offline/src/assets.rs）。联网版不注入 → 仍是下面三项搜索档。
+   四档的强度与差距见 reports/离线版-四档强度矩阵.md。 */
+const OFFLINE_TIERS = (typeof window !== "undefined" && Array.isArray(window.__DUSHAN_TIERS))
+  ? window.__DUSHAN_TIERS.filter(t => t && t.v && t.label)
+  : null;
+const OPP_OPTIONS = OFFLINE_TIERS
+  ? OFFLINE_TIERS.map(t => ({ v: String(t.v), label: String(t.label) }))
+  : [
+      { v: "model:master", label: "🤖 大师（贪心·2ms）", dyn: "master" },
+      { v: "search32:master", label: "🔍 深算 · 32 路推演" },
+      { v: "search128:master", label: "⚡ 极算 · 128 路推演（默认）" },
+    ];
 const OPP_ALLOWED = OPP_OPTIONS.map(o => o.v);
 /* 推荐档默认值。联网版恒为「极算 n128」；**离线宿主**（APK 内的 Rust 服务）
    会注入 `window.__DUSHAN_DEFAULT_STRATEGY`，把默认改成贪心小网 —— 手机端
    N128 单次决策 7.2 s（模拟器实测），每个决策点都跑一次会卡死；而 P0 实测
    「学生换搜索」没有可测强度收益（配对差 −0.98±0.85，CI 跨零）。
    只影响「出厂默认 / 恢复默认」，用户手动选过的档位仍按 localStorage 走。 */
-const DEFAULT_STRATEGY =
-  (typeof window !== "undefined" && window.__DUSHAN_DEFAULT_STRATEGY)
-  || "search128:master";  // 2026-11-06：推荐默认升到极算 n128
-const DEFAULT_OPP = "model:master";           // 所有玩家默认：大师
+/* 2026-11-11 离线四档踩坑：注入值与白名单一旦对不上，`select.value = v` 赋一个
+   不存在的 option 值不会报错，浏览器只把 selectedIndex 置 -1 —— 界面就是**空白**
+   下拉（模拟器截图里三家对手全空）。而兜底又回落到同一个不存在的值，二次失败。
+   故这里做两件事：① 默认值一律以「在白名单里」为准，否则取离线档位表里的
+   dushan_master，再否则取第一档；② 渲染后仍为空则强制选第一项并回写 SET。 */
+const DEFAULT_STRATEGY = (() => {
+  const inj = (typeof window !== "undefined" && window.__DUSHAN_DEFAULT_STRATEGY) || "";
+  if (OPP_ALLOWED.includes(inj)) return inj;
+  // 离线宿主注入失效时也别落到线上档位（离线服务没有 search128 引擎）
+  return OFFLINE_TIERS ? OPP_ALLOWED[OPP_ALLOWED.length - 1] : "search128:master";
+})();
+/* 所有玩家默认：大师。离线四档里「大师」的串叫 `model:dushan_master`
+   （stem 是权重文件名），与线上的 `model:master` 不一致 —— 直接写死线上的值
+   会让三家对手的下拉在离线版里全部空白。 */
+const DEFAULT_OPP = (() => {
+  const want = "model:master";
+  if (OPP_ALLOWED.includes(want)) return want;          // 联网版：行为一字不变
+  return OPP_ALLOWED.find(v => /(^|:)dushan_master$/.test(v))
+      || OPP_ALLOWED[0] || want;
+})();
 /* 2026-11-07「只增不替」：服务端 /api/meta 下发的附加冠军模型在拿到 META 后
    由 registerChampionOptions() 追加到这里（贪心 + 极算 128 两个档位/模型）。
    主力恒为 master，默认值一字不改；冠军只作为可选追加项。 */
@@ -5829,6 +5853,15 @@ const OPP_HTML = () => {
   }).join("");
   return main + groups;
 };
+/* 把 select 落到一个**真实存在**的 option 上：v → 兜底 fb → 第一个选项。
+   返回最终落定的值（可能与 v、fb 都不同）。返回空串说明 select 里一个 option
+   都没有（不该发生，调用方可用它来发现注册表为空）。 */
+function pickSelectValue(s, v, fb) {
+  if (v && OPP_ALLOWED.includes(String(v))) { s.value = v; return v; }
+  if (fb && OPP_ALLOWED.includes(String(fb))) { s.value = fb; return fb; }
+  s.selectedIndex = 0;
+  return s.value || "";
+}
 /* 开局页三家对手的下拉：选项表 + 从 SET.oppModels 恢复选中值。
    改名/换模型统一走 setOppModel，它会同时刷新设置页那份与名字里的版本缩写。 */
 function fillOppSelects() {
@@ -5840,8 +5873,8 @@ function fillOppSelects() {
     s.innerHTML = OPP_HTML();
     const i = parseInt(id.slice(3), 10);
     const v = SET.oppModels[i] || DEFAULT_OPP;
-    s.value = v;
-    if (s.value !== v) { s.value = DEFAULT_OPP; SET.oppModels[i] = DEFAULT_OPP; }  // 选项已下架 → 回落大师
+    const got = pickSelectValue(s, v, DEFAULT_OPP);
+    if (got !== v) SET.oppModels[i] = got;   // 选项已下架 / 不在白名单 → 静默归位
     s.onchange = () => setOppModel(i, s.value);
   }
 }
@@ -5889,6 +5922,10 @@ async function boot() {
 el("startBtn").onclick = async () => {
   const specs = SET.oppModels.map(v => {
     const [kind, stem = "master"] = String(v || "").split(":");
+    // 2026-11-11 离线档：`ting:fast` 不是模型 stem，而是「规则速听」整档。
+    // 离线 Rust 服务按 `model` 字段收**原样策略串**（见 offline/src/http.rs），
+    // 所以这里必须把整串塞回去；拆出 stem 只剩 "fast"，服务端会当成未知网名。
+    if (kind === "ting") return { type: "model", model: String(v), temperature: 0 };
     // 2026-11-07：大师 / 深算 n32 / 极算 n128 三个默认档 + 注册表追加的冠军档。
     // 任何残余旧值（教师、随机、bc、s7、简算 n8）仍按大师出牌。
     if (kind === "search32") return { type: "search", model: stem || "master", ply: 3, ndet: 32 };
@@ -6306,9 +6343,16 @@ function oppAbbr(v) {
   if (v.startsWith("search128:")) return "极算";
   if (v.startsWith("search:")) return "前瞻";         // 旧值容错（历史配置/回放）
   if (v.startsWith("teacher:")) return TEACHER_ABBR[v.slice(8)] || v.slice(8);
+  if (v === "ting:fast") return "速听";
   if (v.startsWith("model:")) {
     const m = v.slice(6);
     if (m === "master") return (META && META.master_info && META.master_info.abbr) || "M";
+    // 2026-11-11 离线档：离线主力叫 `dushan_master`（stem = 权重文件名），不叫
+    // `master`。漏了这一条会掉进下面的兜底分支，把 "master" 拼成「SMASTER」，
+    // 牌桌上就变成「大乔(SMASTER)」。
+    if (m === "dushan_master") return "大师";
+    if (m === "expert_s7") return "小网";
+    if (m === "champ_slim_s") return "学生";
     if (m === "rl") return "RL";
     const mm = m.replace(/^dushan_/, "");        // big_s3 / s7 / big_bc / bc
     const big = mm.startsWith("big_");
@@ -7066,8 +7110,14 @@ function coachIdle(msg) {
 /* 策略名翻译：把后端返回的 model 字段（如 search32:dushan_master）翻成中文。
    2026-11-02：线上只剩三项 —— 大师贪心 / 深算 n32 / 极算 n128；
    延迟是 Rust 内核 + CoreML 的实测中位（曾经是 CPU 0.5s / 1.9s，别照抄旧文档）。 */
+const TIER_LABEL = new Map(
+  ((typeof window !== "undefined" && window.__DUSHAN_TIERS) || [])
+    .map(t => [String(t.v), String(t.label)])
+);
 function strategyLabel(modelStr) {
   const s = String(modelStr || "");
+  if (TIER_LABEL.has(s)) return TIER_LABEL.get(s);
+  if (s === "ting:fast") return "🐣 入门 · 速听";
   if (s.startsWith("search32:")) return "深算 · 32 路推演（Rust·0.13s）";
   if (s.startsWith("search128:")) return "极算 · 128 路推演（Rust·0.09s）";
   if (s.startsWith("search")) return "深算 · 32 路推演（旧档已并入）";
@@ -9344,12 +9394,10 @@ function renderPickers(rootId) {
   root.querySelectorAll("select.pickmodel").forEach(s => {
     const rel = parseInt(s.dataset.pickrel, 10);
     const v = rel ? (SET.oppModels[rel - 1] || DEFAULT_OPP) : SET.strategy;
-    s.value = v;
-    if (s.value !== v) {
-      // 选项已下架（2026-11-02 模型精简）：对手回落大师、我的推荐回落深算 n32
-      const fb = rel ? DEFAULT_OPP : DEFAULT_STRATEGY;
-      s.value = fb;
-      if (rel) SET.oppModels[rel - 1] = fb; else SET.strategy = fb;
+    const got = pickSelectValue(s, v, rel ? DEFAULT_OPP : DEFAULT_STRATEGY);
+    if (got !== v) {
+      // 选项已下架（2026-11-02 模型精简）：对手回落大师、我的推荐回落离线/线上默认档
+      if (rel) SET.oppModels[rel - 1] = got; else SET.strategy = got;
       saveSet();
     }
     s.onchange = () => (rel ? setOppModel(rel - 1, s.value) : setMyModel(s.value));
@@ -9441,7 +9489,7 @@ const STRAT_LATENCY = { search32: 0.13, search128: 0.09, model: 0.02 };
    线上实测 search128 ≈1.76s / search32 ≈2.64s（主力 v1 仍 0.17/0.08s）。
    按所选 stem 区分延迟，避免「超时自动操作」比计算还快却不提醒（§6.68.3 隐患）。
    数值取实测上浮一档，只影响提示文案，不决定任何出牌或降级。 */
-const STRAT_LATENCY_V3 = { search32: 2.7, search128: 1.8, model: 0.02 };
+const STRAT_LATENCY_V3 = { search32: 2.7, search128: 1.8, model: 0.02, ting: 0.002 };
 function isHeavyStem(s) {
   const stem = String(s || "").split(":")[1] || "";
   return !!stem && !/^(master|best|dushan_master)$/.test(stem);
@@ -9482,7 +9530,7 @@ function checkTimeoutLink() {
    额外停顿——永远不会为了赶时间降级或更换模型（用户铁律）。但节奏设得比对手
    模型的单步计算还快时，实际出牌间隔 = 模型计算 + 节奏，节奏设定形同虚设，
    这里给出明确提醒（与上面「超时 × 推荐策略」同一套交互）。 */
-const OPP_LATENCY = { search32: 0.13, search128: 0.09, model: 0.02 };
+const OPP_LATENCY = { search32: 0.13, search128: 0.09, model: 0.02, ting: 0.002 };
 function oppLatency(v) {
   const parts = String(v || "").split(":");
   const own = parts[1] ? CHAMP_LATENCY[parts[1]] : null;

@@ -151,6 +151,11 @@ def main():
     ap.add_argument("--seed", type=int, default=20261110)
     ap.add_argument("--device", default="mps")
     ap.add_argument("--limit-shards", type=int, default=0, help="冒烟用：只跑前 N 片")
+    # 2026-11-11：离线版 expert 档需要「中等强度」的小网。E-SLIM 原来只在 val
+    # 改善时存最优，拿不到中间轮次的权重；这里加两个开关：从既有检查点热启动，
+    # 以及每轮都另存一份 `--out` 同目录的 `_ep{N}`（最佳权重仍写 `--out`）。
+    ap.add_argument("--init", default="", help="热启动检查点（.pt）")
+    ap.add_argument("--save-every", action="store_true", help="每轮另存 _ep{N}")
     args = ap.parse_args()
 
     assert_no_amp()
@@ -169,6 +174,12 @@ def main():
         bn_momentum=0.01 if args.arch == "m1" else 0.1,
     )
     net = build(cfg).to(args.device)
+    if args.init:
+        ck = torch.load(str(ROOT / args.init) if not str(args.init).startswith("/") else args.init,
+                        map_location="cpu", weights_only=False)
+        sd = ck.get("state_dict") or ck.get("model") or ck
+        missing, unexpected = net.load_state_dict(sd, strict=False)
+        log(f"[init] 热启动 {args.init}（missing={len(missing)} unexpected={len(unexpected)}）")
     n_par = sum(p.numel() for p in net.parameters())
     log(f"net arch={args.arch} {args.channels}x{args.blocks} h{args.hidden} "
         f"→ {n_par/1e6:.3f}M params, device={args.device}")
@@ -288,6 +299,21 @@ def main():
                             "params": n_par, "epochs": args.epochs},
             }, str(best_path))
             log(f"  ↑ 新最优 {vl:.4f} → {best_path.name}")
+        if args.save_every:
+            ep_path = best_path.with_name(f"{best_path.stem}_ep{ep}{best_path.suffix}")
+            torch.save({
+                "net": net_meta(cfg),
+                "state_dict": net.state_dict(),
+                "encoder_version": 3,
+                "encoder_packs": list(ENC_PACKS),
+                "iter": ep,
+                "eval": {"val_loss": vl, "n_shards": len(files), "tau": args.tau,
+                         "ent_beta": ENT_BETA, "assist_w": args.assist_w},
+                "distill": {"kind": "exit-slim", "teacher": "champ_exit_p48",
+                            "assist": args.assist or None,
+                            "params": n_par, "epochs": args.epochs, "init": args.init or None},
+            }, str(ep_path))
+            log(f"  · 轮次快照 → {ep_path.name}")
         else:
             bad += 1
             if bad >= args.patience:

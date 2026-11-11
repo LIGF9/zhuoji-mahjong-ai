@@ -46,7 +46,13 @@ _AG_CACHE: dict = {}
 
 # 支持的对手/候选模式。前两个是冻结口径（§0 / §6.11.7），后两个是
 # §6.71.3 E-POOL 新增的**对手风格**，不参与任何既有判据。
-MODES = ("greedy", "search32", "noisy10", "heuristic")
+MODES = ("greedy", "search32", "noisy10", "heuristic", "ting")
+
+# 离线版 adept 档（「速听」）的权重：与 zhuoji/bots.py TEACHER_STYLES["tenpai_rush"]
+# 同一套偏好，但 **noise 归零**。理由：离线版四档要能被用户当「难度」理解，
+# 同一局面同一手必须每次都打同一张；带高斯噪声的教师只适合造数据，不适合当档位。
+TING_WEIGHTS = dict(tenpai_bonus=90.0, safety=0.3, noise=0.0, keep_yaoji=0.5,
+                    peng_tiebreak=0.0)
 
 
 class _Noisy:
@@ -100,6 +106,12 @@ def get_agent(model_path, mode, seat, seat_seed, dev, n_det=32):
             ag = HeuristicBot(seed=seat_seed,
                               weights=TEACHER_STYLES["balanced"])
             ag.name = "heuristic:balanced"
+        elif mode == "ting":
+            # 离线 adept 档：向听数驱动 + 速听偏好（noise=0，见 TING_WEIGHTS）。
+            from zhuoji.bots import HeuristicBot, HeuristicWeights
+
+            ag = HeuristicBot(seed=seat_seed, weights=HeuristicWeights(**TING_WEIGHTS))
+            ag.name = "ting:fast"
         else:
             from zhuoji.rust_search import RustSearchAgent
             net = _load_net(model_path)
@@ -107,7 +119,7 @@ def get_agent(model_path, mode, seat, seat_seed, dev, n_det=32):
                                  ply=3, n_det=n_det, topk=3, ff_cap=24, fair=True)
         _AG_CACHE[key] = ag
     # 复用：重置 RNG 流（NetAgent / _Noisy 用 numpy；HeuristicBot 用 stdlib）
-    if mode == "heuristic":
+    if mode in ("heuristic", "ting"):
         import random
 
         ag.rng = random.Random(seat_seed)

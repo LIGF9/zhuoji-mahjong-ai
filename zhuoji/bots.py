@@ -78,6 +78,9 @@ class HeuristicWeights:
     noise: float = 0.0           # 决策噪声，用于制造教师多样性
     gang_aggression: float = 0.0 # >0 更爱杠，<0 更保守
     hu_greed: float = 1.0        # 1.0 = 能胡就胡
+    # 碰后向听不变时的乱碰概率。教师池靠它制造多样性；离线「速听」档要求
+    # 同一局面永远打同一张（难度档必须可复现），所以那边显式设 0。
+    peng_tiebreak: float = 0.25
 
 
 DEFAULT_WEIGHTS = HeuristicWeights()
@@ -228,7 +231,7 @@ class HeuristicBot(Bot):
             after = shanten(h, n_melds + 1)
             if after < cur:
                 return pg[0]
-            if after == cur and self.rng.random() < 0.25:
+            if after == cur and self.rng.random() < self.w.peng_tiebreak:
                 return pg[0]
 
         return Action(PASS)

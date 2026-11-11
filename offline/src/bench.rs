@@ -23,7 +23,8 @@ use crate::session::{Nets, Session};
 pub fn log_latency(nets: &Nets) {
     let ft = FanTable::build();
     let names = ["我".to_string(), "下家".into(), "对家".into(), "上家".into()];
-    let mut s = Session::new(ft, 20_261_111, 0, &names, &[3, 3, 3], &[0, 0, 0]);
+    let strats: [String; 3] = std::array::from_fn(|_| "model:champ_slim_s".to_string());
+    let mut s = Session::new(ft, 20_261_111, 0, &names, &strats);
     s.advance(nets, 400);
     if s.game.phase == dushan_engine::actions::PHASE_OVER || s.game.actor() != 0 {
         println!("[offline] bench 跳过：未走到我的决策点");
@@ -33,8 +34,17 @@ pub fn log_latency(nets: &Nets) {
     let k = mt_threads();
     println!("[offline] bench K={k} legal={}", legal.len());
 
-    for (label, enc) in [("slim_s", 3u8), ("master", 1u8)] {
-        let Some(net) = nets.for_enc(enc) else { continue };
+    // 速听是纯规则，单独计时（它是 adept 档，手机上应当 <1ms）。
+    {
+        let _ = crate::ting::choose(&s.game, 0, &s.ft);
+        let t0 = Instant::now();
+        for _ in 0..50 {
+            let _ = crate::ting::choose(&s.game, 0, &s.ft);
+        }
+        println!("[offline] bench greedy ting={:.2}ms", t0.elapsed().as_secs_f64() * 1000.0 / 50.0);
+    }
+    for label in ["champ_slim_s", "expert_s7", "dushan_master"] {
+        let Some(net) = nets.get(label) else { continue };
         // 贪心：50 次取均值（单次太短，计时噪声大）。
         let t0 = Instant::now();
         for _ in 0..50 {

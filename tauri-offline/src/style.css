@@ -70,24 +70,14 @@ body {
 /* ---- 品牌 ---- */
 .brand { display: flex; align-items: center; gap: clamp(10px, 2vmin, 16px); }
 
+/* 品牌图直接复用牌墙里那张幺鸡（assets/tiles/1条.png 的 5× 放大版），
+   不再用「麻」字临时顶替 —— 图标、启动图、牌桌三处必须同一只鸟。 */
 .tile {
   flex: 0 0 auto;
-  width: clamp(38px, 6.4vmin, 56px);
-  height: clamp(48px, 8.2vmin, 72px);
-  border-radius: 8px;
-  background: linear-gradient(155deg, #fffdf3, #e8dfc3);
-  border: 1px solid rgba(0,0,0,.18);
-  box-shadow: 0 4px 0 #c9bd98, 0 8px 16px rgba(0,0,0,.4);
-  display: grid;
-  place-items: center;
+  height: clamp(52px, 9.2vmin, 78px);
+  width: auto;
   transform: rotate(-4deg);
-}
-.tile span {
-  font-size: clamp(22px, 4vmin, 36px);
-  font-weight: 800;
-  line-height: 1;
-  color: #b3312c;
-  text-shadow: 0 1px 0 rgba(255,255,255,.7);
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, .5));
 }
 
 .brand-txt h1 {

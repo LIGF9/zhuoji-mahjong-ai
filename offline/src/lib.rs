@@ -14,6 +14,7 @@
 // 避免「声明了但没实现」污染 `cargo build`。
 pub mod view;
 pub mod policy;
+pub mod ting;
 pub mod search;
 pub mod session;
 pub mod assets;

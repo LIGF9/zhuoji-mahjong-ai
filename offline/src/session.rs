@@ -19,16 +19,33 @@ use crate::policy::{self, Net};
 use crate::search::{self, Cfg};
 use crate::view::{self, SnapshotCtx, PAGE_VER};
 
+/// 三张网的注册表（键 = ONNX 的 stem）。
+///
+/// 2026-11-11 四档化之前这里是 `slim`/`master` 两个字段、按编码版本选网；
+/// 现在多了 0.12M 的 expert 网，且同一编码（v3）下有两张网，按 enc 选已经
+/// 不够用 —— 必须按**策略串里的 stem** 精确取，否则「选进阶却跑传奇」。
 pub struct Nets {
-    pub slim: Option<Net>,
-    pub master: Option<Net>,
+    pub map: Vec<(&'static str, Net)>,
 }
 
 impl Nets {
-    pub fn for_enc(&self, enc: u8) -> Option<&Net> {
-        if enc == 1 { self.master.as_ref() } else { self.slim.as_ref() }
+    pub fn get(&self, stem: &str) -> Option<&Net> {
+        self.map.iter().find(|(s, _)| *s == stem).map(|(_, n)| n)
     }
-    pub fn any(&self) -> bool { self.slim.is_some() || self.master.is_some() }
+    pub fn any(&self) -> bool { !self.map.is_empty() }
+}
+
+/// 把前端传来的 stem 收敛到三张真实权重之一。
+///
+/// 认别名是因为历史配置里 master 有 `master`/`dushan_master` 两种写法；
+/// 不认识的 stem 一律回落到主力学生（导不了权重时也要有牌可打）。
+pub fn canon_stem(raw: &str) -> &'static str {
+    match raw {
+        "master" | "dushan_master" => "dushan_master",
+        "expert_s7" | "s7" => "expert_s7",
+        "slim_s" | "champ_slim_s" => "champ_slim_s",
+        _ => "champ_slim_s",
+    }
 }
 
 pub struct Session {
@@ -38,9 +55,11 @@ pub struct Session {
     pub names: [String; 4],
     pub kinds: [&'static str; 4],
     /// 每个座位对手的 determinization 数：0 = 贪心，32/128 = 真搜索。
-    /// 对齐前端 `search32:xxx` / `search128:xxx` 档位，避免「UI 说搜索、后端贪心」。
+    /// 四档全部是贪心，这里只保留给「老配置里还存着搜索档」的兼容路径。
     pub opp_det: [u32; 4],
-    pub enc_by_seat: [u8; 4],
+    /// 每个座位的策略：`ting` 前缀走速听规则，其余按 `opp_stem` 取网。
+    pub opp_ting: [bool; 4],
+    pub opp_stem: [&'static str; 4],
     pub cum: [f64; 4],
     pub hand_index: u32,
     pub dealer: u8,
@@ -91,14 +110,15 @@ fn arr_i64(v: &Value, k: &str) -> Vec<i64> {
 }
 
 impl Session {
-    /// `names_rel[rel]` 是前端传来的相对座位名；转成绝对座位后存入。
+    /// `names_rel[rel]` 是前端传来的相对座位名；`strats_rel` 是三家对手的
+    /// 策略串（`ting:fast` / `model:dushan_master` / `model:expert_s7` / ...）。
+    /// 转成绝对座位后存入。
     pub fn new(
         ft: FanTable,
         seed: u64,
         me: u8,
         names_rel: &[String; 4],
-        encs_rel: &[u8; 3],
-        dets_rel: &[u32; 3],
+        strats_rel: &[String; 3],
     ) -> Self {
         let mut names = ["我", "下家", "对家", "上家"].map(str::to_string);
         for rel in 0..4usize {
@@ -106,15 +126,30 @@ impl Session {
         }
         let mut kinds = ["model"; 4];
         kinds[me as usize] = "human";
-        let mut enc_by_seat = [3u8; 4];
+        let mut opp_stem = ["champ_slim_s"; 4];
+        let mut opp_ting = [false; 4];
         let mut opp_det = [0u32; 4];
         for rel in 1..4usize {
             let seat = (me as usize + rel) % 4;
-            enc_by_seat[seat] = encs_rel[rel - 1];
-            opp_det[seat] = dets_rel[rel - 1];
-            if dets_rel[rel - 1] > 0 {
-                kinds[seat] = if dets_rel[rel - 1] == 32 { "search32" } else { "search128" };
-            }
+            let (kind, stem) = strats_rel[rel - 1]
+                .split_once(':')
+                .unwrap_or(("model", strats_rel[rel - 1].as_str()));
+            opp_ting[seat] = kind == "ting";
+            opp_stem[seat] = canon_stem(stem);
+            opp_det[seat] = match kind {
+                "search32" => 32,
+                "search128" => 128,
+                _ => 0,
+            };
+            kinds[seat] = if opp_ting[seat] {
+                "ting"
+            } else if opp_det[seat] == 32 {
+                "search32"
+            } else if opp_det[seat] == 128 {
+                "search128"
+            } else {
+                "model"
+            };
         }
         let mut wall = tiles::full_deck();
         Rng::new(seed).shuffle(&mut wall);
@@ -127,7 +162,8 @@ impl Session {
             names,
             kinds,
             opp_det,
-            enc_by_seat,
+            opp_ting,
+            opp_stem,
             cum: [0.0; 4],
             hand_index: 1,
             dealer,
@@ -193,11 +229,13 @@ impl Session {
         }
     }
 
-    /// 某个 AI 座位做一次决策：贪心（det=0）或真 PIMC 搜索（det=32/128）。
+    /// 某个 AI 座位做一次决策：速听（规则）、贪心或真 PIMC 搜索（det=32/128）。
     fn decide(&self, nets: &Nets, actor: u8) -> Action {
-        let enc = self.enc_by_seat[actor as usize];
         let heuristic = || policy::heuristic_choose(&self.game, actor, &self.ft);
-        let Some(net) = nets.for_enc(enc) else {
+        if self.opp_ting[actor as usize] {
+            return crate::ting::choose(&self.game, actor, &self.ft);
+        }
+        let Some(net) = nets.get(self.opp_stem[actor as usize]) else {
             return heuristic();
         };
         let det = self.opp_det[actor as usize];
@@ -347,22 +385,26 @@ impl Session {
 
     /// `/api/hint`：按策略给出推荐动作。
     ///
-    /// 策略串形如 `model:master` / `search32:champ_slim_s` / `search128:master`：
-    ///   * 前缀决定「贪心」还是真 PIMC（32/128 个 determinization）；
-    ///   * 后缀决定用哪张网（`master` → v1 编码；其余冠军 → v3 编码）。
-    /// 搜索失败时逐级降级：搜索 → 贪心 → 纯规则，保证永远有推荐。
+    /// 策略串形如 `ting:fast` / `model:dushan_master` / `model:expert_s7` /
+    /// `model:champ_slim_s`：
+    ///   * `ting:` 前缀 → 速听规则（adept），不加载任何模型；
+    ///   * `model:` 前缀 → 对应网的贪心（expert / master / legend）；
+    ///   * `search32/128:` 只作老配置兼容，四档本身不搜索。
+    /// 逐级降级：搜索 → 贪心/速听 → 纯规则，保证永远有推荐。
     pub fn hint(&mut self, nets: &Nets, strategy: &str) -> Value {
         self.advance(nets, 0);
         if self.game.phase == actions::PHASE_OVER || self.game.actor() != self.me {
             return json!({"ok": false, "error": "当前不是你的决策点"});
         }
-        let (kind, stem) = strategy.split_once(':').unwrap_or(("model", strategy));
-        let enc = if stem.contains("master") { 1u8 } else { 3u8 };
-        let net = nets.for_enc(enc);
+        let (kind, raw_stem) = strategy.split_once(':').unwrap_or(("model", strategy));
+        let stem = canon_stem(raw_stem);
+        let is_ting = kind == "ting";
+        let net = nets.get(stem);
+        let enc = net.map(|n| n.enc()).unwrap_or(3);
         let legal = self.game.legal_actions(&self.ft);
         let t0 = std::time::Instant::now();
 
-        // 1) 真搜索（策略声明了 32/128 路时）。
+        // 1) 真搜索（仅老配置；四档都是贪心）。
         let mut scored: Vec<(f64, Action)> = Vec::new();
         let mut engine = "tract";
         if let (Some(cfg), Some(n)) = (Cfg::from_kind(kind), net) {
@@ -376,9 +418,12 @@ impl Session {
                 engine = "tract-pimc";
             }
         }
-        // 2) 贪心（未声明搜索档，或搜索失败）。
+        // 2) 速听 / 贪心。
         if scored.is_empty() {
-            if let Some(v) = net.and_then(|n| n.rank(&self.game, self.me, &self.ft)) {
+            if is_ting {
+                scored = crate::ting::rank(&self.game, self.me, &self.ft);
+                engine = "rule-ting";
+            } else if let Some(v) = net.and_then(|n| n.rank(&self.game, self.me, &self.ft)) {
                 scored = v.into_iter().map(|(s, a)| (s as f64, a)).collect();
             }
         }
@@ -394,6 +439,7 @@ impl Session {
                 _ => 3,
             });
             scored = l.into_iter().take(3).map(|a| (0.0, a)).collect();
+            engine = "rule-fallback";
         }
 
         let top: Vec<(f64, Action)> = scored.into_iter().take(3).collect();
@@ -401,6 +447,12 @@ impl Session {
         let max_q = top.first().map(|x| x.0).unwrap_or(0.0);
         let exps: Vec<f64> = top.iter().map(|x| (x.0 - max_q).exp()).collect();
         let z: f64 = exps.iter().sum::<f64>().max(1e-9);
+        let reason = match engine {
+            "tract-pimc" => format!("离线 PIMC {} 路推演推荐", kind.trim_start_matches("search")),
+            "rule-ting" => "速听：向听数与进张优先".to_string(),
+            "rule-fallback" => "规则兜底推荐".to_string(),
+            _ => "离线版模型贪心推荐".to_string(),
+        };
         let items: Vec<Value> = top
             .iter()
             .enumerate()
@@ -410,32 +462,29 @@ impl Session {
                 "tile": if a.tile == 255 { -1 } else { a.tile as i64 },
                 "prob": round3(exps[i] / z),
                 "q": round2(*q),
-                "reason": if engine == "tract-pimc" {
-                    format!("离线 PIMC {} 路推演推荐", kind.trim_start_matches("search"))
-                } else {
-                    "离线版模型贪心推荐".to_string()
-                },
+                "reason": reason,
                 "tags": [],
                 "lines": [],
             }))
             .collect();
+        let model_name = if is_ting { "ting:fast" } else { stem };
 
         json!({
             "ok": true,
-            "model": if enc == 1 { "dushan_master" } else { "champ_slim_s" },
-            "head": if Cfg::from_kind(kind).is_some() && engine == "tract-pimc" { kind } else { "model" },
+            "model": model_name,
+            "head": if engine == "tract-pimc" { kind } else { "model" },
             "value": round2(top.first().map(|x| x.0).unwrap_or(0.0)),
             "items": items,
             "situation": {"tenpai": false, "calls": [], "shanten": 0,
                           "ji_held": 0, "baojiao": false, "has_kong": false, "note": ""},
-            "tip": if engine == "tract-pimc" {
-                "离线单机：设备端 PIMC 推演给出推荐".to_string()
-            } else {
-                "离线单机：已用设备端模型给出推荐".to_string()
+            "tip": match engine {
+                "tract-pimc" => "离线单机：设备端 PIMC 推演给出推荐".to_string(),
+                "rule-ting" => "离线单机：速听规则给出推荐".to_string(),
+                _ => "离线单机：已用设备端模型给出推荐".to_string(),
             },
             "note": "",
             "elapsed_ms": t0.elapsed().as_millis() as u64,
-            "src": {"stem": if enc == 1 { "dushan_master" } else { "champ_slim_s" },
+            "src": {"stem": if is_ting { "ting" } else { stem },
                     "engine": engine, "enc": enc, "enc_expected": enc},
             "src_ok": true,
         })
