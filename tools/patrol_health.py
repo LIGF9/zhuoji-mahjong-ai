@@ -28,6 +28,14 @@ val 是不是在退化、有没有静默挂掉、**是不是已经跑完了**。
 **全部任务结束即收工**：所有非常驻任务都 `ended`/`failed` 时，输出
 `session_done: true`，退出码 **3**，自动化据此暂停自己——不再每小时空转。
 
+**预计结束时间（ETA）**
+------------------------
+登记表可带 ``expect_sec``（预登记时用冒烟实测锁定的预期墙钟秒）：有它时
+ETA = ``started + expect_sec``，因为冷启动阶段只有几个粗粒度的进度点，
+拿它外推会把 1.5 h 估成 13 h（2026-11-11 实测踩到）。没有 ``expect_sec`` 时
+退化为「最近一次进度差分 → 启动以来平均速率」。两种口径都**只用于汇报**，
+不影响任何闸门判定；进度本身始终用日志里真实的打点数做卡死判定。
+
 三类任务各自认什么
 ------------------
 * ``epoch``（蒸馏/ExIt 训练）：``[ep NN] train … val … total …s`` → 轮数、val 曲线；
@@ -115,6 +123,7 @@ class Job:
     proc_pat: str
     log: Path | None
     expect: int = 0                 # epoch 任务=预期轮数；eval=每 worker 总片数
+    expect_sec: int = 0             # 预登记的预期墙钟秒；>0 时 ETA 走日程口径
     stall_sec: int = 900
     artifact: Path | None = None    # 产物（.pt / .jsonl）；存在即强收口证据
     persistent: bool = False        # 常驻任务（服务），不参与"全部结束"判定
@@ -138,6 +147,9 @@ class Job:
     status: str = "running"         # running | ending | ended | failed | persistent
     started: str = ""
     ended: str = ""
+    # ETA（只读推算，不参与任何闸门判定）
+    eta: str = ""                   # 预计结束的本地时间 "YYYY-MM-DD HH:MM"
+    eta_min: float | None = None    # 剩余分钟
 
     def label(self) -> str:
         return self.name or self.proc_pat
@@ -254,6 +266,7 @@ def from_row(row: dict) -> Job:
                proc_pat=str(row.get("proc_pat") or ""),
                log=_p(row.get("log")),
                expect=int(row.get("expect") or 0),
+               expect_sec=int(row.get("expect_sec") or 0),
                stall_sec=int(row.get("stall_sec") or 900),
                artifact=_p(row.get("artifact")),
                persistent=bool(row.get("persistent")),
@@ -298,7 +311,7 @@ def sync_registry(jobs: list[Job]) -> None:
         if r is None:
             rows.append({"name": j.name, "kind": j.kind, "proc_pat": j.proc_pat,
                          "log": str(j.log.relative_to(ROOT)) if j.log else "",
-                         "expect": j.expect,
+                         "expect": j.expect, "expect_sec": j.expect_sec,
                          "artifact": (str(j.artifact.relative_to(ROOT))
                                       if j.artifact else ""),
                          "stall_sec": j.stall_sec, "persistent": j.persistent,
@@ -318,6 +331,19 @@ def fill(job: Job) -> Job:
     job.alive = pgrep_alive(job.proc_pat) if job.proc_pat else False
     if job.artifact is not None and job.artifact.exists():
         job.artifact_ok = True
+        # 骨架式收口文件不能当完成证据：有些驱动脚本启动时先写一个空的
+        # done.json，再逐臂回填 arms_done（实测 p0_n32.sh 的 mark "" 就是这样）。
+        # 只认「arms_done 覆盖全部臂」，否则进程一退出就会被误判 ended，
+        # 进而误触发 session_done / 自动化提前暂停。
+        if job.artifact.suffix == ".json":
+            try:
+                d = json.loads(job.artifact.read_text(encoding="utf-8"))
+                arms = d.get("arms_done")
+                if arms is not None:
+                    job.artifact_ok = {"A", "B", "C"} <= {
+                        str(x).upper() for x in arms if x}
+            except (OSError, ValueError):
+                pass
     if job.log is None:
         return job          # generic 任务（如线上服务）只判存活，不看日志
     if not job.log.exists():
@@ -420,6 +446,67 @@ def load_hist() -> dict | None:
     return None
 
 
+def _ts_epoch(s: str) -> float:
+    try:
+        return time.mktime(time.strptime(s, "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def estimate_eta(jobs: list[Job], now: float | None = None) -> None:
+    """预计结束时间：进度差分（优先）→ 启动以来平均速率（兜底）。
+
+    只读：用 ``runs/patrol/health.jsonl`` 最近 48 条里**最早一条进度更小**的记录
+    作差分，避免"同一小时重复巡检 / 进度点稀疏"时速率为 0。预估只用于汇报，
+    **不参与任何闸门判定，也不改预登记的样本量或判据**。
+    """
+    now = now or time.time()
+    hist: list[dict] = []
+    if HIST.exists():
+        for ln in read_tail(HIST, 48):
+            try:
+                hist.append(json.loads(ln))
+            except json.JSONDecodeError:
+                continue
+    for j in jobs:
+        if j.status != "running" or j.kind == "generic":
+            continue
+        # 日程口径优先：预登记时用冒烟实测锁过预期墙钟，比"冷启动的几个粗粒度
+        # 进度点"可靠得多（实测首点速率曾把 1.5 h 估成 13 h）。进度仍用真实
+        # seed 下界做卡死判定，两者互不干扰。
+        if j.expect_sec > 0 and j.started:
+            t0 = _ts_epoch(j.started)
+            if t0 > 0:
+                finish = t0 + j.expect_sec
+                j.eta = time.strftime("%Y-%m-%d %H:%M", time.localtime(finish))
+                j.eta_min = max(0.0, (finish - now) / 60.0)
+                continue
+        total = (j.expect if j.kind == "epoch"
+                 else (j.expect or j.prog_total * max(1, len(j.workers))))
+        cur = j.epoch if j.kind == "epoch" else j.prog
+        if not total or cur <= 0 or cur >= total:
+            continue
+        rate = None
+        for h in reversed(hist):
+            hj = (h.get("jobs", {}) or {}).get(j.name) or {}
+            hp, ht = hj.get("progress"), _ts_epoch(str(h.get("ts", "")))
+            if hp is None or ht <= 0 or now - ht <= 60:
+                continue
+            if hp < cur:
+                r = (cur - hp) / (now - ht)
+                if r > 0:
+                    rate = r
+                    break
+        if rate is None and j.started:
+            t0 = _ts_epoch(j.started)
+            if t0 > 0 and now - t0 > 60:
+                rate = cur / (now - t0)
+        if rate and rate > 0:
+            rem = (total - cur) / rate          # 秒
+            j.eta_min = rem / 60.0
+            j.eta = time.strftime("%Y-%m-%d %H:%M", time.localtime(now + rem))
+
+
 def judge(jobs: list[Job], prev: dict | None) -> tuple[str, list[str], list[str], list[str]]:
     red: list[str] = []
     yel: list[str] = []
@@ -513,6 +600,8 @@ def main() -> int:
     ap.add_argument("--log", default="")
     ap.add_argument("--proc", default="", help="进程匹配串（pgrep -f）")
     ap.add_argument("--expect", type=int, default=0)
+    ap.add_argument("--expect-sec", type=int, default=0,
+                    help="预登记的预期墙钟秒；>0 时 ETA = 启动时间 + 该值")
     ap.add_argument("--artifact", default="")
     ap.add_argument("--stall-sec", type=int, default=0)
     ap.add_argument("--persistent", action="store_true", help="常驻任务，不阻断收工")
@@ -534,7 +623,8 @@ def main() -> int:
         rows = load_registry()
         rows = [r for r in rows if str(r.get("name")) != a.name]
         rows.append({"name": a.name, "kind": a.kind, "proc_pat": a.proc,
-                     "log": a.log, "expect": a.expect, "artifact": a.artifact,
+                     "log": a.log, "expect": a.expect,
+                     "expect_sec": a.expect_sec, "artifact": a.artifact,
                      "stall_sec": a.stall_sec or (900 if a.kind == "epoch" else 3600),
                      "persistent": a.persistent,
                      "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -562,6 +652,9 @@ def main() -> int:
     act = [j for j in jobs if j.status in ("running", "ending")]
     recent = [j for j in jobs if j.age <= RECENT_SEC and j.status == "running"]
     prev = load_hist()
+    estimate_eta(jobs)
+    session_eta = max((j for j in jobs if j.eta and j.status == "running"),
+                      key=lambda x: x.eta_min or 0, default=None)
 
     verdict, red, yel, notes = judge(jobs, prev)
     orphans = scan_orphans(jobs)
@@ -584,6 +677,9 @@ def main() -> int:
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "verdict": verdict,
         "session_done": session_done,
+        "session_eta": (session_eta.eta if session_eta else None),
+        "session_eta_min": (round(session_eta.eta_min, 1)
+                            if session_eta and session_eta.eta_min is not None else None),
         "load1": round(os.getloadavg()[0], 2) if hasattr(os, "getloadavg") else None,
         "jobs": {
             j.name: {
@@ -594,6 +690,8 @@ def main() -> int:
                                    else j.prog_total * max(1, len(j.workers))),
                 "val": None if j.val != j.val else round(j.val, 4),
                 "age_min": None if j.age == float("inf") else round(j.age / 60, 1),
+                "eta": j.eta or None,
+                "eta_min": (round(j.eta_min, 1) if j.eta_min is not None else None),
                 "ended": j.ended or None,
             } for j in jobs
         },
@@ -609,7 +707,9 @@ def main() -> int:
         print("=" * 96)
         print(f"{icon} 巡检 {rec['ts']}  结论 {verdict}  "
               f"负载 {rec['load1']}  ({os.cpu_count()} 核)"
-              + ("  · 本批任务已全部结束" if session_done else ""))
+              + ("  · 本批任务已全部结束" if session_done else "")
+              + (f"  · 预计结束 {session_eta.eta}（剩 {session_eta.eta_min:.0f} min）"
+                 if session_eta else ""))
         print("=" * 96)
         for j in jobs:
             if not (j.alive or j.status in ("running", "ending", "failed")
@@ -629,7 +729,14 @@ def main() -> int:
             state = {"running": "运行中", "ending": "待确认", "ended": "已结束",
                      "failed": "已中断", "persistent": "常驻"}[j.status]
             age = "—" if j.age == float("inf") else f"{j.age/60:.0f} min 前"
-            print(f"  {j.name:<14} {state:<5} {prog:<26} {detail:<12} {age}")
+            if j.persistent or j.kind == "generic":
+                eta = "—（常驻）"
+            elif j.eta:
+                eta = f"ETA {j.eta}（剩 {j.eta_min:.0f} min）"
+            else:
+                eta = "ETA 待测（首个进度点未到）"
+            print(f"  {j.name:<14} {state:<5} {prog:<26} {detail:<12} "
+                  f"{age:<10} {eta}")
         for r in red:
             print(f"  🔴 {r}")
         for y in yel:
