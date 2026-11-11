@@ -1,11 +1,14 @@
 //! O1：会话循环 / 三家 AI / 累计分 / 结算载荷。
 //!
 //! 与 Python `Session` 的行为对齐，但按 §7.2 做单机简化：
-//!   * 不启后台线程——`/api/state` 每次轮询时按需推进 AI（前端 450 ms 轮询
-//!     天然构成出牌节奏），避免异步运行时与 Android 生命周期纠缠；
+//!   * 不启后台线程——`/api/state` 每次轮询时按需推进 AI；**节奏由单调时钟
+//!     按秒把关**（2026-11-12），speed 是「相邻两个 AI 动作的最小间隔」，
+//!     0 = 瞬发。旧实现只拿它分桶决定每轮询推进几步，手填秒数完全不生效；
 //!   * 历史 / 回放 / 统计不落盘（接口返回合法空 JSON）；
 //!   * 结算直接复用 `rust_engine::settle`（已与 Python 逐位对拍），再转成
 //!     `_result_payload` 的字段形状给前端结算页。
+
+use std::time::{Duration, Instant};
 
 use dushan_engine::actions::{self, Action};
 use dushan_engine::fan::FanTable;
@@ -74,7 +77,11 @@ pub struct Session {
     pub stats: Value,
     pub opp_think: Value,
     pub error: Option<String>,
+    /// 对手出牌节奏（秒）：相邻两个 AI 动作之间的最小间隔，0 = 瞬发。
     pub speed: f64,
+    /// 下一次允许推进 AI 的单调时刻。`/api/speed` 改节奏时立即重算，
+    /// 避免「把 3 秒改成 0.5 秒还要再等 3 秒」。
+    next_ai_at: Instant,
     pub force_end: bool,
     pub settled: bool,
     pub seed: u64,
@@ -180,11 +187,24 @@ impl Session {
             stats: json!({"0": {}, "1": {}, "2": {}, "3": {}}),
             opp_think: json!({}),
             error: None,
-            speed: 0.45,
+            speed: 0.5,
+            next_ai_at: Instant::now(),
             force_end: false,
             settled: false,
             seed,
         }
+    }
+
+    /// 设置对手节奏（0~5 秒）。改完立刻放行下一次 AI 步，用户不用等旧节奏走完。
+    pub fn set_speed(&mut self, v: f64) {
+        self.speed = v.clamp(0.0, 5.0);
+        self.next_ai_at = Instant::now();
+    }
+
+    fn pace_after_human(&mut self) {
+        // 自己出完牌之后，对手也要隔 speed 秒才动（与线上 Session 的
+        // `time.sleep(self.speed)` 同口径），不能因为计时器还停在过去而瞬发。
+        self.next_ai_at = Instant::now() + Duration::from_secs_f64(self.speed.max(0.0));
     }
 
     fn rel_of(&self, seat: i64) -> i64 {
@@ -209,7 +229,9 @@ impl Session {
     }
 
     /// 推进最多 `max_steps` 个 AI 动作；遇到「我的决策点」或终局即停。
-    pub fn advance(&mut self, nets: &Nets, max_steps: usize) {
+    /// 返回真正执行了几步（供 snapshot 决定下一次放行时刻）。
+    pub fn advance(&mut self, nets: &Nets, max_steps: usize) -> usize {
+        let mut done = 0usize;
         for _ in 0..max_steps {
             if self.game.phase == actions::PHASE_OVER {
                 self.finalize();
@@ -228,10 +250,12 @@ impl Session {
             }
             let a = self.decide(nets, actor);
             self.apply(a);
+            done += 1;
         }
         if self.game.phase == actions::PHASE_OVER {
             self.finalize();
         }
+        done
     }
 
     /// 某个 AI 座位做一次决策：速听（规则）、贪心或真 PIMC 搜索（det=32/128）。
@@ -308,6 +332,7 @@ impl Session {
         }
         let label = a.label();
         self.apply(a);
+        self.pace_after_human();
         (true, label)
     }
 
@@ -356,6 +381,7 @@ impl Session {
         self.result = None;
         self.settled = false;
         self.force_end = false;
+        self.next_ai_at = Instant::now();
         true
     }
 
@@ -363,10 +389,21 @@ impl Session {
         self.force_end = true;
     }
 
-    /// `/api/state`：先推进 AI，再出快照。
+    /// `/api/state`：按真实秒数放行 AI，再出快照。
+    ///
+    /// 前端 450 ms 轮询只是「来问一次」，不是节奏本身：旧实现把 speed 当成
+    /// 「每轮询走几步」的分桶（≥2 秒反而一次走 3 步），用户手填 2.5 秒与
+    /// 默认 0.45 秒完全无差别。现在用单调时钟记录下一次放行时刻，
+    /// speed=0 时一次把 AI 推到我的决策点（瞬发）。
     pub fn snapshot(&mut self, nets: &Nets) -> Value {
-        let steps = if self.speed >= 2.0 { 3 } else if self.speed >= 1.0 { 2 } else { 1 };
-        self.advance(nets, steps);
+        let due = self.speed <= 0.0 || Instant::now() >= self.next_ai_at;
+        if due {
+            let cap = if self.speed <= 0.0 { 64 } else { 1 };
+            let n = self.advance(nets, cap);
+            if n > 0 {
+                self.next_ai_at = Instant::now() + Duration::from_secs_f64(self.speed.max(0.0));
+            }
+        }
         let pending = if self.game.phase == actions::PHASE_OVER {
             None
         } else if self.game.actor() == self.me {

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
-  <title>独山麻将 · 单机</title>
+  <title>独山麻将 · 选择模式</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,25 +15,75 @@
       <img class="tile" src="splash_tile.png" alt="幺鸡" aria-hidden="true">
       <div class="brand-txt">
         <h1>独山麻将</h1>
-        <p>单机版 · 完全离线</p>
+        <p>在线 / 离线 · 双模式</p>
       </div>
     </div>
 
-    <div class="boot">
-      <div class="bar" role="progressbar" aria-label="本地引擎启动进度"><span id="bar"></span></div>
-      <div class="status busy" id="status" role="status" aria-live="polite">正在唤醒本地引擎…</div>
-    </div>
+    <!-- ① 模式选择页（启动首屏，等待用户明确选择，不自动进任一模式） -->
+    <section class="pane" id="chooser">
+      <h2 class="pane-title">选择模式</h2>
+      <div class="modes">
+        <button id="btn-online" class="mode" type="button">
+          <span class="mode-ico" aria-hidden="true">🌐</span>
+          <span class="mode-body"><b>在线模式</b><small>进入移动网页版 · 需连同一 Wi-Fi</small></span>
+          <span class="mode-arrow" aria-hidden="true">›</span>
+        </button>
+        <button id="btn-offline" class="mode" type="button">
+          <span class="mode-ico" aria-hidden="true">🀄</span>
+          <span class="mode-body"><b>离线模式</b><small>本机引擎 · 断网、飞行模式也能玩</small></span>
+          <span class="mode-arrow" aria-hidden="true">›</span>
+        </button>
+      </div>
+      <div class="status" id="chooser-status" role="status" aria-live="polite">正在检测本地引擎…</div>
+    </section>
 
-    <div class="actions">
-      <button id="btn-retry" class="primary" type="button" hidden>重试</button>
-    </div>
+    <!-- ② 在线模式：与联网客户端同一口径，地址可改、可测、会记住 -->
+    <section class="pane" id="online-pane" hidden>
+      <div class="pane-head">
+        <button class="back" type="button" data-back>‹ 返回</button>
+        <h2>在线模式 · 移动网页版</h2>
+      </div>
+      <div class="field">
+        <label for="url">对局服务端地址</label>
+        <div class="input-row">
+          <input id="url" type="text" inputmode="url" autocomplete="off" autocapitalize="off"
+                 spellcheck="false" placeholder="http://172.26.68.203:8770">
+          <button id="btn-default" class="ghost" type="button" title="恢复默认地址">默认</button>
+        </div>
+      </div>
+      <div class="status" id="online-status" role="status" aria-live="polite">填写电脑端服务地址后进入网页版</div>
+      <div class="actions">
+        <button id="btn-test" class="secondary" type="button">测试连接</button>
+        <button id="btn-enter" class="primary" type="button">进入网页版</button>
+      </div>
+      <div class="hint">
+        <strong>使用前</strong>：电脑上启动
+        <code>python web/dushan_server.py --port 8770 --host 0.0.0.0</code>，
+        手机与电脑连同一 Wi-Fi，地址填启动日志里的局域网地址。
+      </div>
+      <div class="preview" id="preview" hidden>预览模式（未在 APP 内运行）：连接测试不可用，「进入网页版」将在浏览器中打开。</div>
+    </section>
 
-    <div class="hint" id="hint">
-      规则、结算与 AI 推理全部在手机内由 Rust 完成，<strong>断网、飞行模式也能玩</strong>。
-      首次启动要加载约 9 MB 模型，通常 2–8 秒。
-    </div>
+    <!-- ③ 离线模式：本地 Rust 引擎加载进度 -->
+    <section class="pane" id="offline-pane" hidden>
+      <div class="pane-head">
+        <button class="back" type="button" data-back>‹ 返回</button>
+        <h2>离线模式 · 本机引擎</h2>
+      </div>
+      <div class="boot">
+        <div class="bar" role="progressbar" aria-label="本地引擎启动进度"><span id="bar"></span></div>
+        <div class="status busy" id="status" role="status" aria-live="polite">正在唤醒本地引擎…</div>
+      </div>
+      <div class="actions">
+        <button id="btn-retry" class="primary" type="button" hidden>重试</button>
+      </div>
+      <div class="hint" id="hint">
+        规则、结算与 AI 推理全部在手机内由 Rust 完成，<strong>断网也能玩</strong>。
+        首次启动要加载约 9 MB 模型，通常 2–8 秒。
+      </div>
+    </section>
 
-    <footer id="footer">单机离线版 v1.2.0 · 无需服务端、不联网</footer>
+    <footer id="footer">双模式 v1.2.0 · 在线由服务端提供，离线由设备内引擎提供</footer>
   </main>
 
   <script src="main.js"></script>

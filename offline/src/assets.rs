@@ -28,10 +28,13 @@ pub fn static_file(path: &str) -> Option<(&'static [u8], &'static str)> {
 /// 离线版四档：**全部贪心**（不搜索）。
 ///
 /// 档位与权重的对应（强度见 `reports/离线版-四档强度矩阵.md`）：
-///   * `ting:fast`        入门 · 速听（纯规则，向听数驱动）
-///   * `model:expert_s7`  进阶 · 小网（0.12M）
-///   * `model:dushan_master` 大师 · 主力（0.77M）
-///   * `model:champ_slim_s`  传奇 · 学生（0.82M，最强）
+///   * `ting:fast`        入门（纯规则，向听数驱动）
+///   * `model:expert_s7`  进阶（0.12M）
+///   * `model:dushan_master` 大师（0.77M）
+///   * `model:champ_slim_s`  传奇（0.82M，最强）
+///
+/// 2026-11-12 用户口径：下拉里只显示档位名，不追加「速听 / 小网 / 主力 / 学生」
+/// 这类内部实现说明（那是权重代号，不是玩家选难度时需要的信息）。
 ///
 /// 为什么默认给最强的 legend：四档每步都是 0.9–3 ms 量级，选最弱也不会更快，
 /// 却会明显更弱。难度对用户是「想被虐多狠」的选项，不是性能旋钮。
@@ -40,10 +43,10 @@ const DEFAULT_STRATEGY: &str = "model:champ_slim_s";
 /// 注入到页面里的四档表。前端只在存在该全局量时才替换下拉选项，
 /// 联网版不注入 → 仍是「大师 / 深算 / 极算」，两边行为不分叉。
 const TIERS_JSON: &str = concat!(
-    r#"[{"v":"ting:fast","label":"🐣 入门 · 速听"},"#,
-    r#"{"v":"model:expert_s7","label":"🙂 进阶 · 小网"},"#,
-    r#"{"v":"model:dushan_master","label":"🤖 大师 · 主力"},"#,
-    r#"{"v":"model:champ_slim_s","label":"👑 传奇 · 学生"}]"#
+    r#"[{"v":"ting:fast","label":"🐣 入门"},"#,
+    r#"{"v":"model:expert_s7","label":"🙂 进阶"},"#,
+    r#"{"v":"model:dushan_master","label":"🤖 大师"},"#,
+    r#"{"v":"model:champ_slim_s","label":"👑 传奇"}]"#
 );
 
 

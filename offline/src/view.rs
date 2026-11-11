@@ -299,7 +299,7 @@ pub fn meta() -> Value {
     });
     // `champion` 一律 false：离线四档由 `window.__DUSHAN_TIERS` 直接给出，
     // 若这里标 true，前端 registerChampionOptions() 会把同一张网再追加一遍，
-    // 下拉里出现「传奇 · 学生」两条一模一样的选项。
+    // 下拉里出现两条一模一样的「传奇」。
     json!({
         "page_ver": PAGE_VER,
         "models": [
@@ -311,7 +311,7 @@ pub fn meta() -> Value {
                 "net": "s",
                 "params": 816300,
                 "champion": false,
-                "label": "传奇 · 学生（离线）",
+                "label": "传奇（离线）",
                 "latency": {"model": 0.02},
                 "ident": ident("champ_slim_s", "E-SLIM", "S1", "0.82M"),
             },
@@ -323,7 +323,7 @@ pub fn meta() -> Value {
                 "net": "m1",
                 "params": 769000,
                 "champion": false,
-                "label": "大师 · 主力（离线）",
+                "label": "大师（离线）",
                 "latency": {"model": 0.03},
                 "ident": ident("dushan_master", "MASTER", "M", "0.77M"),
             },
@@ -335,7 +335,7 @@ pub fn meta() -> Value {
                 "net": "s",
                 "params": 119000,
                 "champion": false,
-                "label": "进阶 · 小网（离线）",
+                "label": "进阶（离线）",
                 "latency": {"model": 0.01},
                 "ident": ident("expert_s7", "S7R", "S7", "0.12M"),
             }
@@ -344,6 +344,6 @@ pub fn meta() -> Value {
         "yaoji": tiles::YAOJI,
         "rules": "",
         "master": "dushan_master",
-        "master_info": {"label": "大师 · 离线（769K）", "abbr": "M"},
+        "master_info": {"label": "大师（离线·769K）", "abbr": "M"},
     })
 }

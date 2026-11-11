@@ -190,7 +190,11 @@ fn route(app: &Arc<Mutex<App>>, method: &str, path: &str, q: &str, body: &Value)
                 // rules，单机版永远跑 Config::default() —— 用户在设置里改的
                 // 冲锋鸡分值 / 追加鸡牌种 / 开局翻鸡在离线全部失效。
                 let cfg = crate::rules_cfg::config_from_rules(body.get("rules"));
-                a.session = Some(Session::new(FanTable::build(), seed, me, &names, &strats, cfg));
+                let mut s = Session::new(FanTable::build(), seed, me, &names, &strats, cfg);
+                // 2026-11-12：开局页传来的节奏必须落到会话上。以前这里整段忽略
+                // speed，Session 恒用 0.45 秒出厂值 —— 用户填 3 秒也毫无变化。
+                s.set_speed(body.get("speed").and_then(|x| x.as_f64()).unwrap_or(0.5));
+                a.session = Some(s);
                 Resp::Json(200, json!({"ok": true, "sid": "offline", "my_seat": me}))
             }
             "/api/act" => {
@@ -222,9 +226,12 @@ fn route(app: &Arc<Mutex<App>>, method: &str, path: &str, q: &str, body: &Value)
             }
             "/api/hold" => Resp::Json(200, json!({"ok": true, "hold": body.get("on").and_then(|x| x.as_bool()).unwrap_or(false)})),
             "/api/speed" => {
-                let v = body.get("speed").and_then(|x| x.as_f64()).unwrap_or(0.45);
-                if let Some(s) = a.session.as_mut() { s.speed = v.clamp(0.0, 5.0); }
-                Resp::Json(200, json!({"ok": true, "speed": v}))
+                let v = body.get("speed").and_then(|x| x.as_f64()).unwrap_or(0.5);
+                let applied = match a.session.as_mut() {
+                    Some(s) => { s.set_speed(v); s.speed }
+                    None => v.clamp(0.0, 5.0),
+                };
+                Resp::Json(200, json!({"ok": true, "speed": applied}))
             }
             "/api/history_delete" => Resp::Json(200, json!({"ok": true, "removed_rec": 0, "skipped": []})),
             "/api/history_clear" => Resp::Json(200, json!({"ok": true, "removed_rec": 0})),

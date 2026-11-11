@@ -3759,21 +3759,19 @@ html.mob .scoregrid input { width: 42px; }
          （2026-10-12；与「超时时间」「出现时间」同一套 numrow 交互） -->
     <div class="setgroup" id="grp-speed">
       <div class="ghead plain">
-        <span class="lbl">对手出牌节奏<span class="q" data-q="其他玩家思考与出牌之间的间隔；对局中改动立即生效。可直接填任意秒数（0=瞬发）。注意：这是出牌后的额外停顿——对手模型的单步计算慢于此节奏时，以模型反应时间为准自动延长，绝不降级或更换模型">?</span></span>
+        <span class="lbl">对手出牌节奏<span class="q" data-q="其他玩家思考与出牌之间的间隔；对局中改动立即生效。可直接填任意秒数（0=瞬发），常用档 0.5 / 1 / 2 / 3 秒。注意：这是出牌后的额外停顿——对手模型的单步计算慢于此节奏时，以模型反应时间为准自动延长，绝不降级或更换模型">?</span></span>
         <div class="numrow">
-          <input id="set-oppspeed" type="number" min="0" max="5" step="0.05" value="0.45" list="dl-oppspeed">
+          <input id="set-oppspeed" type="number" min="0" max="5" step="0.05" value="0.5" list="dl-oppspeed">
           <span class="unit">秒</span>
           <span class="chips">
-            <button type="button" class="chip" data-for="set-oppspeed" data-v="0.8">悠闲</button>
-            <button type="button" class="chip" data-for="set-oppspeed" data-v="0.45">普通</button>
-            <button type="button" class="chip" data-for="set-oppspeed" data-v="0.2">快速</button>
-            <button type="button" class="chip" data-for="set-oppspeed" data-v="0">瞬发</button>
+            <button type="button" class="chip" data-for="set-oppspeed" data-v="0.5">0.5</button>
+            <button type="button" class="chip" data-for="set-oppspeed" data-v="1">1</button>
+            <button type="button" class="chip" data-for="set-oppspeed" data-v="2">2</button>
+            <button type="button" class="chip" data-for="set-oppspeed" data-v="3">3</button>
           </span>
           <datalist id="dl-oppspeed">
-            <option value="0"></option><option value="0.1"></option><option value="0.2"></option>
-            <option value="0.3"></option><option value="0.45"></option><option value="0.6"></option>
-            <option value="0.8"></option><option value="1"></option><option value="1.5"></option>
-            <option value="2"></option><option value="3"></option>
+            <option value="0"></option><option value="0.5"></option><option value="1"></option>
+            <option value="2"></option><option value="3"></option><option value="5"></option>
           </datalist>
         </div>
         <!-- 2026-11-02 对手节奏 × 对手模型联动提醒：
@@ -4211,19 +4209,19 @@ html.mob .scoregrid input { width: 42px; }
           </div>
           <div class="bootrow">
             <span>对手节奏</span>
-            <!-- 同设置面板：可直接填秒数（原为四档下拉，顺带修掉 " normal" 这个英文残留） -->
+            <!-- 同设置面板：可直接填秒数（常用档 0.5 / 1 / 2 / 3 秒，与设置面板同源） -->
             <span class="numrow">
-              <input id="speed" type="number" min="0" max="5" step="0.05" value="0.45" list="dl-speed">
+              <input id="speed" type="number" min="0" max="5" step="0.05" value="0.5" list="dl-speed">
               <span class="unit">秒</span>
               <span class="chips">
-                <button type="button" class="chip" data-for="speed" data-v="0.8">悠闲</button>
-                <button type="button" class="chip" data-for="speed" data-v="0.45">普通</button>
-                <button type="button" class="chip" data-for="speed" data-v="0.2">快速</button>
-                <button type="button" class="chip" data-for="speed" data-v="0">瞬发</button>
+                <button type="button" class="chip" data-for="speed" data-v="0.5">0.5</button>
+                <button type="button" class="chip" data-for="speed" data-v="1">1</button>
+                <button type="button" class="chip" data-for="speed" data-v="2">2</button>
+                <button type="button" class="chip" data-for="speed" data-v="3">3</button>
               </span>
               <datalist id="dl-speed">
-                <option value="0"></option><option value="0.2"></option><option value="0.45"></option>
-                <option value="0.8"></option><option value="1"></option><option value="2"></option>
+                <option value="0"></option><option value="0.5"></option><option value="1"></option>
+                <option value="2"></option><option value="3"></option><option value="5"></option>
               </datalist>
             </span>
           </div>
@@ -4376,6 +4374,33 @@ function clampSetting(raw, lo, hi, def) {
   if (!Number.isFinite(n)) return def;
   return Math.min(hi, Math.max(lo, Math.round(n * 10) / 10));
 }
+/* 对手出牌节奏专用（2026-11-12）：输入框 step=0.05，保留两位小数，
+   不能再走 clampSetting 的 0.1 秒取整（否则手填 0.75 会被吞成 0.8）。 */
+function clampSpeed(raw, def) {
+  const n = parseFloat(raw);
+  if (!Number.isFinite(n)) return def;
+  return Math.min(5, Math.max(0, Math.round(n * 100) / 100));
+}
+/* 旧四档（0 / 0.2 / 0.45 / 0.8）→ 新四档（0.5 / 1 / 2 / 3）的一次性迁移。
+   只影响没打过标记的存量设备；用户之后手填的任意秒数都不会被覆盖。 */
+function loadSpeed() {
+  const raw = localStorage.getItem("dushan_speed");
+  const v = clampSpeed(raw, 0.5);
+  if (localStorage.getItem("dushan_speed_v2") !== "1") {
+    localStorage.setItem("dushan_speed_v2", "1");
+    const n = Number(raw);
+    if (raw === null || [0, 0.2, 0.45, 0.8].includes(n)) return n === 0.8 ? 1 : 0.5;
+  }
+  return v;
+}
+/* 开局页与设置面板共用同一份节奏值：任一处改动都要同步另一处的输入框，
+   否则下次从开局页「开始对局」会用旧输入框把新值覆盖回去（用户实测「自己填
+   的时间不生效」的第二处原因）。 */
+function syncSpeedInputs(v) {
+  const s = String(v), a = el("set-oppspeed"), b = el("speed");
+  if (a) a.value = s;
+  if (b) b.value = s;
+}
 /* 布尔开关：键缺失时取默认值（便于新增开关时兼容旧配置） */
 function loadBool(key, def) {
   const v = localStorage.getItem(key);
@@ -4434,8 +4459,9 @@ const SET = {
     // 离线不提供「一句话推荐」（贪心模型没有可解释的理由）→ 存量配置回落「完整推荐」
     return (IS_OFFLINE && v === "brief") ? "full" : v;
   })(),
-  // 对手出牌节奏（秒）：开局页与设置面板共用；对局中修改立即生效（0~5 秒，可自由填）
-  speed: clampSetting(localStorage.getItem("dushan_speed"), 0, 5, 0.45),
+  // 对手出牌节奏（秒）：开局页与设置面板共用；对局中修改立即生效
+  // （0~5 秒，可自由填；常用档 0.5 / 1 / 2 / 3 秒）
+  speed: loadSpeed(),
   indColor: localStorage.getItem("dushan_ind_color") || "red",
   recColor: localStorage.getItem("dushan_rec_color") || "green",
   // 打牌听牌提示：我的出牌决策点常驻显示听什么（我的弃牌区下方）
@@ -4623,13 +4649,35 @@ function jiDotsFor(t, tag, zr) {
   const cls = GOLD_CTX.quad.has(+t) ? "jin q4" : (GOLD_CTX.gold.has(+t) ? "jin" : "");
   return jiDotsHTML(tag, cls);
 }
-/* 当前帧的鸡牌种集合（结算帧优先用 RES_SRC，支持回放；局中用 LAST_STATE）。
+/* 结算翻鸡牌种：全 UI 唯一真源（2026-11-12）。
+   优先用服务端 res.fanji_tiles；旧服务端 / 旧回放没下发这一字段时，按指示牌
+   + 结算翻鸡模式回推（与 Rust state::fanji_mask 同源：上鸡 +1、下鸡 −1、九回一，
+   指示牌本身不算翻鸡牌）。此前只有「结算信息条」做了回推，手牌红点直接读
+   res.fanji_tiles —— 字段一缺就出现「信息条显示四六条、手里只有六条带红点」。 */
+function fanjiTilesOf(res) {
+  if (!res || res.type !== "win" || res.fanji_flip == null) return [];
+  const explicit = [...new Set((res.fanji_tiles || []).map(Number))]
+    .filter(t => Number.isInteger(t) && t >= 0 && t < 27).sort((a, b) => a - b);
+  if (explicit.length) return explicit;
+  const mode = res.jiesuan_fanji;
+  if (!mode || mode === "off") return [];
+  const flip = Number(res.fanji_flip);
+  if (!Number.isInteger(flip) || flip < 0 || flip >= 27) return [];
+  const s = Math.floor(flip / 9), r0 = flip % 9, out = [];
+  if (mode === "both" || mode === "up") out.push(s * 9 + (r0 + 1) % 9);
+  if (mode === "both" || mode === "down") out.push(s * 9 + (r0 + 8) % 9);
+  return [...new Set(out)].filter(t => t !== flip).sort((a, b) => a - b);
+}
+/* 当前帧的鸡牌种集合（结算帧优先用传入的 st，支持回放；局中用 LAST_STATE）。
    2026-11-06：副露/标签里「普通鸡牌」常常没有 m.ji 丝带标记，只靠牌种判断，
-   不能因为 m.ji 为空就当成普通牌漏掉红点。 */
-function activeJiSet() {
-  const st = (typeof RES_SRC !== "undefined" && RES_SRC) || LAST_STATE;
-  const arr = st && st.ji_tiles && st.ji_tiles.length ? st.ji_tiles : [YAOJI];
-  return new Set(arr.map(Number));
+   不能因为 m.ji 为空就当成普通牌漏掉红点。
+   2026-11-12：结算翻出的牌种在结算帧同样是本局鸡牌，必须并进来 —— 桌面
+   手牌 / 弃牌 / 副露 / 结算总览四处共用这一个集合，口径不再各算一份。 */
+function activeJiSet(st) {
+  const s = st || (typeof RES_SRC !== "undefined" && RES_SRC) || LAST_STATE;
+  const base = s && s.ji_tiles && s.ji_tiles.length ? s.ji_tiles : [YAOJI];
+  const extra = s && s.result ? fanjiTilesOf(s.result) : [];
+  return new Set([...base, ...extra].map(Number));
 }
 
 const SUIT_FILE = ["万", "条", "筒"];
@@ -5949,7 +5997,8 @@ el("startBtn").onclick = async () => {
     return { type: "model", model: stem || "master", temperature: 0 };
   });
   const ms = parseInt(el("my-seat").value, 10);
-  SET.speed = clampSetting(el("speed").value, 0, 5, 0.45);   // 开局页与设置面板共用同一份节奏值
+  SET.speed = clampSpeed(el("speed").value, 0.5);   // 开局页与设置面板共用同一份节奏值
+  syncSpeedInputs(SET.speed);
   saveSet();
   AVA_SESSION = null;          // 新开局重掷「随机」头像
   renderPickers("boot-players"); renderPickers("set-players");
@@ -6285,7 +6334,7 @@ function render(st) {
   if (mnm) setText(mnm, tableDisplayName(0, me.name || "你"));
   renderCounter(st);
   el("me").classList.toggle("active", st.turn === st.my_seat && !st.over);
-  renderMyMelds(me.melds, st.my_seat);
+  renderMyMelds(me.melds, st.my_seat, st);
   renderHand(st);
   renderRivers(st);
   renderPending(st);
@@ -6359,16 +6408,18 @@ function oppAbbr(v) {
   if (v.startsWith("search128:")) return "极算";
   if (v.startsWith("search:")) return "前瞻";         // 旧值容错（历史配置/回放）
   if (v.startsWith("teacher:")) return TEACHER_ABBR[v.slice(8)] || v.slice(8);
-  if (v === "ting:fast") return "速听";
+  if (v === "ting:fast") return "入门";
   if (v.startsWith("model:")) {
     const m = v.slice(6);
     if (m === "master") return (META && META.master_info && META.master_info.abbr) || "M";
-    // 2026-11-11 离线档：离线主力叫 `dushan_master`（stem = 权重文件名），不叫
+    // 2026-11-11 离线档：离线大师叫 `dushan_master`（stem = 权重文件名），不叫
     // `master`。漏了这一条会掉进下面的兜底分支，把 "master" 拼成「SMASTER」，
     // 牌桌上就变成「大乔(SMASTER)」。
+    // 2026-11-12 用户口径：名字后缀也只显示档位名，不再出现「小网/学生/主力」
+    // 这类内部权重代号（与四档下拉的文案同源）。
     if (m === "dushan_master") return "大师";
-    if (m === "expert_s7") return "小网";
-    if (m === "champ_slim_s") return "学生";
+    if (m === "expert_s7") return "进阶";
+    if (m === "champ_slim_s") return "传奇";
     if (m === "rl") return "RL";
     const mm = m.replace(/^dushan_/, "");        // big_s3 / s7 / big_bc / bc
     const big = mm.startsWith("big_");
@@ -6396,13 +6447,13 @@ const MELD_BACK = "/assets/tiles/face-down.png";
 /* 总览副露说明：碰鸡 → 「碰横鸡(王昭君)」；杠 → 「杠[牌图](自杠/补杠/王昭君)」。
    普通碰牌不标注来源（返回空串）。
    冲锋鸡/横鸡的牌图 = 真实牌面 + 统一角标（冲=红/横=蓝），不再用按牌种预生成的专用图 */
-function ovMeldCaption(m, ownerSeat, nameOfSeat) {
+function ovMeldCaption(m, ownerSeat, nameOfSeat, st) {
   // 2026-11-02 v4 用户口径：标签里的小牌图（20px 高）不再加冲/横红点 —— 前面
   // 「碰横鸡 / 碰冲锋鸡」的文字已经说清楚了，牌图只保留牌面本身。
   // 2026-11-06 第十二批用户口径（覆盖同日早先的「标签小图也加红点」）：
   // 标签内的鸡牌**一律不用红点表示鸡牌**，文字标签已足够；小图恢复光板。
   // 副露牌格（手牌行里的 .mc）与结算明细小图仍保留点标，不受此处影响。
-  const isJi = !!m.ji || activeJiSet().has(+m.tile);
+  const isJi = !!m.ji || activeJiSet(st).has(+m.tile);
   if (m.type === 1) {
     if (!isJi) return "";
     const src = nameOfSeat ? nameOfSeat(m.src) : "";
@@ -6428,7 +6479,7 @@ const RIVER_ROT = { 1: " rot rotr", 3: " rot" };
 /* 副露格子化：rc 为座位旋转类；type2/3 的横置杠牌在我/对家侧用 rot（底对齐），左右家侧与组内同向。
    mirror=该座位面板在屏幕上是「镜像」显示（右家竖列、对家横行的组首都画在屏幕左/上），
    横置牌位置需反转，使横牌始终位于组内靠近来源玩家的一端（指向来源）。 */
-function meldCells(m, rc, ownerSeat, mirror, dots) {
+function meldCells(m, rc, ownerSeat, mirror, dots, st) {
   // fc = 真牌面格（牌背图用 MELD_BACK）：左右两家的牌面朝向与牌背相反，
   // 由 CSS 的 `.seat-*.mc.fc img` 负责再转 180°（2026-11-02 v6 用户口径）
   const c = (src, extra = "") =>
@@ -6447,7 +6498,8 @@ function meldCells(m, rc, ownerSeat, mirror, dots) {
   // 副露吃进冲锋鸡/横鸡：真实牌面 + 统一角标（冲=红/横=蓝）；普通幺鸡/翻鸡鸡牌用普通牌面
   // 2026-11-06：普通鸡牌（幺鸡/开局翻鸡种/结算翻鸡种）常常没有 m.ji 丝带标签，
   // 只按牌种判断；否则碰杠中的这些鸡牌会是光板（用户报「漏加点」）。
-  const isJi = !!m.ji || activeJiSet().has(+m.tile);
+  // 2026-11-12：调用方把当前帧的 st 传进来，副露/结算/回放三处的鸡牌集合同源
+  const isJi = !!m.ji || activeJiSet(st).has(+m.tile);
   // dots = true（结算页）：牌小，丝带看不清 → 与结算手牌同款红点（2026-11-02 v4 口径）
   const jiCell = (extra = "") =>       // 鸡牌格：冲/横/金=丝带；普通鸡/翻鸡种=1 点标
     // 注意：横置指示格不带座位旋转类 rc（左右家组内横置牌=竖立的牌，见 .mc.vz）
@@ -6497,13 +6549,13 @@ function meldCells(m, rc, ownerSeat, mirror, dots) {
   }
   return c(MELD_BACK) + c(normal) + c(normal) + c(MELD_BACK);
 }
-function meldHTML(m, rc, ownerSeat, mirror, dots) {
+function meldHTML(m, rc, ownerSeat, mirror, dots, st) {
   // 不加「点碰者」小标：横置牌的垂直方向 + 组内位置（指向来源玩家的一端）已能指示来源；
   // 总览另有文字说明（结算页副露说明列）
   // 2026-11-04 用户口径：移动端副露牌只有 17×26，丝带角标看不清 →
   // 与结算小牌同款红点（冲锋鸡 3 点 / 横鸡 2 点 / 普通鸡·翻鸡 1 点）
   const useDots = dots || document.documentElement.classList.contains("mob");
-  return `<div class="meld">${meldCells(m, rc, ownerSeat, mirror, useDots)}</div>`;
+  return `<div class="meld">${meldCells(m, rc, ownerSeat, mirror, useDots, st)}</div>`;
 }
 function renderOpp(rel, p, st) {
   const box = seatEl(rel);
@@ -6527,7 +6579,7 @@ function renderOpp(rel, p, st) {
   fan += `<span class="mc${rc} ghost"></span>`.repeat(Math.max(0, slots - p.hand_count));
   // 右家/对家的面板在屏幕上是镜像显示（组首画在屏幕上/左端）→ 横置牌位置需反转，
   // 使横牌始终位于组内靠近来源玩家的一端（左家与我方为正向，无需镜像）
-  const melds = p.melds.map(m => meldHTML(m, rc, p.seat, rel === 1 || rel === 2)).join("");
+  const melds = p.melds.map(m => meldHTML(m, rc, p.seat, rel === 1 || rel === 2, false, st)).join("");
   const cls = "player seat-" + ["", "right", "top", "left"][rel] +
     (st.turn === p.seat && !st.over ? " active" : "");
   if (box.className !== cls) box.className = cls;
@@ -6620,8 +6672,8 @@ function fitSeatTiles() {
   COACH_GEO = "";   // 座位（含牌宽）变了 → 大师建议的默认位「贴座位右缘」要重摆
 }
 
-function renderMyMelds(melds, ownerSeat) {
-  setHTML(el("me-melds"), melds.map(m => meldHTML(m, "", ownerSeat)).join(""));
+function renderMyMelds(melds, ownerSeat, st) {
+  setHTML(el("me-melds"), melds.map(m => meldHTML(m, "", ownerSeat, false, false, st)).join(""));
 }
 
 /* 我的一行（头像信息 + 副露 + 手牌 + 记牌器）宽度精算：
@@ -6728,7 +6780,7 @@ function renderHand(st) {
   const recIdx = (SET.hintOn && SET.recForm === "ind" && RECOMMEND &&
     RECOMMEND.kind === "discard" && pend && pend.mode === "discard")
     ? hand.indexOf(RECOMMEND.tile) : -1;
-  const jiSet = st.ji_tiles && st.ji_tiles.length ? new Set(st.ji_tiles) : new Set([YAOJI]);
+  const jiSet = activeJiSet(st);   // 含结算翻出的鸡牌种（2026-11-12 统一口径）
   /* 前三推荐牌头顶排名（2026-11-04 用户需求）：
      开启大师推荐、且正处在自己的出牌决策点时，把推荐指数(prob)排名前三的
      「打出候选」依次编号 1/2/3，标在手牌对应牌的头顶；同种牌只标一张。
@@ -6792,7 +6844,7 @@ function renderRivers(st) {
   const lastKey = st.last ? st.last[0] + ":" + st.last[1] : "";
   // 本局鸡牌种（与手牌 .jimark / 总览 .jidots 同一口径）：
   // 弃牌里的鸡牌一律打红点，不再只标冲锋鸡/横鸡
-  const jiSet = new Set(st.ji_tiles && st.ji_tiles.length ? st.ji_tiles : [YAOJI]);
+  const jiSet = activeJiSet(st);   // 与手牌/副露/结算总览同源，含结算翻鸡种
   const jiKey = [...jiSet].join(",");
   for (let rel = 0; rel < 4; rel++) {
     const p = st.players[rel];
@@ -7133,7 +7185,7 @@ const TIER_LABEL = new Map(
 function strategyLabel(modelStr) {
   const s = String(modelStr || "");
   if (TIER_LABEL.has(s)) return TIER_LABEL.get(s);
-  if (s === "ting:fast") return "🐣 入门 · 速听";
+  if (s === "ting:fast") return "🐣 入门";
   if (s.startsWith("search32:")) return "深算 · 32 路推演（Rust·0.13s）";
   if (s.startsWith("search128:")) return "极算 · 128 路推演（Rust·0.09s）";
   if (s.startsWith("search")) return "深算 · 32 路推演（旧档已并入）";
@@ -7873,7 +7925,7 @@ function renderReplayFrame() {
   const mnm = el("me-name");
   if (mnm) setText(mnm, tableDisplayName(0, me.name));
   el("me").classList.toggle("active", st.turn === st.my_seat);
-  renderMyMelds(me.melds, st.my_seat);
+  renderMyMelds(me.melds, st.my_seat, st);
   renderHand(st);
   renderRivers(st);
   // 中央盘：局号 / 步（2026-10-12 用户口径：不再显示「第 N 巡」，只留步数）
@@ -8208,6 +8260,9 @@ function renderResult(st) {
     el("res-actions").classList.remove("on");
     stopAutoNext();
     RES_VIEW = null; RES_VIEW_PREV = null; RES_DISMISSED = false; RES_SOUND_KEY = "";
+    // 2026-11-12：结算帧用的 RES_SRC 必须在新一局开始时清掉，否则
+    // activeJiSet() 无参调用会继续拿上一局的翻鸡种给新一局的手牌点红点。
+    RES_SRC = null;
     return;
   }
   if (RES_DISMISSED) {
@@ -8268,15 +8323,9 @@ function resJibarHTML(st) {
   bar.push(`<span class="jt">开局鸡牌 ${jiImgs}</span>`);
   if (res.type === "win" && res.fanji_flip != null) {
     // 「金鸡」不再写文字说明（2026-10-12 用户口径）：牌图上的点色已表达。
-    // 2026-11-02 用户口径：指示牌之后再显示**按翻鸡规则算出的翻鸡牌种**
-    // （优先用服务端下发的 res.fanji_tiles；缺省时按 fanji_flip + 结算翻鸡模式推一遍）。
-    let flips = [...new Set((res.fanji_tiles || []).map(Number))].sort((a, b) => a - b);
-    if (!flips.length && res.jiesuan_fanji && res.jiesuan_fanji !== "off") {
-      const s = Math.floor(res.fanji_flip / 9), r0 = res.fanji_flip % 9, add = [];
-      if (res.jiesuan_fanji === "both" || res.jiesuan_fanji === "up") add.push(s * 9 + (r0 + 1) % 9);
-      if (res.jiesuan_fanji === "both" || res.jiesuan_fanji === "down") add.push(s * 9 + (r0 + 8) % 9);
-      flips = [...new Set(add)].filter(t => t !== res.fanji_flip).sort((a, b) => a - b);
-    }
+    // 2026-11-02 用户口径：指示牌之后再显示**按翻鸡规则算出的翻鸡牌种**；
+    // 2026-11-12：与手牌红点共用 fanjiTilesOf()（显式字段缺省时按指示牌 + 模式回推）。
+    const flips = fanjiTilesOf(res);
     bar.push(`<span class="jt">结算翻鸡 <img src="${tileImg(res.fanji_flip)}" alt="">` +
       (flips.length ? `<span class="arr">→</span>` : "") +
       flips.map(gimg).join("") +
@@ -8360,17 +8409,19 @@ function settlementCtx(st) {
     voidSeat: Number.isInteger(res.void_seat) ? +res.void_seat : null,
     loseTag: res.rob_kong ? "被抢杠" : (res.how === "热炮" ? "放热炮" : "放炮"),
     winTag: winHowTag(res),
-    jiSet: st.ji_tiles && st.ji_tiles.length ? new Set(st.ji_tiles) : new Set([YAOJI]),
+    // 本局鸡牌种 + 结算翻出的鸡牌种：与桌面手牌/弃牌/副露共用 activeJiSet，
+    // 不再各算一份（旧实现只认 st.ji_tiles ∪ res.fanji_tiles，字段缺省就漏点）。
+    jiSet: activeJiSet(st),
     // 结算翻鸡翻出的牌种（2026-11-02 用户口径）：手牌里的这些牌也要加红点，
     // 让玩家一眼看出「结算时手里有多少鸡牌」（开局鸡 + 翻鸡 = 全部计鸡牌种）。
-    fanjiSet: new Set((res.fanji_tiles || []).map(Number)),
+    fanjiSet: new Set(fanjiTilesOf(res)),
   };
 }
 /* 某一位玩家（rel 相对座位）的「手牌块 + 状态标签」，**不含名字与总分**。
    总览卡片与「单人视角新布局」两处共用同一套渲染，两边的牌面/标签永远一致。 */
 function playerHandBlock(st, rel, ctx) {
   const p = st.players[rel];
-  const res = ctx.res, jiSet = ctx.jiSet;
+  const res = ctx.res;
   const isWin = res.type === "win" && ctx.wSet.has(p.seat);
   const isVoid = res.type === "win" &&
     (ctx.voidSeat != null ? +p.seat === ctx.voidSeat
@@ -8407,7 +8458,7 @@ function playerHandBlock(st, rel, ctx) {
   }
   // 副露说明：碰鸡是谁家的 / 杠是自杠、补杠还是杠谁家的（普通碰牌不标注）
   for (const m of (p.melds || [])) {
-    const cap = ovMeldCaption(m, p.seat, ctx.nameOfSeat);
+    const cap = ovMeldCaption(m, p.seat, ctx.nameOfSeat, st);
     if (cap) meta.push(`<span class="cap">${cap}</span>`);
   }
   // 打出的鸡牌（2026-11-06 第十二批用户口径）：**不再塞在标签行的小图里**，
@@ -8417,7 +8468,7 @@ function playerHandBlock(st, rel, ctx) {
   const discCells = [];
   (p.discards || []).forEach((t, i) => {
     const tg = (p.discard_tags || [])[i];
-    const isJi = !!tg || jiSet.has(t);       // 只显示「打出的鸡牌」（普通牌不进这一栏）
+    const isJi = !!tg || ctx.jiSet.has(t);       // 只显示「打出的鸡牌」（含结算翻鸡种）
     if (!isJi) return;
     const claimed = !!((p.discard_claimed || [])[i]);
     const dots = claimed ? jiDotsHTML(tg, "zr") : jiDotsFor(t, tg);
@@ -8442,12 +8493,11 @@ function playerHandBlock(st, rel, ctx) {
   // 翻鸡之后翻出的牌种也是鸡牌，一并标记 → 一眼看出结算时手里有多少鸡；
   // 2026-11-04 第十六轮：点色 绿=鸡牌 / 红=金鸡 / 四倍金鸡 4 红点
   const meldsHtml = (p.melds && p.melds.length)
-    ? `<span class="ovmelds">${p.melds.map(m => meldHTML(m, "", p.seat, false, true)).join("")}</span>` : "";
-  // 2026-11-06：所有玩家（含未听牌者）手里的鸡牌一律加点。此前只认
-  // jiSet ∪ fanjiSet，金鸡/回放帧/开局鸡种容易漏判 → 补 GOLD_CTX 与当前帧鸡种并集。
+    ? `<span class="ovmelds">${p.melds.map(m => meldHTML(m, "", p.seat, false, true, st)).join("")}</span>` : "";
+  // 2026-11-12：统一走 ctx.jiSet（= activeJiSet(st)，已含结算翻鸡种），
+  // 避免同一块里再读一次全局 RES_SRC / LAST_STATE 造成两处口径分叉。
   const tileCell = t => {
-    const isJi = jiSet.has(+t) || ctx.fanjiSet.has(+t) ||
-      GOLD_CTX.gold.has(+t) || GOLD_CTX.quad.has(+t) || activeJiSet().has(+t);
+    const isJi = ctx.jiSet.has(+t) || GOLD_CTX.gold.has(+t) || GOLD_CTX.quad.has(+t);
     return isJi
       ? `<span class="ovtile"><img src="${tileImg(t)}" alt="">${jiDotsFor(t)}</span>`
       : `<img src="${tileImg(t)}" alt="">`;
@@ -9582,9 +9632,8 @@ function checkOppSpeedLink() {
   fix.textContent = `一键改为建议值 ${sugg} 秒`;
   fix.dataset.v = String(sugg);
   fix.onclick = () => {
-    el("set-oppspeed").value = String(sugg);
-    SET.speed = sugg; saveSet();
-    if (SID) api("/api/speed", { sid: SID, speed: sugg }).catch(() => {});
+    SET.speed = clampSpeed(String(sugg), 0.5); syncSpeedInputs(SET.speed); saveSet();
+    if (SID) api("/api/speed", { sid: SID, speed: SET.speed }).catch(() => {});
     checkOppSpeedLink();
   };
 }
@@ -9814,7 +9863,8 @@ function applySettings() {
     : (["full", "brief", "tile"].includes(reasonRaw) ? reasonRaw : "full");
   // 对手出牌节奏：可直接填秒数；对局中改动立即下发到当前会话
   const speedWas = SET.speed;
-  SET.speed = clampSetting(el("set-oppspeed").value, 0, 5, 0.45);
+  SET.speed = clampSpeed(el("set-oppspeed").value, 0.5);
+  syncSpeedInputs(SET.speed);
   if (SID && speedWas !== SET.speed) api("/api/speed", { sid: SID, speed: SET.speed }).catch(() => {});
   checkOppSpeedLink();       // 节奏改动后重校验对手模型冲突（2026-11-02）
   // 冲锋鸡/横鸡特效时长（#84；0=关闭特效；立即生效，无需下一局）

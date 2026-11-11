@@ -94,6 +94,72 @@ body {
   color: var(--muted);
 }
 
+/* ---- 模式选择页（2026-11-12）----------------------------------------
+   三个 pane 互斥显隐；[hidden] 必须压过 .pane 的 display:flex，
+   否则浏览器会把隐藏的面板也画出来（Android WebView 同样）。 */
+[hidden] { display: none !important; }
+.pane { display: flex; flex-direction: column; gap: clamp(7px, 1.5vmin, 12px); }
+.pane-title {
+  margin: 0;
+  font-size: clamp(12px, 1.9vmin, 15px);
+  font-weight: 600;
+  letter-spacing: .14em;
+  color: var(--gold);
+}
+.modes { display: flex; flex-direction: column; gap: clamp(7px, 1.4vmin, 12px); }
+.mode {
+  display: flex;
+  align-items: center;
+  gap: clamp(9px, 1.8vmin, 14px);
+  width: 100%;
+  min-height: clamp(52px, 9vmin, 76px);
+  padding: clamp(8px, 1.5vmin, 13px) clamp(10px, 2vmin, 16px);
+  text-align: left;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: linear-gradient(160deg, rgba(255,255,255,.075), rgba(255,255,255,.025));
+  cursor: pointer;
+  transition: transform .08s ease, border-color .12s ease, background .12s ease;
+}
+.mode:hover, .mode:focus-visible {
+  border-color: rgba(232, 196, 113, .65);
+  background: linear-gradient(160deg, rgba(232,196,113,.16), rgba(232,196,113,.05));
+  outline: none;
+}
+.mode:active { transform: translateY(1px) scale(.995); }
+.mode-ico {
+  flex: 0 0 auto;
+  font-size: clamp(21px, 3.6vmin, 30px);
+  line-height: 1;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,.45));
+}
+.mode-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.mode-body b { font-size: clamp(13px, 2.1vmin, 16px); letter-spacing: .1em; color: var(--gold-2); }
+.mode-body small { font-size: clamp(9.5px, 1.5vmin, 12px); color: var(--muted); letter-spacing: .02em; }
+.mode-arrow { flex: 0 0 auto; font-size: clamp(18px, 3vmin, 26px); color: var(--gold); }
+
+.pane-head { display: flex; align-items: center; gap: 10px; }
+.pane-head h2 {
+  margin: 0;
+  font-size: clamp(12px, 1.9vmin, 15px);
+  font-weight: 600;
+  letter-spacing: .1em;
+  color: var(--gold);
+}
+.back {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  min-height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.05);
+  color: var(--muted);
+  font-size: clamp(10px, 1.6vmin, 13px);
+  cursor: pointer;
+}
+.back:active { transform: translateY(1px); }
+
 /* ---- 输入 ---- */
 .field label {
   display: block;
