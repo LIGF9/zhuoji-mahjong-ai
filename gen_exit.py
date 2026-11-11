@@ -60,7 +60,11 @@ def worker(wid, student_path, teacher_path, dev, n_targets, sample_rate,
     # NetAgent 直接喂 CPU 张量，rollout 模型必须留在 CPU（实测 1231 步/s 足够快）；
     # 教师搜索走 _BatchRunner 自己搬运设备，可以放 mps。
     stu_net, stu_ver = load_net(student_path, "cpu")
-    tea_net, _ = load_net(teacher_path, dev)
+    tea_net, tea_ver = load_net(teacher_path, dev)
+    # 教师搜索的观测编码必须跟着**教师权重**走：v1 教师（dushan_master）用 15/70，
+    # v3 教师（champ_exit_p48 等）用 63/130。此前 deep_q 沿用默认 enc=1，
+    # 换 v3 教师会把 15 通道喂进 63 通道的 ONNX → 直接 shape 报错。
+    tea_enc = int(getattr(tea_net, "encoder_version", tea_ver) or 1)
     if str(dev).lower().startswith("ort"):
         # 预热 CoreML 会话（每个形状一次图编译 150~220ms；不预热会摊进首轮标注）。
         from zhuoji.forward import OrtForward, build_forward
@@ -89,7 +93,7 @@ def worker(wid, student_path, teacher_path, dev, n_targets, sample_rate,
                 o = encode(g, p, rec_ver)
                 q, _st = deep_q(tea_net, g, p, list(acts), n_det=32, ff_cap=24,
                                 topk=3, ply=3, seed=seed0 + wid * 7919 + deals,
-                                device=dev)
+                                device=dev, enc=tea_enc)
                 qv = np.full(N_SLOTS, np.nan, dtype=np.float32)
                 for a, qa in zip(acts, q):
                     qv[head_index(o.head, a)] = float(qa)
