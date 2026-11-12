@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "1.0.0"
+version = "1.2.0"
 description = "独山麻将 · 大师之路 Android 客户端（Tauri 2）"
 authors = ["LIGF9"]
 edition = "2021"

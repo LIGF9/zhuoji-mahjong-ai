@@ -199,11 +199,16 @@ fn enter_online(window: WebviewWindow, url: String) -> Result<String, String> {
 }
 
 /// 构建信息，供启动页展示与自动化验收（也用于确认「确实没联网」）。
+///
+/// 2026-11-12：版本号改取 `package_info()`（= `tauri.conf.json` 的 `version`）。
+/// 原先用 `env!("CARGO_PKG_VERSION")` 是本 crate 的 `Cargo.toml` 版本，
+/// 与 `tauri.conf.json`/APK 的 versionName 是两套 —— 结果 APK 明明是 1.2.0，
+/// 启动页 footer 却一直显示 `双模式 v1.0.0`（main.js 用这个值覆盖页脚）。
 #[tauri::command]
-fn app_info(engine: tauri::State<'_, Arc<Engine>>) -> serde_json::Value {
+fn app_info(app: tauri::AppHandle, engine: tauri::State<'_, Arc<Engine>>) -> serde_json::Value {
     serde_json::json!({
         "name": "独山麻将 · 双模式",
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": app.package_info().version.to_string(),
         "identifier": "com.zhuoji.mahjong.offline",
         "mode": "offline-embedded + online-web",
         "default_online_server": DEFAULT_SERVER,

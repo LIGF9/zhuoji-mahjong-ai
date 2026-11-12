@@ -1,1 +1,1 @@
-{"name": "zhuoji-mahjong-android", "private": true, "version": "1.0.0", "description": "独山麻将 · 大师之路 —— Tauri 2 Android 客户端", "scripts": {"tauri": "tauri", "android:build": "tauri android build --apk --target aarch64", "dev": "tauri dev"}}
+{"name": "zhuoji-mahjong-android", "private": true, "version": "1.2.0", "description": "独山麻将 · 大师之路 —— Tauri 2 Android 客户端", "scripts": {"tauri": "tauri", "android:build": "tauri android build --apk --target aarch64", "dev": "tauri dev"}}

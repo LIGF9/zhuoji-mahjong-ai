@@ -20,23 +20,33 @@
   var bootMs = 0;
 
   function $(id) { return document.getElementById(id); }
-  /* 2026-11-12：面板切换写入 WebView 历史。
-     在线/离线面板与选择页是同一个 URL 的 SPA，没有历史记录时安卓返回键会
-     直接 finish Activity（用户实测「在线模式返回直接退 App」）。现在：
-       选择页 --pushState({pane})--> 面板，
-     返回键 goBack() 触发 popstate → 回到选择页；选择页再返回才退出。 */
-  function show(id, push) {
+  /* 2026-11-12：选择页与两个面板是同一个 URL 的 SPA，安卓返回键原本无从判断
+     当前在哪一屏（只能读到 `webView.url`）。解法是把面板状态写进 URL hash，
+     原生同步可读，见下面 show() 的实现。 */
+  var currentPane = "chooser";
+
+  function show(id) {
+    currentPane = id;
     ["chooser", "online-pane", "offline-pane"].forEach(function (p) {
       $(p).hidden = (p !== id);
     });
-    if (push && id !== "chooser") {
-      try { history.pushState({ pane: id }, "", location.href); } catch (e) { /* 沙箱里可能禁用 */ }
-    }
+    /* 2026-11-12 定稿：面板状态**同步写进 URL hash**，不再靠异步 JS 回调。
+       安卓返回键是原生同步事件，只能读 `webView.url`；原先用
+       evaluateJavascript 问 currentPane，页面刚好在重载时回调会丢，
+       表现为「首屏按一次返回没反应、再按一次才退出」（用户实测）。
+       现在 URL 本身就是状态：
+         选择页        http://tauri.localhost/
+         在线面板      http://tauri.localhost/#online-pane
+         离线面板      http://tauri.localhost/#offline-pane
+       一律 replaceState（不堆历史条目），保证 loadUrl 回选择页后历史干净。 */
+    var base = location.href.split("#")[0];
+    var next = (id === "chooser") ? base : base + "#" + id;
+    try { history.replaceState({ pane: id }, "", next); } catch (e) { /* 沙箱里可能禁用 */ }
   }
   window.addEventListener("popstate", function (e) {
     var pane = (e.state && e.state.pane) || "chooser";
     wantOffline = false;
-    show(pane, false);
+    show(pane);
   });
   function setStatus(text, kind) {
     var el = $("status");
@@ -115,7 +125,7 @@
 
   function chooseOffline() {
     wantOffline = true;
-    show("offline-pane", true);
+    show("offline-pane");
     $("chooser-status").className = "status";
     if (!IN_APP) {
       setBar(100);
@@ -196,7 +206,7 @@
   /* ---------------- 绑定 ---------------- */
   $("btn-online").addEventListener("click", function () {
     wantOffline = false;
-    show("online-pane", true);
+    show("online-pane");
     $("url").value = loadUrl();
     if (IN_APP) testConnection(true);
     else {
@@ -205,13 +215,12 @@
     }
   });
   $("btn-offline").addEventListener("click", chooseOffline);
-  // 面板上的「‹ 返回」按钮：有历史就走历史（与安卓返回键同一路径），
-  // 这样面板切换、系统返回、按钮返回三者的状态永远一致。
+  // 面板上的「‹ 返回」按钮：与安卓返回键同一条路径 —— 直接 show("chooser")，
+  // 面板状态由 URL hash 承载，不堆历史条目，两种返回方式状态永远一致。
   Array.prototype.forEach.call(document.querySelectorAll("[data-back]"), function (b) {
     b.addEventListener("click", function () {
       wantOffline = false;
-      if (history.state && history.state.pane) history.back();
-      else show("chooser", false);
+      show("chooser");
     });
   });
   $("btn-test").addEventListener("click", function () { testConnection(false); });
