@@ -124,6 +124,9 @@ body {
   position: absolute; display: flex; align-items: center; gap: 10px;
   background: var(--panel); border: 1px solid rgba(232,184,75,.25);
   border-radius: 12px; padding: 8px 10px; z-index: 15;
+  /* 2026-11-12 用户口径：徽标（报叫 / 杠·通行证）贴在卡片边框**外沿**，
+     不许压住那根 1px 金线。徽标已改挂本卡（见 .ava-side 注释），直接用卡片
+     自身的百分比边定位，不再需要按内边距推算偏移。 */
 }
 .player.active { border-color: var(--gold); box-shadow: 0 0 16px rgba(232,184,75,.55); }
 .pw { display: flex; align-items: center; gap: 8px; }
@@ -3073,18 +3076,32 @@ html:not(.mob) .seat-left, html:not(.mob) .seat-right {
 /* ---- C) 结算面板：标题是图片（对家胜/荒牌），装饰金线多余 → 隐藏 ---- */
 #result-mask .modal h2::after { display: none; }
 
-/* ---- D) 徽标：统一挂头像靠桌面中心一侧 ---- */
+/* ---- D) 徽标：贴在座位卡边框外沿，一条边都不压 ----
+   2026-11-12 第二轮用户口径：「所有玩家徽标不要与玩家显示区域的边框重叠，
+   刚好贴着就行」。
+
+   ⚠️ 定位基准必须是**座位卡**（.player），不能是头像框（.avatar-wrap）：
+   头像到卡片边框之间隔着「内边距 + 1px 边框 + flex 居中留白」，而 .player 的
+   padding 在 CSS 里被覆盖过三次（桌面 8/10、移动 5/9、我的卡 3/7/3/3），
+   横屏移动端甚至读到 padding:0（留白来自 flex 居中）。只要按头像框定位，
+   每个偏移量都得先猜这段留白 —— 实测四家全部压线（对家越左框 18px、
+   左右家越框 13px、我压上框 3px）。
+   现在 .ava-side 改挂 .player 直下（HTML 侧已移出头像框），用卡片自身的
+   百分比边即天然对齐边框：
+     · 我     = 卡片上边框外侧，左端贴卡片左边框内沿
+     · 对家   = 卡片下边框外侧，左端贴卡片左边框内沿
+     · 左家   = 竖排，贴卡片右边框外沿
+     · 右家   = 竖排，贴卡片左边框外沿
+   `100%` 是 padding-box 边长，`+1px` 正好跨过那根 1px 边框线。
+   徽标比窄卡片还宽时（移动端「我」的卡 79px、徽标 94px），允许它在卡片
+   上/下方的空白里横向溢出 —— 那片区域没有边框，不会压线。 */
 .ava-side { position: absolute; z-index: 6; display: flex; gap: 4px;
   white-space: nowrap; pointer-events: none; }
 .ava-side:empty, .ava-side > span:empty { display: none; }
-.seat-me   .ava-side { bottom: calc(100% + 1px); left: 50%; transform: translateX(-50%); }
-/* 2026-11-12 用户口径（移动端）：「我的」徽标左缘要与头像左缘对齐。
-   徽标（杠·通行证 / 报叫）通常比 30px 的头像宽，整条居中时两端都会探出，
-   在窄屏上看着像「没贴着头像」。移动端改成左对齐到头像左沿，向右展开。 */
-html.mob .seat-me .ava-side { left: 0; transform: none; }
-.seat-top  .ava-side { top: calc(100% + 3px);    left: 50%; transform: translateX(-50%); }
-.seat-left .ava-side { left: calc(100% + 5px);   top: 50%; transform: translateY(-50%); }
-.seat-right .ava-side { right: calc(100% + 5px); top: 50%; transform: translateY(-50%); }
+.seat-me   .ava-side { bottom: calc(100% + 1px); left: 0;  transform: none; }
+.seat-top  .ava-side { top:    calc(100% + 1px); left: 0;  transform: none; }
+.seat-left .ava-side { left:   calc(100% + 1px); top: 0;   transform: none; }
+.seat-right .ava-side { right: calc(100% + 1px); top: 0;   transform: none; }
 
 /* 听牌浮窗空态/加载态 */
 #ting-pop .tp-none { margin-top: 4px; color: #9fb8a8; }
@@ -3530,13 +3547,12 @@ html.mob .scoregrid input { width: 42px; }
       <span class="avatar-wrap">
         <img class="avatar" id="me-avatar" src="/assets/avatar/boy/云天明.jpg" alt="我">
         <span class="wind-corner" id="me-wind" style="display:none"><img src="/assets/table/east.png" alt="庄"></span>
-        <!-- 徽标唯一出口：与三位对手一样挂进 .avatar-wrap，以头像为锚居中
-             并紧贴头像卡上沿。2026-11-12 实机反馈「我的 tag 没对齐贴着显示区」：
-             此前挂在 .seat-me 整卡层，left:50% 按「头像+名字」整卡算，
-             比头像中心右偏约 20px，且 bottom:100%+6px 让它浮到牌河里。 -->
-        <span class="ava-side" id="me-side">
-          <span id="me-abadges"></span><span id="me-badges"></span>
-        </span>
+      </span>
+      <!-- 徽标直接挂在座位卡上（不是头像框）：定位基准就是卡片边框，四家统一
+           「贴住边框外沿 1px」，不再依赖头像到边框之间的留白（内边距被 CSS
+           覆盖了三次，按它算必然有几家贴不准 —— 2026-11-12 实测对家越左框 18px）。 -->
+      <span class="ava-side" id="me-side">
+        <span id="me-abadges"></span><span id="me-badges"></span>
       </span>
       <div class="pinfo">
         <div class="pname" id="me-name">你</div>
@@ -6614,11 +6630,13 @@ function renderOpp(rel, p, st) {
   const badges = gang + bao;
   const pw = `
     <div class="pw">
-      <span class="avatar-wrap"><span class="ava-side">${badges}</span><img class="avatar" src="${avatarSrc(rel)}" alt="">${dealerImg}</span>
+      <span class="avatar-wrap"><img class="avatar" src="${avatarSrc(rel)}" alt="">${dealerImg}</span>
       <div class="pinfo">
         <div class="pname">${tableDisplayName(rel, p.name)}</div>
         <div class="pscore">${p.score}</div>
       </div>
+      <!-- 徽标挂在座位卡上（.pw 未定位 → 包含块是 .player），按卡片边框定位 -->
+      <span class="ava-side">${badges}</span>
     </div>`;
   // 对家：头像+名字在最左，之后副露、手牌（与我的布局同向）；左右家：头像+副露+手牌同列
   setHTML(box, pw + `<div class="melds">${melds}</div><div class="phand">${fan}</div>`);

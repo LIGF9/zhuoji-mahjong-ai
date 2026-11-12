@@ -65,3 +65,6 @@ models/slim_*.pt
 # 桌面版图标生成的中间产物（由 desktop/app-icon.png 重新生成）
 desktop/build/
 desktop/dist/
+
+# 出包产物（tools/pack_all.sh 生成，文件名带打包时间 → 每次都不一样，不进 git）
+tauri-offline/dist/
