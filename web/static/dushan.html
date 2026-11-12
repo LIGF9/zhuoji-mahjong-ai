@@ -4668,16 +4668,24 @@ function fanjiTilesOf(res) {
   if (mode === "both" || mode === "down") out.push(s * 9 + (r0 + 8) % 9);
   return [...new Set(out)].filter(t => t !== flip).sort((a, b) => a - b);
 }
-/* 当前帧的鸡牌种集合（结算帧优先用传入的 st，支持回放；局中用 LAST_STATE）。
+/* 当前帧的**本局鸡牌种**（结算帧优先用传入的 st，支持回放；局中用 LAST_STATE）。
    2026-11-06：副露/标签里「普通鸡牌」常常没有 m.ji 丝带标记，只靠牌种判断，
    不能因为 m.ji 为空就当成普通牌漏掉红点。
-   2026-11-12：结算翻出的牌种在结算帧同样是本局鸡牌，必须并进来 —— 桌面
-   手牌 / 弃牌 / 副露 / 结算总览四处共用这一个集合，口径不再各算一份。 */
+   2026-11-12 用户口径修正：结算翻出的鸡牌**只对手牌有效** —— 牌河里那些牌
+   早在翻鸡之前就已经打出，不能事后补红点。故这里只返回开局定下来的鸡种
+   （幺鸡 + 开局翻鸡 + 手动追加），供牌河 / 副露 / 结算弃牌列表使用。 */
 function activeJiSet(st) {
   const s = st || (typeof RES_SRC !== "undefined" && RES_SRC) || LAST_STATE;
   const base = s && s.ji_tiles && s.ji_tiles.length ? s.ji_tiles : [YAOJI];
+  return new Set(base.map(Number));
+}
+/* 手牌专用：本局鸡种 ∪ 结算翻出的鸡牌种。
+   结算后手里这些牌才按鸡计分，所以桌面手牌 / 结算页手牌要标红点；
+   这份集合绝不能用于弃牌墙、副露或结算页的「打出的鸡牌」列表。 */
+function handJiSet(st) {
+  const s = st || (typeof RES_SRC !== "undefined" && RES_SRC) || LAST_STATE;
   const extra = s && s.result ? fanjiTilesOf(s.result) : [];
-  return new Set([...base, ...extra].map(Number));
+  return new Set([...activeJiSet(st), ...extra].map(Number));
 }
 
 const SUIT_FILE = ["万", "条", "筒"];
@@ -6495,10 +6503,11 @@ function meldCells(m, rc, ownerSeat, mirror, dots, st) {
   // 说的「部分杠牌」有误。现在所有横置牌统一用无 rc 的格子几何。
   const flatCell = (extra = "") =>
     `<span class="mc fc${extra}"><img src="${normal}" alt=""></span>`;
-  // 副露吃进冲锋鸡/横鸡：真实牌面 + 统一角标（冲=红/横=蓝）；普通幺鸡/翻鸡鸡牌用普通牌面
-  // 2026-11-06：普通鸡牌（幺鸡/开局翻鸡种/结算翻鸡种）常常没有 m.ji 丝带标签，
+  // 副露吃进冲锋鸡/横鸡：真实牌面 + 统一角标（冲=红/横=蓝）；普通幺鸡/开局翻鸡鸡牌用普通牌面
+  // 2026-11-06：普通鸡牌（幺鸡/开局翻鸡种）常常没有 m.ji 丝带标签，
   // 只按牌种判断；否则碰杠中的这些鸡牌会是光板（用户报「漏加点」）。
-  // 2026-11-12：调用方把当前帧的 st 传进来，副露/结算/回放三处的鸡牌集合同源
+  // 2026-11-12：调用方把当前帧的 st 传进来；副露只认**本局鸡种**，
+  // 结算翻出的鸡牌种不参与（用户口径：翻鸡牌只对手牌有效）。
   const isJi = !!m.ji || activeJiSet(st).has(+m.tile);
   // dots = true（结算页）：牌小，丝带看不清 → 与结算手牌同款红点（2026-11-02 v4 口径）
   const jiCell = (extra = "") =>       // 鸡牌格：冲/横/金=丝带；普通鸡/翻鸡种=1 点标
@@ -6780,7 +6789,7 @@ function renderHand(st) {
   const recIdx = (SET.hintOn && SET.recForm === "ind" && RECOMMEND &&
     RECOMMEND.kind === "discard" && pend && pend.mode === "discard")
     ? hand.indexOf(RECOMMEND.tile) : -1;
-  const jiSet = activeJiSet(st);   // 含结算翻出的鸡牌种（2026-11-12 统一口径）
+  const jiSet = handJiSet(st);   // 手牌：本局鸡种 + 结算翻鸡种（翻鸡只对手牌有效）
   /* 前三推荐牌头顶排名（2026-11-04 用户需求）：
      开启大师推荐、且正处在自己的出牌决策点时，把推荐指数(prob)排名前三的
      「打出候选」依次编号 1/2/3，标在手牌对应牌的头顶；同种牌只标一张。
@@ -6844,7 +6853,7 @@ function renderRivers(st) {
   const lastKey = st.last ? st.last[0] + ":" + st.last[1] : "";
   // 本局鸡牌种（与手牌 .jimark / 总览 .jidots 同一口径）：
   // 弃牌里的鸡牌一律打红点，不再只标冲锋鸡/横鸡
-  const jiSet = activeJiSet(st);   // 与手牌/副露/结算总览同源，含结算翻鸡种
+  const jiSet = activeJiSet(st);   // 牌河只用本局鸡种；结算翻鸡种不回填到已打出的牌
   const jiKey = [...jiSet].join(",");
   for (let rel = 0; rel < 4; rel++) {
     const p = st.players[rel];
@@ -8261,7 +8270,7 @@ function renderResult(st) {
     stopAutoNext();
     RES_VIEW = null; RES_VIEW_PREV = null; RES_DISMISSED = false; RES_SOUND_KEY = "";
     // 2026-11-12：结算帧用的 RES_SRC 必须在新一局开始时清掉，否则
-    // activeJiSet() 无参调用会继续拿上一局的翻鸡种给新一局的手牌点红点。
+    // handJiSet() 无参调用会继续拿上一局的翻鸡种给新一局的手牌点红点。
     RES_SRC = null;
     return;
   }
@@ -8409,9 +8418,11 @@ function settlementCtx(st) {
     voidSeat: Number.isInteger(res.void_seat) ? +res.void_seat : null,
     loseTag: res.rob_kong ? "被抢杠" : (res.how === "热炮" ? "放热炮" : "放炮"),
     winTag: winHowTag(res),
-    // 本局鸡牌种 + 结算翻出的鸡牌种：与桌面手牌/弃牌/副露共用 activeJiSet，
-    // 不再各算一份（旧实现只认 st.ji_tiles ∪ res.fanji_tiles，字段缺省就漏点）。
+    // 本局鸡牌种：结算页的「打出的鸡牌」列表 / 副露用，不含结算翻鸡种
+    // （2026-11-12 用户口径：翻鸡牌只对手牌有效，不能给牌河里的旧牌补红点）。
     jiSet: activeJiSet(st),
+    // 结算页**手牌**专用：本局鸡种 ∪ 结算翻鸡种。
+    handJiSet: handJiSet(st),
     // 结算翻鸡翻出的牌种（2026-11-02 用户口径）：手牌里的这些牌也要加红点，
     // 让玩家一眼看出「结算时手里有多少鸡牌」（开局鸡 + 翻鸡 = 全部计鸡牌种）。
     fanjiSet: new Set(fanjiTilesOf(res)),
@@ -8468,7 +8479,7 @@ function playerHandBlock(st, rel, ctx) {
   const discCells = [];
   (p.discards || []).forEach((t, i) => {
     const tg = (p.discard_tags || [])[i];
-    const isJi = !!tg || ctx.jiSet.has(t);       // 只显示「打出的鸡牌」（含结算翻鸡种）
+    const isJi = !!tg || ctx.jiSet.has(t);       // 只显示本局打出的鸡牌；结算翻鸡种不参与
     if (!isJi) return;
     const claimed = !!((p.discard_claimed || [])[i]);
     const dots = claimed ? jiDotsHTML(tg, "zr") : jiDotsFor(t, tg);
@@ -8494,10 +8505,10 @@ function playerHandBlock(st, rel, ctx) {
   // 2026-11-04 第十六轮：点色 绿=鸡牌 / 红=金鸡 / 四倍金鸡 4 红点
   const meldsHtml = (p.melds && p.melds.length)
     ? `<span class="ovmelds">${p.melds.map(m => meldHTML(m, "", p.seat, false, true, st)).join("")}</span>` : "";
-  // 2026-11-12：统一走 ctx.jiSet（= activeJiSet(st)，已含结算翻鸡种），
-  // 避免同一块里再读一次全局 RES_SRC / LAST_STATE 造成两处口径分叉。
+  // 2026-11-12：结算页手牌走 ctx.handJiSet（本局鸡种 + 结算翻鸡种），
+  // 打出的鸡牌走 ctx.jiSet（只本局鸡种），两者口径不能再混用。
   const tileCell = t => {
-    const isJi = ctx.jiSet.has(+t) || GOLD_CTX.gold.has(+t) || GOLD_CTX.quad.has(+t);
+    const isJi = ctx.handJiSet.has(+t) || GOLD_CTX.gold.has(+t) || GOLD_CTX.quad.has(+t);
     return isJi
       ? `<span class="ovtile"><img src="${tileImg(t)}" alt="">${jiDotsFor(t)}</span>`
       : `<img src="${tileImg(t)}" alt="">`;

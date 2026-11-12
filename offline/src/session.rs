@@ -302,13 +302,48 @@ impl Session {
             actions::ANGANG | actions::BUGANG | actions::MINGGANG => Some("kong"),
             _ => None,
         };
+        let mut ev_idx = None;
         if let Some(k) = kind {
             let tile = if a.tile == 255 { None } else { Some(a.tile) };
             let who = if seat >= 0 { self.names[seat as usize].clone() } else { "全场".into() };
             let text = format!("{} {}", who, a.label());
             self.push_event(k, seat, tile, text);
+            ev_idx = Some(self.events.len() - 1);
         }
+        // 打出的是否鸡牌（决定要不要给这条 discard 事件补 ctag）。
+        let is_ji_discard = a.kind == actions::DISCARD && a.tile < 27
+            && (self.game.ji_tiles & (1u32 << a.tile)) != 0;
+        let hj_before = self.game.hengji_open;
         self.game.step(a, &self.ft);
+        // 1) events[].ctag：前端「冲锋鸡/横鸡」全屏特效与 toast 的唯一开关。
+        //    必须 step 之后再读 `ji_tag_of_last` —— 不能用 ji_name_if_discarded
+        //    预测：该种第一次开横鸡轮时它会判成普通鸡，与 step_discard 实际
+        //    记下的横鸡不一致（线上用的是引擎里同名字段的真实值）。
+        if let (Some(i), true) = (ev_idx, is_ji_discard) {
+            self.events[i]["ctag"] =
+                json!(view::ji_tag_cn(self.game.ji_tag_of_last[seat as usize]));
+        }
+        // 2) 横鸡轮开/收事件：与线上 `_emit_hengji` 同口径，流水/toast 才有
+        //    「开出横鸡轮 · X」提示。掩码变化的每一位对应一个独立鸡种轮。
+        let changed = hj_before ^ self.game.hengji_open;
+        if changed != 0 {
+            for t in 0..27u8 {
+                let b = 1u32 << t;
+                if changed & b == 0 { continue; }
+                let open = self.game.hengji_open & b != 0;
+                let cn = tiles::tile_cn(t);
+                let who = self.names[seat as usize].clone();
+                let text = if open {
+                    format!("{who} 开出横鸡轮 · {cn}")
+                } else {
+                    format!("{who} 再次出牌 · 横鸡轮结束（{cn}）")
+                };
+                self.push_event("hengji", seat, Some(t), text);
+                let last = self.events.len() - 1;
+                self.events[last]["ctag"] =
+                    json!(if open { "横鸡轮开始" } else { "横鸡轮结束" });
+            }
+        }
         self.pending = None;
         if self.game.phase == actions::PHASE_OVER {
             self.finalize();
@@ -642,7 +677,8 @@ impl Session {
             };
             let melds_of = |p: usize| -> Vec<Value> {
                 g.melds[p].iter().map(|&(mt, t, s)| json!({
-                    "type": mt, "label": meld_label(mt), "tile": t, "src": s, "ji": Value::Null
+                    "type": mt, "label": meld_label(mt), "tile": t, "src": s,
+                    "ji": view::meld_ji_tag(g, p, t)
                 })).collect()
             };
             o.insert("winner_hand".into(), json!(hand_of(w as usize)));

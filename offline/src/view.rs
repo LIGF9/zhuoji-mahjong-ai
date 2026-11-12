@@ -66,6 +66,50 @@ fn meld_label(mt: u8) -> &'static str {
     }
 }
 
+/// 引擎的鸡类型 u8 → 前端约定的中文标签。
+/// `events[].ctag` / `players[].discard_tags` / `melds[].ji` 三处共用，
+/// 与 `zhuoji/dushan.py` 的 `ji_tag`（"冲锋鸡"/"横鸡"/"幺鸡"）同源。
+pub fn ji_tag_cn(tag: u8) -> &'static str {
+    match tag {
+        state::JI_CHONGFENG => "冲锋鸡",
+        state::JI_HENG => "横鸡",
+        _ => "幺鸡",
+    }
+}
+
+/// 与 `web/dushan_server.py::_discard_tags` 同源：把 `ji_events` 里该家的
+/// 鸡事件按顺序对回**展示视图**（含被碰/杠走的牌），给出逐张类型名。
+/// 用展示视图而不是逻辑 `discards` 是关键 —— 否则被吃走那张之后的所有
+/// 标签都会整体错位，前端牌河就会把普通牌误标成冲锋鸡/横鸡。
+pub fn discard_tags(g: &Game, p: usize) -> Vec<Value> {
+    let mut tags: Vec<Value> = vec![Value::Null; g.discard_view[p].len()];
+    let ji: Vec<u8> = g.ji_events.iter()
+        .filter(|e| e.0 as usize == p)
+        .map(|e| e.2)
+        .collect();
+    let mut k = 0usize;
+    for (i, &t) in g.discard_view[p].iter().enumerate() {
+        if state::bit(t) & g.ji_tiles != 0 && k < ji.len() {
+            tags[i] = json!(ji_tag_cn(ji[k]));
+            k += 1;
+        }
+    }
+    tags
+}
+
+/// 与 `web/dushan_server.py::_meld_ji_tag` 同源：副露里被碰/杠走的鸡牌
+/// 返回其类型名（冲锋鸡/横鸡/幺鸡），前端据此显示「碰横鸡(某某)」与角标。
+pub fn meld_ji_tag(g: &Game, p: usize, tile: u8) -> Value {
+    if state::bit(tile) & g.ji_tiles == 0 {
+        return Value::Null;
+    }
+    let tag = g.claimed_ji.iter().rev()
+        .find(|e| e.1 as usize == p && e.4 == tile)
+        .map(|e| ji_tag_cn(e.2))
+        .unwrap_or("幺鸡");
+    json!(tag)
+}
+
 fn phase_str(p: u8) -> &'static str {
     match p {
         actions::PHASE_SELF_KONG => "self_kong",
@@ -163,12 +207,15 @@ pub fn snapshot(ctx: &SnapshotCtx) -> Value {
                 "label": meld_label(mt),
                 "tile": t,
                 "src": s,
-                "ji": Value::Null,
+                "ji": meld_ji_tag(g, p, t),
             }))
             .collect();
-        let discards: Vec<u8> = g.discards[p].iter().copied().collect();
-        let claimed: Vec<bool> = vec![false; discards.len()];
-        let tags: Vec<Value> = vec![Value::Null; discards.len()];
+        // 牌河用**展示视图**：被碰/杠走的牌原位保留并灰显。
+        // 记牌器 counter 仍用逻辑 `g.discards`（被吃走的牌由副露补 3/4 张），
+        // 与线上 `_snapshot` 的口径一致。
+        let discards: Vec<u8> = g.discard_view[p].clone();
+        let claimed: Vec<bool> = g.discard_claimed_view[p].clone();
+        let tags: Vec<Value> = discard_tags(g, p);
         players.push(json!({
             "rel": rel,
             "seat": p,

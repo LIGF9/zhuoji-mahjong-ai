@@ -121,6 +121,12 @@ pub struct Game {
     pub hands: [Counts; 4],
     pub melds: [Vec<Meld>; 4],       // (kind, tile, src)
     pub discards: [Vec<u8>; 4],
+    /// 牌河**展示视图**（只增不减）：碰/明杠吃走的牌仍留在原位，只把
+    /// `discard_claimed_view` 对应位置标记为 true（前端 `.mc.claimed` 灰显残牌）。
+    /// 与 `zhuoji/dushan.py` 的 `discard_view` / `discard_claimed_view` 同源。
+    /// `discards` 仍是逻辑视图（被吃走的牌会 pop），记牌器与结算都用它。
+    pub discard_view: [Vec<u8>; 4],
+    pub discard_claimed_view: [Vec<bool>; 4],
     pub wall: Vec<u8>,
     pub wall_pos: usize,
 
@@ -221,6 +227,8 @@ impl Game {
             hands: [[0u8; NUM_TILES]; 4],
             melds: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
             discards: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            discard_view: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            discard_claimed_view: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
             wall,
             wall_pos: 0,
             dealer,
@@ -635,6 +643,9 @@ impl Game {
         self.repao_discard = self.gang_discard[p];
         self.hands[p][tile as usize] -= 1;
         self.discards[p].push(tile);
+        // 展示视图只增不减：碰/杠时不 pop，仅把对应位标记为「已被吃走」。
+        self.discard_view[p].push(tile);
+        self.discard_claimed_view[p].push(false);
         self.any_discard = true;
 
         self.close_hengji_rounds(p);
@@ -831,10 +842,13 @@ impl Game {
             return;
         }
 
-        // 碰 / 明杠：从打出者牌河取走这张
+        // 碰 / 明杠：逻辑牌河取走这张；展示视图保留原位、改标灰显残牌
+        // （对齐 dushan.py `discard_claimed_view[discarder][-1] = True`）。
         if let Some(d) = self.discards[discarder as usize].last() {
             if *d == tile {
                 self.discards[discarder as usize].pop();
+                let dv = &mut self.discard_claimed_view[discarder as usize];
+                if let Some(last) = dv.last_mut() { *last = true; }
             }
         }
         match a.kind {
@@ -965,6 +979,8 @@ impl Game {
             hands: [[0u8; NUM_TILES]; 4],
             melds: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
             discards: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            discard_view: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            discard_claimed_view: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
             wall: full_deck(),
             wall_pos: 0,
             dealer: 0,
