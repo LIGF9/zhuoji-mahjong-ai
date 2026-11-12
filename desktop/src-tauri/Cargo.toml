@@ -1,0 +1,20 @@
+[package]
+name = "dushan-desktop"
+version = "1.2.0"
+description = "独山麻将 · 桌面版：内嵌 Rust 服务端 + 宽屏对局"
+authors = ["LIGF9"]
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+offline-core = { path = "../../offline" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

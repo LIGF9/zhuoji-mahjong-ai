@@ -20,11 +20,24 @@
   var bootMs = 0;
 
   function $(id) { return document.getElementById(id); }
-  function show(id) {
+  /* 2026-11-12：面板切换写入 WebView 历史。
+     在线/离线面板与选择页是同一个 URL 的 SPA，没有历史记录时安卓返回键会
+     直接 finish Activity（用户实测「在线模式返回直接退 App」）。现在：
+       选择页 --pushState({pane})--> 面板，
+     返回键 goBack() 触发 popstate → 回到选择页；选择页再返回才退出。 */
+  function show(id, push) {
     ["chooser", "online-pane", "offline-pane"].forEach(function (p) {
       $(p).hidden = (p !== id);
     });
+    if (push && id !== "chooser") {
+      try { history.pushState({ pane: id }, "", location.href); } catch (e) { /* 沙箱里可能禁用 */ }
+    }
   }
+  window.addEventListener("popstate", function (e) {
+    var pane = (e.state && e.state.pane) || "chooser";
+    wantOffline = false;
+    show(pane, false);
+  });
   function setStatus(text, kind) {
     var el = $("status");
     el.textContent = text;
@@ -102,7 +115,7 @@
 
   function chooseOffline() {
     wantOffline = true;
-    show("offline-pane");
+    show("offline-pane", true);
     $("chooser-status").className = "status";
     if (!IN_APP) {
       setBar(100);
@@ -183,7 +196,7 @@
   /* ---------------- 绑定 ---------------- */
   $("btn-online").addEventListener("click", function () {
     wantOffline = false;
-    show("online-pane");
+    show("online-pane", true);
     $("url").value = loadUrl();
     if (IN_APP) testConnection(true);
     else {
@@ -192,10 +205,13 @@
     }
   });
   $("btn-offline").addEventListener("click", chooseOffline);
+  // 面板上的「‹ 返回」按钮：有历史就走历史（与安卓返回键同一路径），
+  // 这样面板切换、系统返回、按钮返回三者的状态永远一致。
   Array.prototype.forEach.call(document.querySelectorAll("[data-back]"), function (b) {
     b.addEventListener("click", function () {
       wantOffline = false;
-      show("chooser");
+      if (history.state && history.state.pane) history.back();
+      else show("chooser", false);
     });
   });
   $("btn-test").addEventListener("click", function () { testConnection(false); });

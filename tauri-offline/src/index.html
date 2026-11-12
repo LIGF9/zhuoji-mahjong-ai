@@ -25,11 +25,13 @@
       <div class="modes">
         <button id="btn-online" class="mode" type="button">
           <span class="mode-ico" aria-hidden="true">🌐</span>
-          <span class="mode-body"><b>在线模式</b><small>进入移动网页版 · 需连同一 Wi-Fi</small></span>
+          <span class="mode-body"><b>在线模式</b><small>需要自行运行服务端·且连接同一WiFi</small></span>
           <span class="mode-arrow" aria-hidden="true">›</span>
         </button>
         <button id="btn-offline" class="mode" type="button">
-          <span class="mode-ico" aria-hidden="true">🀄</span>
+          <!-- 2026-11-12 用户口径：离线模式图标用幺鸡（牌墙里同一张 1 条）。
+               本玩法只有万/条/筒，全项目禁止使用其他牌面当图标。 -->
+          <img class="mode-ico mode-tile" src="splash_tile.png" alt="" aria-hidden="true">
           <span class="mode-body"><b>离线模式</b><small>本机引擎 · 断网、飞行模式也能玩</small></span>
           <span class="mode-arrow" aria-hidden="true">›</span>
         </button>
@@ -40,7 +42,7 @@
     <!-- ② 在线模式：与联网客户端同一口径，地址可改、可测、会记住 -->
     <section class="pane" id="online-pane" hidden>
       <div class="pane-head">
-        <button class="back" type="button" data-back>‹ 返回</button>
+        <!-- 2026-11-12 用户口径：在线模式不再放「‹ 返回」按钮，统一由系统返回键回选择页 -->
         <h2>在线模式 · 移动网页版</h2>
       </div>
       <div class="field">
@@ -57,9 +59,10 @@
         <button id="btn-enter" class="primary" type="button">进入网页版</button>
       </div>
       <div class="hint">
-        <strong>使用前</strong>：电脑上启动
-        <code>python web/dushan_server.py --port 8770 --host 0.0.0.0</code>，
-        手机与电脑连同一 Wi-Fi，地址填启动日志里的局域网地址。
+        <strong>使用前</strong>：电脑上双击运行<strong>独山麻将</strong>桌面版
+        （窗口标题会显示手机访问地址），或执行
+        <code>python web/dushan_server.py --port 8770 --host 0.0.0.0</code>；
+        手机与电脑连同一 Wi-Fi，地址填窗口/日志里显示的局域网地址。
       </div>
       <div class="preview" id="preview" hidden>预览模式（未在 APP 内运行）：连接测试不可用，「进入网页版」将在浏览器中打开。</div>
     </section>

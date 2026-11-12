@@ -26,6 +26,11 @@ rust_engine/target/
 offline/target/
 tauri-offline/src-tauri/target/
 tauri-offline/node_modules/
+# 桌面版（desktop/）：Tauri 构建产物与自动生成的 gen 目录
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+# 桌面版交付物（.app / 压缩包，按需本地重建）
+desktop/dist/
 tauri-offline/src-tauri/gen/android/.kotlin/
 tauri-offline/src-tauri/gen/android/.gradle/
 tauri-offline/src-tauri/gen/android/.tauri/

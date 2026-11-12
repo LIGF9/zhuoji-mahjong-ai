@@ -76,7 +76,7 @@ body {
   flex: 0 0 auto;
   height: clamp(52px, 9.2vmin, 78px);
   width: auto;
-  transform: rotate(-4deg);
+  transform: none;   /* 2026-11-12：原先 rotate(-4deg) 让用户觉得「logo 是歪的」，扶正 */
   filter: drop-shadow(0 6px 12px rgba(0, 0, 0, .5));
 }
 
@@ -133,6 +133,12 @@ body {
   font-size: clamp(21px, 3.6vmin, 30px);
   line-height: 1;
   filter: drop-shadow(0 2px 6px rgba(0,0,0,.45));
+}
+/* 图片型模式图标（幺鸡牌面）：高度与 emoji 档对齐，宽度自适应 */
+.mode-ico.mode-tile {
+  height: clamp(28px, 4.8vmin, 42px);
+  width: auto;
+  border-radius: 4px;
 }
 .mode-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .mode-body b { font-size: clamp(13px, 2.1vmin, 16px); letter-spacing: .1em; color: var(--gold-2); }

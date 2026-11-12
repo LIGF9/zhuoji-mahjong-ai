@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "独山麻将·单机",
-  "version": "1.0.0",
+  "productName": "独山麻将",
+  "version": "1.2.0",
   "identifier": "com.zhuoji.mahjong",
   "build": {
     "frontendDist": "../src"
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "独山麻将 · 单机离线",
+        "title": "独山麻将",
         "width": 960,
         "height": 540,
         "minWidth": 320,
@@ -38,7 +38,7 @@
       "icons/icon.ico"
     ],
     "category": "Game",
-    "shortDescription": "独山麻将 · 单机离线",
+    "shortDescription": "独山麻将",
     "longDescription": "完全离线的独山麻将 AI 对局：规则、结算与 AI 推理全部在设备内用 Rust 完成，断网可玩，无需服务端。",
     "android": {
       "minSdkVersion": 24

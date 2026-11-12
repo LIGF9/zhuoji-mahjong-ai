@@ -1468,8 +1468,7 @@ html.mob .jirow { flex-direction: column; gap: 4px; }
 .bootcard { width: min(680px, 94vw); max-height: 96vh; overflow-y: auto;
   background: rgba(6, 20, 12, .92); border: 2px solid var(--gold-dim);
   border-radius: 18px; padding: 28px 32px; }
-.bootcard h1 { color: var(--gold); font-size: 30px; text-align: center; font-weight: normal; letter-spacing: 8px; margin-bottom: 4px; }
-.bootcard .tagline { text-align: center; color: #b9c9ae; font-size: 13px; margin-bottom: 22px; letter-spacing: 2px; }
+.bootcard h1 { color: var(--gold); font-size: 30px; text-align: center; font-weight: normal; letter-spacing: 8px; margin-bottom: 4px; }.bootcard .tagline { text-align: center; color: #b9c9ae; font-size: 13px; margin-bottom: 22px; letter-spacing: 2px; }
 .opp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
 /* 2026-10-12 压缩：标题行 + 下拉各占一行 → 同一行（手机上 3 个对手省 3 行高度）。
    下拉宽度自适应且可收缩（min-width:0），刚好显示选中文字即可。 */
@@ -1495,7 +1494,6 @@ html.mob .bootjirow { flex-direction: row; }
   padding: 12px 58px; border-radius: 12px; border: none; cursor: pointer; color: #173520;
   background: linear-gradient(180deg, #f3cd6e, #d9a032); box-shadow: 0 4px 16px rgba(217,160,50,.4); }
 #startBtn:hover { filter: brightness(1.08); }
-.boot-note { margin-top: 14px; font-size: 12px; color: #8fa284; text-align: center; line-height: 1.7; }
 
 /* toast —— 2026-10-12 改位：原先 top:22% 落在**对家弃牌区**上方，用户要求挪到
    「我的弃牌区与我的手牌区之间」。基准取 #me-row 底边（--me-row-bottom）+ 手牌高，
@@ -2116,10 +2114,14 @@ select:focus, input:focus { outline: none; border-color: rgba(243, 202, 108, .75
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .35)); }
 .bhead .tagline { text-align: left; color: var(--ink-3); font-size: 11.5px; letter-spacing: 1.2px; margin: 4px 0 0; }
 .bgrid {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 12px;
-  align-items: start;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.02fr); gap: 12px;
+  align-items: stretch;   /* 右栏拉满左栏高度，开始按钮才能贴底（2026-11-12 布局改版） */
 }
 .bcol { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* 左栏玩家卡：撑满整列，四行球员均匀铺开；右栏底下留白由按钮吃掉 */
+.bpanel.bplayers { display: flex; flex-direction: column; }
+.bpanel.bplayers .picklist { flex: 1 1 auto; align-content: space-between; }
+.bcol #startBtn { width: 100%; margin-top: auto; }
 .bpanel {
   border: 1px solid var(--line-soft); border-radius: 14px; padding: 12px 14px 13px;
   background: rgba(255, 255, 255, .028);
@@ -2153,13 +2155,6 @@ select:focus, input:focus { outline: none; border-color: rgba(243, 202, 108, .75
 .bpanel.bwide .bootjirow select { width: 100%; min-width: 0; }
 .bpanel .bootjirow .jientry { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
 .bpanel select { width: 100%; }
-.bfoot {
-  position: sticky; bottom: -20px; z-index: 3;
-  margin: 12px -26px -20px; padding: 12px 26px 20px;
-  display: flex; align-items: center; gap: 14px;
-  background: linear-gradient(180deg, rgba(6, 20, 13, 0), rgba(6, 20, 13, .92) 34%, rgba(6, 20, 13, .99));
-  border-top: 1px solid rgba(243, 202, 108, .12);
-}
 #startBtn {
   flex: 0 0 auto; margin: 0; font-size: 18px; font-weight: 700; letter-spacing: 5px;
   padding: 13px 46px; border-radius: 14px; color: #3a2708;
@@ -2170,7 +2165,6 @@ select:focus, input:focus { outline: none; border-color: rgba(243, 202, 108, .75
 }
 #startBtn:hover { filter: brightness(1.05); transform: translateY(-1px); }
 #startBtn:active { transform: scale(.98); }
-.boot-note { margin: 0; flex: 1 1 auto; text-align: left; font-size: 11.5px; color: var(--ink-3); line-height: 1.6; }
 
 /* ---------- 门禁层 ---------- */
 dialog#gate { background: radial-gradient(ellipse at center, #16402b 0%, #07180f 76%); }
@@ -2256,13 +2250,13 @@ html.mob .sndrow { grid-template-columns: var(--sndlbl-w) auto minmax(0, 1fr); }
 html.mob .numrow .chip { min-height: 30px; padding: 5px 11px; }
 
 /* 开局页：单列堆叠，CTA 固定可见 */
-html.mob .bootcard { padding: 14px 15px 13px; border-radius: 16px; }
-html.mob .bhead { gap: 10px; margin-bottom: 10px; justify-content: flex-start; }
+html.mob .bootcard { padding: 10px 14px 9px; border-radius: 16px; }
+html.mob .bhead { gap: 10px; margin-bottom: 6px; justify-content: flex-start; }
 html.mob .bhead .bmark { width: 34px; height: 34px; font-size: 19px; border-radius: 9px; }
 html.mob .bhead h1 { font-size: 19px; letter-spacing: 3px; }
 html.mob .bhead .tagline { font-size: 10px; letter-spacing: .6px; }
-html.mob .bgrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 8px; align-items: start; }
-html.mob .bcol { gap: 8px; }
+html.mob .bgrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 6px; align-items: start; }
+html.mob .bcol { gap: 6px; }
 html.mob .bpanel { padding: 9px 10px 10px; border-radius: 12px; }
 html.mob .bpanel > h3 { font-size: 10.5px; letter-spacing: 1.6px; margin-bottom: 7px; }
 html.mob .bpanel .bootrow { grid-template-columns: 58px minmax(0, 1fr); gap: 5px 6px; margin-bottom: 5px; font-size: 11px; }
@@ -2282,20 +2276,15 @@ html.mob .bpanel.bwide .bootjirow select { width: 100%; min-width: 0; font-size:
 html.mob .bwide .jithumb { width: 18px; height: 27px; }
 html.mob .bwide .jiadd { width: 18px; height: 27px; font-size: 14px; }
 html.mob .bpanel > h3 { margin-bottom: 6px; }
-html.mob .pickent { padding: 3px 6px; border-radius: 9px; gap: 6px; }
+html.mob .pickent { padding: 2px 6px; border-radius: 9px; gap: 6px; }
 html.mob .pickent .pickthumb { width: 26px; height: 26px; border-radius: 7px; }
 html.mob .pickent .pickname { font-size: 10.5px; line-height: 1.25; }
 html.mob .pickent .pickcol { gap: 2px; }
 html.mob .pickmodel,
 html.mob .bpanel select.pickmodel { min-height: 22px; font-size: 10px; padding: 1px 4px; line-height: 1.3; }
-html.mob .bpanel .picklist { gap: 4px; }
+html.mob .bpanel .picklist { gap: 3px; }
 html.mob .pickrow { gap: 6px; }
-html.mob .bfoot {
-  margin: 9px -15px -13px; padding: 9px 15px calc(11px + env(safe-area-inset-bottom, 0px));
-  bottom: -13px; gap: 10px;
-}
-html.mob #startBtn { font-size: 16px; padding: 11px 34px; letter-spacing: 4px; width: auto; }
-html.mob .boot-note { font-size: 10.5px; }
+html.mob #startBtn { font-size: 16px; padding: 9px 30px; letter-spacing: 4px; width: 100%; }
 
 /* 结算：按钮贴底、面板留白 */
 html.mob #res-actions button { padding: 11px 20px; border-radius: 11px; }
@@ -3032,7 +3021,7 @@ html:not(.mob) .seat-top .melds  { --tm-w: calc(28px * 1.3); --tm-h: calc(44px *
    第十轮修订（2026-11-03 晚，用户反馈）
    ------------------------------------------------------------------
    A) 回放流水行默认隐藏：抽屉加「流水」开关（html.rp-flow 时才显示 #rp-now）。
-   B) 教练面板：角标换幺鸡牌面（红中名不副实）、删「拖动」提示；
+   B) 教练面板：角标换幺鸡牌面（本玩法只有万/条/筒，不用别的牌面）、删「拖动」提示；
       「局面估值 +0.046（正数偏有利）· 模型：xxx」简化为 优势/劣势 徽标
       （正=绿 优势 / 负=红 劣势），精确估值挪到悬浮 title；
       删「来自：xxx」行（仅策略错位警告保留——那是事故提示）。
@@ -4190,7 +4179,7 @@ html.mob .scoregrid input { width: 42px; }
 <div id="boot" class="on2">
   <div class="bootcard">
     <div class="bhead">
-      <!-- 图标用幺鸡（一条）牌面：独山麻将没有红中，用红中当图标名不副实 -->
+      <!-- 图标用幺鸡（一条）牌面：本玩法只有万/条/筒，不用其他牌面当图标 -->
       <div class="bmark"><img src="/assets/tiles/1条.png" alt="幺鸡"></div>
       <div>
         <h1>独山麻将（捉鸡）</h1>
@@ -4198,6 +4187,13 @@ html.mob .scoregrid input { width: 42px; }
       </div>
     </div>
     <div class="bgrid">
+      <!-- 2026-11-12 用户口径：玩家模型在左、对局设置与鸡牌在右、开始按钮贴右下；
+           去掉底部横条与「大师模型已就绪」提示，整页不再需要上下滚动。 -->
+      <section class="bpanel bplayers">
+        <h3>玩家与模型</h3>
+        <!-- 与设置面板的「玩家与模型」完全一致：头像 + 名字 + 模型下拉 -->
+        <div class="picklist" id="boot-players"></div>
+      </section>
       <div class="bcol">
         <section class="bpanel">
           <h3>对局设置</h3>
@@ -4248,16 +4244,8 @@ html.mob .scoregrid input { width: 42px; }
             </select>
           </div>
         </section>
+        <button id="startBtn">开始对局</button>
       </div>
-      <section class="bpanel">
-        <h3>玩家与模型</h3>
-        <!-- 与设置面板的「玩家与模型」完全一致：头像 + 名字 + 模型下拉 -->
-        <div class="picklist" id="boot-players"></div>
-      </section>
-    </div>
-    <div class="bfoot">
-      <div class="boot-note" id="boot-note">加载中…</div>
-      <button id="startBtn">开始对局</button>
     </div>
   </div>
 </div>
@@ -5991,14 +5979,8 @@ async function boot() {
   bindExtraJi("boot-extra-ji"); bindExtraJi("set-extra-ji");
   renderExtraJi("boot-extra-ji"); renderExtraJi("set-extra-ji");
   el("speed").value = String(SET.speed);   // 开局页节奏沿用上次设置（与设置面板同源）
-  const note = el("boot-note");
-  if (META.master) {
-    const mi = META.master_info || {};
-    const tag = mi.label ? `${mi.label} · ${META.master}.pt` : `${META.master}.pt`;
-    note.textContent = `大师模型已就绪（${tag}）——通行证/冲锋鸡/横鸡/热炮/包鸡 全部生效`;
-  } else {
-    note.textContent = "⚠️ 大师模型训练中，暂时由进阶模型（rl.pt）代班";
-  }
+  // 2026-11-12 用户口径：起始页不再显示「大师模型已就绪（xxx.pt）…」这类内部状态文案，
+  // 模型选择本身已在左侧「玩家与模型」里，底部横条整体移除。
   // 恢复上局
   const prev = localStorage.getItem("dushan_sid");
   if (prev) {

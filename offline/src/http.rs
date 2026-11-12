@@ -326,6 +326,11 @@ fn write_resp(s: &mut TcpStream, code: u16, ctype: &str, cache: &str, body: &[u8
 fn handle(mut s: TcpStream, app: &Arc<Mutex<App>>) {
     let Some((method, target, raw)) = read_request(&mut s) else { return };
     let (path, q) = split_target(&target);
+    // 2026-11-12：桌面服务端「双击即用」后，用户看不到浏览器 Network，
+    // 排查问题时需要一条请求流水。默认静默，DUSHAN_HTTP_LOG=1 才打印。
+    if std::env::var_os("DUSHAN_HTTP_LOG").is_some() {
+        eprintln!("[http] {method} {target}");
+    }
     let body: Value = if raw.is_empty() {
         Value::Null
     } else {
@@ -348,7 +353,16 @@ fn handle(mut s: TcpStream, app: &Arc<Mutex<App>>) {
 /// 在 `127.0.0.1:port` 起服务；`port=0` 时由系统分配并返回实际端口。
 /// 服务跑在独立线程，函数立即返回，供 Tauri 把 WebView 导航到该端口。
 pub fn serve(port: u16, app: Arc<Mutex<App>>) -> std::io::Result<u16> {
-    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    serve_on("127.0.0.1", port, app)
+}
+
+/// 在指定地址起服务（2026-11-12）。
+///
+/// 手机端离线内核只用 `127.0.0.1`（不对外暴露）；桌面版/单文件服务端要**同时**
+/// 给本机宽屏页面和同一 Wi-Fi 下的手机提供后端，必须绑 `0.0.0.0`。
+/// 逻辑与 `serve` 完全一致，只是换了 bind 地址。
+pub fn serve_on(host: &str, port: u16, app: Arc<Mutex<App>>) -> std::io::Result<u16> {
+    let listener = TcpListener::bind((host, port))?;
     let actual = listener.local_addr()?.port();
     std::thread::Builder::new()
         .name("offline-http".into())

@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
@@ -54,25 +56,58 @@ class MainActivity : TauriActivity() {
         touchKeepScreenOn()
 
         // TauriActivity.handleBackNavigation=false → 系统返回键默认直接 finish。
-        // 自己接一层：只要当前不在选择页，就把 WebView 导回选择页。
+        // 自己接一层：只要当前不在选择页，就回选择页（先试 goBack，再兜底 loadUrl）。
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                val wv = gameWebView
-                val url = wv?.url.orEmpty()
-                val onChooser = url.isEmpty() ||
-                    url.contains("tauri.localhost") ||
-                    url.startsWith("about:blank")
-                if (!onChooser && wv != null) {
+                // 2026-11-12 修复「在线模式返回直接退 App」：
+                // Tauri 导航到局域网地址时可能重建 WebView，缓存的 gameWebView 会 detach
+                // （url 读到空串 → 被误判为「已在选择页」→ finish）。这里每次现取。
+                val wv = currentWebView()
+                if (wv == null) {
+                    exitApp()
+                    return
+                }
+                val url = wv.url.orEmpty()
+                val onChooser = url.startsWith(CHOOSER_URL) || url.startsWith("about:blank")
+                if (!onChooser) {
+                    // 游戏页 / 在线网页版（可能是任意局域网地址）→ 直接回选择页首屏。
+                    // 不走 goBack：外链导航后历史里是「选择页 → 在线面板 → 外链」，
+                    // 后退只会退到在线面板，用户要按两次才回得去。
                     wv.loadUrl(CHOOSER_URL)
                     wv.clearHistory()
-                } else {
-                    // 已在首屏 → 交给系统默认（退出应用）
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
-                    isEnabled = true
+                    return
                 }
+                // 已在选择页：面板级返回由启动页的 history.pushState/popstate 接管
+                // （在线面板 → 选择页）；已经在最外层才退出应用。
+                if (wv.canGoBack()) {
+                    wv.goBack()
+                    return
+                }
+                exitApp()
+            }
+
+            private fun exitApp() {
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+                isEnabled = true
             }
         })
+    }
+
+    /** 取当前真正挂载的 WebView：Tauri 换页后旧引用可能已从视图树 detach。 */
+    private fun currentWebView(): WebView? {
+        val found = ArrayList<WebView>(2)
+        fun walk(v: View) {
+            if (v is WebView) {
+                found.add(v)
+                return
+            }
+            if (v is ViewGroup) {
+                for (i in 0 until v.childCount) walk(v.getChildAt(i))
+            }
+        }
+        walk(window.decorView)
+        return found.lastOrNull() ?: gameWebView
     }
 
     /** Wry 在 WebView 建好时回调；保存引用供返回键导航使用。 */
