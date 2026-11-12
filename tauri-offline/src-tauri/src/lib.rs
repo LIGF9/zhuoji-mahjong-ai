@@ -402,7 +402,21 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(engine)
-        .setup(move |_app| {
+        .setup(move |app_handle| {
+            // 对局记录 / 回放要落到**应用私有目录**（安卓没有 $HOME，内核自己
+            // 猜不出可写路径）。必须在起服务之前设好，否则第一手结算就可能
+            // 写到不可写目录、记录直接丢。
+            {
+                use tauri::Manager;
+                match app_handle.path().app_data_dir() {
+                    Ok(dir) => {
+                        let hist = dir.join("history");
+                        offline_core::records::set_dir(&hist);
+                        println!("[offline] 对局记录目录 {}", hist.display());
+                    }
+                    Err(e) => eprintln!("[offline] 取应用数据目录失败（记录可能不可用）：{e}"),
+                }
+            }
             // 后台线程：加载两个 ONNX（tract 优化 + 编译）→ 绑定 127.0.0.1:0 → 起服务。
             // 用 0 让系统分配端口，避免与设备上其他进程抢固定端口。
             std::thread::Builder::new()

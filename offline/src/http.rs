@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 
 use crate::assets;
 use crate::policy::Net;
+use crate::records;
 use crate::session::{Nets, Session};
 use crate::view;
 
@@ -61,6 +62,8 @@ impl App {
 enum Resp {
     Json(u16, Value),
     Static(&'static [u8], &'static str),
+    /// 附件下载（对局记录导出）：`(body, content_type, filename)`
+    Download(Vec<u8>, &'static str, String),
     Empty(u16),
 }
 
@@ -99,16 +102,6 @@ fn split_target(target: &str) -> (&str, &str) {
     }
 }
 
-fn empty_stats() -> Value {
-    json!({"ok": true, "all_time": {
-        "games": 0, "zimo": 0, "songhu_games": 0, "score": 0,
-        "chongfeng_games": 0, "ji_discard_games": 0, "baoji_games": 0,
-        "tenpai_bigfan_games": 0, "win_bigfan_games": 0,
-        "huang_games": 0, "huang_noten_games": 0,
-        "solo_games": 0, "solo_win_games": 0, "solo_score": 0
-    }})
-}
-
 fn route(app: &Arc<Mutex<App>>, method: &str, path: &str, q: &str, body: &Value) -> Resp {
     let mut guard = match app.lock() {
         Ok(g) => g,
@@ -141,10 +134,28 @@ fn route(app: &Arc<Mutex<App>>, method: &str, path: &str, q: &str, body: &Value)
                     None => Resp::Json(404, json!({"ok": false, "error": "会话不存在"})),
                 }
             }
-            "/api/history" => Resp::Json(200, json!({"ok": true, "records": []})),
-            "/api/history_export" => Resp::Json(200, json!({"exported_at": "", "count": 0, "records": []})),
-            "/api/replay" => Resp::Json(200, json!({"ok": false, "error": "离线单机版不保存回放"})),
-            "/api/stats" => Resp::Json(200, empty_stats()),
+            // 对局记录 / 数据统计 / 回放（2026-11-12 补齐：此前是空实现，
+            // 界面上两个面板永远空白）
+            "/api/history" => {
+                let n = query_get(q, "limit")
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(30);
+                Resp::Json(200, json!({"ok": true, "records": records::load(n)}))
+            }
+            "/api/history_export" => {
+                let fmt = query_get(q, "format").unwrap_or_else(|| "json".into());
+                let fmt = if fmt.eq_ignore_ascii_case("csv") { "csv" } else { "json" };
+                let (body, ctype, fname) = records::export(fmt);
+                Resp::Download(body, ctype, fname)
+            }
+            "/api/replay" => {
+                let rid = query_get(q, "rid").unwrap_or_default();
+                match records::replay(&rid) {
+                    Some(rp) => Resp::Json(200, json!({"ok": true, "replay": rp})),
+                    None => Resp::Json(200, json!({"ok": false, "error": "这一局的回放已不在缓存中"})),
+                }
+            }
+            "/api/stats" => Resp::Json(200, records::stats()),
             _ => static_resp(path),
         };
     }
@@ -153,6 +164,11 @@ fn route(app: &Arc<Mutex<App>>, method: &str, path: &str, q: &str, body: &Value)
         return match path {
             "/api/new" => {
                 let seed = a.next_seed();
+                // 本地时区（分钟，JS `getTimezoneOffset()` 同号）：记录里的
+                // 「时间」列要显示本地时间，std 只有 UTC，只能由前端告诉一次。
+                if let Some(tz) = body.get("tz").and_then(|x| x.as_i64()) {
+                    records::set_tz_minutes(tz as i32);
+                }
                 // 页面 #my-seat 的「随机」是 value="-1"（不是缺字段），Python 侧按
                 // 「不在 0..4 就 None → 随机」处理。这里以前用 as_u64 解析，-1 直接
                 // 落到 unwrap_or(0) —— 选「随机」永远坐 0 号（东/先手），与线上不一致。
@@ -233,8 +249,62 @@ fn route(app: &Arc<Mutex<App>>, method: &str, path: &str, q: &str, body: &Value)
                 };
                 Resp::Json(200, json!({"ok": true, "speed": applied}))
             }
-            "/api/history_delete" => Resp::Json(200, json!({"ok": true, "removed_rec": 0, "skipped": []})),
-            "/api/history_clear" => Resp::Json(200, json!({"ok": true, "removed_rec": 0})),
+            // 删除对局记录（单条 `{ln, rid}` 或批量 `{lns:[], rids:[]}`）。
+            // 记录文件是**逐行现算统计**的唯一来源，删完统计自动跟着少一局。
+            "/api/history_delete" => {
+                let mut keys: Vec<records::Key> = Vec::new();
+                if let (Some(lns), Some(rids)) = (
+                    body.get("lns").and_then(|x| x.as_array()),
+                    body.get("rids").and_then(|x| x.as_array()),
+                ) {
+                    // 批量：ln 与 rid 按下标配对（前端两边都取自同一批勾选行）
+                    for (i, ln) in lns.iter().enumerate() {
+                        let rid = rids
+                            .get(i)
+                            .and_then(|x| x.as_str())
+                            .map(str::to_string)
+                            .filter(|s| !s.is_empty());
+                        match ln.as_i64().or_else(|| {
+                            ln.as_str().and_then(|s| s.parse::<i64>().ok())
+                        }) {
+                            Some(v) => keys.push((Some(v), rid)),
+                            None => {
+                                if rid.is_some() {
+                                    keys.push((None, rid));
+                                }
+                            }
+                        }
+                    }
+                    // 勾选行里没有 rid 的（老记录）→ 只按行号删
+                    if rids.len() > lns.len() {
+                        for r in rids.iter().skip(lns.len()) {
+                            if let Some(s) = r.as_str() {
+                                keys.push((None, Some(s.to_string())));
+                            }
+                        }
+                    }
+                } else {
+                    let ln = body
+                        .get("ln")
+                        .and_then(|x| x.as_i64())
+                        .or_else(|| body.get("ln").and_then(|x| x.as_str()).and_then(|s| s.parse().ok()));
+                    let rid = body
+                        .get("rid")
+                        .and_then(|x| x.as_str())
+                        .map(str::to_string)
+                        .filter(|s| !s.is_empty());
+                    if ln.is_some() || rid.is_some() {
+                        keys.push((ln, rid));
+                    }
+                }
+                if keys.is_empty() {
+                    Resp::Json(200, json!({"ok": false, "removed_rec": 0,
+                        "skipped": [], "error": "缺少定位参数"}))
+                } else {
+                    Resp::Json(200, records::delete(&keys))
+                }
+            }
+            "/api/history_clear" => Resp::Json(200, records::clear()),
             "/api/quit" => Resp::Json(200, json!({"ok": true})),
             _ => Resp::Json(404, json!({"ok": false, "error": "not found"})),
         };
@@ -343,6 +413,18 @@ fn handle(mut s: TcpStream, app: &Arc<Mutex<App>>) {
         }
         Resp::Static(bytes, mime) => {
             write_resp(&mut s, 200, mime, cache_for(mime), bytes);
+        }
+        Resp::Download(body, ctype, fname) => {
+            // 导出走浏览器原生下载；文件名是 ASCII，不需要 RFC 5987 编码
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\n\
+                 Content-Disposition: attachment; filename=\"{fname}\"\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = s.write_all(head.as_bytes());
+            let _ = s.write_all(&body);
+            let _ = s.flush();
         }
         Resp::Empty(code) => {
             write_resp(&mut s, code, "text/plain", "no-store", &[]);

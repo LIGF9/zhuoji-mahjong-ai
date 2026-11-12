@@ -6044,7 +6044,10 @@ el("startBtn").onclick = async () => {
   /* hold=true：请服务端把**第一手**也先扣住 —— 客户端要等「本局鸡牌」特效播完才放行
      （见 maybeKaijuFx / setFlowHold）。特效关掉时不带这个参数，牌局立刻开始。 */
   const r = await api("/api/new", { opponents: specs, my_seat: isNaN(ms) ? null : ms, speed: SET.speed,
-    names, rules: collectRules(), hold: kaijuFxOn() });
+    names, rules: collectRules(), hold: kaijuFxOn(),
+    // 本地时区偏移（分钟，东八区 = -480）：离线内核写对局记录时用它把 UTC
+    // 换成本地时间；网页版服务端直接用系统时区，忽略这个字段。
+    tz: new Date().getTimezoneOffset() });
   if (!r.ok) { toast("开局失败：" + (r.error || "")); return; }
   SID = r.sid; MY_SEAT = r.my_seat;
   SERVER_HOLD = false;

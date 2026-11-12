@@ -19,6 +19,7 @@ pub mod coach;
 pub mod search;
 pub mod rules_cfg;
 pub mod session;
+pub mod records;
 pub mod assets;
 pub mod http;
 pub mod bench;

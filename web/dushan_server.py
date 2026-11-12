@@ -2349,7 +2349,10 @@ class Session:
             "pending": self.state.get("pending"),
             "events": list(self.events)[-160:],
             "scores": [round(float(self.cum[p]), 2) for p in range(4)],
-            "stats": {str(p): self.stats[p] for p in range(4)},
+            # 统计按**相对座位**下发：players[] 是 rel 序，统计面板「本会话四家」
+            # 也按 rel 取。旧实现给绝对座位，my_seat≠0 时四家的数字整表错位
+            # （与 offline-core 的 Session::snapshot 同口径，2026-11-12）。
+            "stats": {str(rel): self.stats[(me + rel) % 4] for rel in range(4)},
             "result": self._result_payload(game, players) if over else None,
             "error": self.error,
         }

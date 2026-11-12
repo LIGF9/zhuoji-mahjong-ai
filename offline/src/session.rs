@@ -78,6 +78,11 @@ pub struct Session {
     pub stats: Value,
     pub opp_think: Value,
     pub error: Option<String>,
+    /// 本手是否请求过大师推荐（`/api/hint`）。「本人胡牌 / 本人累计」两个统计
+    /// 项的分母是「全程没开过推荐的局」（`solo_games`），与线上同口径。
+    pub hint_used: bool,
+    /// 发牌快照（27 牌种紧凑编码，每家一个串）：回放的**第 0 帧**。
+    pub deal_packed: [String; 4],
     /// 对手出牌节奏（秒）：相邻两个 AI 动作之间的最小间隔，0 = 瞬发。
     pub speed: f64,
     /// 下一次允许推进 AI 的单调时刻。`/api/speed` 改节奏时立即重算，
@@ -118,6 +123,90 @@ fn arr_i64(v: &Value, k: &str) -> Vec<i64> {
         .and_then(|x| x.as_array())
         .map(|a| a.iter().filter_map(|x| x.as_i64()).collect())
         .unwrap_or_default()
+}
+
+/// 27 个牌种各映射 1 个字符（与线上 `pack_hand` 同一张表）。
+/// 一手 13 张 = 13 字符，四家 ≈ 55 字节 —— 回放逐帧带手牌也不会把文件撑爆。
+pub fn pack_hand(c: &[u8; 27]) -> String {
+    const CH: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut out = String::with_capacity(14);
+    for (t, &n) in c.iter().enumerate() {
+        for _ in 0..n {
+            out.push(CH[t] as char);
+        }
+    }
+    out
+}
+
+/// 本会话四家的计数桶（`/api/state` 的 `stats`，统计面板「本会话四家」用）。
+fn new_stats() -> Value {
+    let mut o = Map::new();
+    for p in 0..4 {
+        o.insert(p.to_string(), json!({
+            "games": 0, "wins": 0, "tsumo": 0, "ron": 0, "deal_in": 0,
+            "chongfeng": 0, "hengji": 0, "baoji": 0, "baoji_pay": 0.0,
+            "huang": 0, "tenpai_huang": 0, "score": 0.0
+        }));
+    }
+    Value::Object(o)
+}
+
+fn bump(stats: &mut Value, p: usize, key: &str, by: f64) {
+    let Some(o) = stats.get_mut(p.to_string()).and_then(|x| x.as_object_mut()) else {
+        return;
+    };
+    let cur = o.get(key).and_then(|x| x.as_f64()).unwrap_or(0.0);
+    o.insert(key.to_string(), json!(cur + by));
+}
+
+/// 某个座位（可先打掉 `drop` 那张）的等待张与**非平胡**牌型集合。
+///
+/// 与线上 `Session._make_record` 里的 `game.ting_info(p, drop=...)` 同义，但
+/// **两边的终局手牌口径不同**：Python 结算后赢家手牌是 14 张（胡牌张并进去了），
+/// 需要先扣；Rust `settle_win` 末尾会把胡牌张「复原」回原位，手牌本来就是
+/// 13 张（`(4-副露)*3+1`）。所以这里按**张数**判断：多一张才扣，不多不扣 ——
+/// 只按 drop 硬扣会把赢家算成 12 张、等待张直接算空（记录里看不出「听什么」）。
+fn waits_of(g: &Game, p: usize, drop: Option<u8>, ft: &FanTable) -> (Vec<u8>, Vec<String>) {
+    let n_melds = g.melds[p].len();
+    if n_melds > 4 {
+        return (Vec::new(), Vec::new());
+    }
+    let expect = (4 - n_melds) * 3 + 1;
+    let mut h = g.hands[p];
+    let n = tiles::counts_sum(&h) as usize;
+    if n == expect + 1 {
+        if let Some(d) = drop {
+            if (d as usize) < 27 && h[d as usize] > 0 {
+                h[d as usize] -= 1;
+            }
+        }
+    }
+    if tiles::counts_sum(&h) as usize != expect {
+        return (Vec::new(), Vec::new());
+    }
+    let mut waits = Vec::new();
+    let mut types: Vec<String> = Vec::new();
+    for t in 0..27u8 {
+        if h[t as usize] >= 4 {
+            continue;
+        }
+        let mut c = h;
+        c[t as usize] += 1;
+        if dushan_engine::fan::is_winning_hand(&c, &g.melds[p], ft) {
+            waits.push(t);
+            for ty in dushan_engine::fan::win_type_set(&c, &g.melds[p], Some(t), ft) {
+                if ty != dushan_engine::fan::PING_HU {
+                    // 记录里存中文名（线上 ting_info 给的就是「大对子 / 清一色」），
+                    // 英文常量只在引擎内部用；`tenpai_types` 会进导出/统计口径。
+                    let cn = settle::fan_cn_of(ty);
+                    if !types.iter().any(|x| *x == cn) {
+                        types.push(cn);
+                    }
+                }
+            }
+        }
+    }
+    (waits, types)
 }
 
 impl Session {
@@ -167,6 +256,12 @@ impl Session {
         Rng::new(seed).shuffle(&mut wall);
         let dealer = (seed % 4) as u8;
         let game = Game::new_with_wall(wall, dealer, cfg, &ft);
+        let deal_packed = [
+            pack_hand(&game.hands[0]),
+            pack_hand(&game.hands[1]),
+            pack_hand(&game.hands[2]),
+            pack_hand(&game.hands[3]),
+        ];
         Self {
             game,
             cfg,
@@ -185,9 +280,11 @@ impl Session {
             seq: 0,
             pending: None,
             result: None,
-            stats: json!({"0": {}, "1": {}, "2": {}, "3": {}}),
+            stats: new_stats(),
             opp_think: json!({}),
             error: None,
+            hint_used: false,
+            deal_packed,
             speed: 0.5,
             next_ai_at: Instant::now(),
             force_end: false,
@@ -212,8 +309,20 @@ impl Session {
         if seat < 0 { -1 } else { (seat - self.me as i64 + 4) % 4 }
     }
 
+    /// 当前牌面的「逐帧快照」三元组：`(四家手牌张数, 四家手牌紧凑编码, 巡号)`。
+    /// 回放器按这三项画别家的牌背 / 我方的牌面，并给「跳到第 N 巡」做刻度。
+    fn frame_fields(&self) -> (Value, Value, i64) {
+        let hc: Vec<u32> = (0..4)
+            .map(|p| tiles::counts_sum(&self.game.hands[p]))
+            .collect();
+        let hands: Vec<String> = (0..4).map(|p| pack_hand(&self.game.hands[p])).collect();
+        let discarded: usize = self.game.discards.iter().map(|d| d.len()).sum();
+        (json!(hc), json!(hands), (discarded / 4) as i64 + 1)
+    }
+
     fn push_event(&mut self, kind: &str, seat: i64, tile: Option<u8>, text: String) {
         self.seq += 1;
+        let (hc, hands, r) = self.frame_fields();
         self.events.push(json!({
             "t": 0.0,
             "hand": self.hand_index,
@@ -223,6 +332,9 @@ impl Session {
             "text": text,
             "tile": tile,
             "ctag": "",
+            "hc": hc,
+            "hands": hands,
+            "r": r,
         }));
         if self.events.len() > 600 {
             self.events.remove(0);
@@ -324,6 +436,14 @@ impl Session {
             self.events[i]["ctag"] =
                 json!(view::ji_tag_cn(self.game.ji_tag_of_last[seat as usize]));
         }
+        // 1b) 这条事件是**动作前**推的（要先用旧牌面判鸡牌），回放的逐帧快照
+        //     必须换成动作生效后的状态，否则回放里每次出牌都少一张、越放越歪。
+        if let Some(i) = ev_idx {
+            let (hc, hands, r) = self.frame_fields();
+            self.events[i]["hc"] = hc;
+            self.events[i]["hands"] = hands;
+            self.events[i]["r"] = json!(r);
+        }
         // 2) 横鸡轮开/收事件：与线上 `_emit_hengji` 同口径，流水/toast 才有
         //    「开出横鸡轮 · X」提示。掩码变化的每一位对应一个独立鸡种轮。
         let changed = hj_before ^ self.game.hengji_open;
@@ -388,8 +508,393 @@ impl Session {
             self.cum[p] = round2(self.cum[p] + deltas.get(p).copied().unwrap_or(0.0));
         }
         self.result = Some(payload);
+        self.update_stats(&res);
+        // 2026-11-12：对局记录 / 数据统计 / 回放落盘（此前离线版是空实现，
+        // 面板永远空白）。「结束本局」提前终止与线上 abort 同义 —— 不计分、
+        // 不入历史，所以 force_end 的局只更新画面，不写 records.jsonl。
+        if !self.force_end {
+            self.persist_hand(&res);
+        }
         let how = res.get("type").and_then(|x| x.as_str()).unwrap_or("流局");
         self.push_event("result", -1, None, format!("本局结算：{how}"));
+    }
+
+    // -- 历史 / 统计 / 回放（移植自 web/dushan_server.py）--------------------
+
+    /// 本会話四家的计数（`/api/state` 的 `stats`，统计面板「本会话四家」）。
+    /// 与线上 `_update_stats` 同口径：**按绝对座位累加**，输出到视图时再转
+    /// 相对座位（`players[]` 是相对座位序）。
+    fn update_stats(&mut self, res: &Value) {
+        let deltas = arr_f64(res, "deltas");
+        for p in 0..4 {
+            bump(&mut self.stats, p, "games", 1.0);
+            bump(&mut self.stats, p, "score", round2(deltas.get(p).copied().unwrap_or(0.0)));
+        }
+        let detail: Vec<Value> = res
+            .get("detail")
+            .and_then(|x| x.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let seat_label = |d: &Value| -> (i64, String, f64) {
+            let a = d.as_array();
+            let seat = a.and_then(|x| x.first()).and_then(|x| x.as_i64()).unwrap_or(-1);
+            let label = a
+                .and_then(|x| x.get(1))
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let val = a.and_then(|x| x.get(3)).and_then(|x| x.as_f64()).unwrap_or(0.0);
+            (seat, label, val)
+        };
+
+        if res.get("type").and_then(|x| x.as_str()) == Some("win") {
+            let winners: Vec<i64> = {
+                let w = arr_i64(res, "winners");
+                if w.is_empty() {
+                    res.get("winner").and_then(|x| x.as_i64()).into_iter().collect()
+                } else {
+                    w
+                }
+            };
+            let tsumo = res.get("is_tsumo").and_then(|x| x.as_bool()).unwrap_or(false);
+            let loser = res.get("loser").and_then(|x| x.as_i64());
+            for w in &winners {
+                if (0..4).contains(w) {
+                    let p = *w as usize;
+                    bump(&mut self.stats, p, "wins", 1.0);
+                    if tsumo {
+                        bump(&mut self.stats, p, "tsumo", 1.0);
+                    } else if loser.is_some() {
+                        bump(&mut self.stats, p, "ron", 1.0);
+                    }
+                }
+            }
+            if !tsumo {
+                if let Some(l) = loser.filter(|x| (0..4).contains(x)) {
+                    bump(&mut self.stats, l as usize, "deal_in", 1.0);
+                }
+            }
+            let mut baoji_seen: Vec<usize> = Vec::new();
+            for d in &detail {
+                let (seat, label, _v) = seat_label(d);
+                if !(0..4).contains(&seat) {
+                    continue;
+                }
+                let p = seat as usize;
+                match label.as_str() {
+                    "冲锋鸡" => bump(&mut self.stats, p, "chongfeng", 1.0),
+                    "横鸡" => bump(&mut self.stats, p, "hengji", 1.0),
+                    "包鸡" if !baoji_seen.contains(&p) => {
+                        baoji_seen.push(p);
+                        bump(&mut self.stats, p, "baoji", 1.0);
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            let tenpai: Vec<i64> = arr_i64(res, "tenpai");
+            for p in 0..4 {
+                bump(&mut self.stats, p, "huang", 1.0);
+                if tenpai.contains(&(p as i64)) {
+                    bump(&mut self.stats, p, "tenpai_huang", 1.0);
+                }
+            }
+            let mut baoji_seen: Vec<usize> = Vec::new();
+            for d in &detail {
+                let (seat, label, val) = seat_label(d);
+                if !(0..4).contains(&seat) {
+                    continue;
+                }
+                let p = seat as usize;
+                if label == "包鸡" || label == "包大牌面" {
+                    bump(&mut self.stats, p, "baoji_pay", val.abs());
+                }
+                if label == "包鸡" && !baoji_seen.contains(&p) {
+                    baoji_seen.push(p);
+                    bump(&mut self.stats, p, "baoji", 1.0);
+                }
+            }
+        }
+    }
+
+    /// 一手记录（字段与线上 `_make_record` 同名同义）。
+    fn make_record(&self, res: &Value) -> Value {
+        let me = self.me as usize;
+        let g = &self.game;
+        let deltas: Vec<Value> = arr_f64(res, "deltas")
+            .iter()
+            .map(|&x| json!(round2(x)))
+            .collect();
+        let mut o = Map::new();
+        o.insert("time".into(), json!(crate::records::now_str()));
+        o.insert(
+            "rid".into(),
+            json!(format!("{}-{}", crate::records::now_ms(), self.hand_index)),
+        );
+        o.insert("hand".into(), json!(self.hand_index));
+        o.insert("my_seat".into(), json!(me));
+        o.insert("names".into(), json!(self.names));
+        o.insert("dealer".into(), json!(self.dealer));
+        o.insert(
+            "type".into(),
+            json!(if res.get("type").and_then(|x| x.as_str()) == Some("win") {
+                "win"
+            } else {
+                "huang"
+            }),
+        );
+        o.insert("deltas".into(), json!(deltas));
+        // 2026-11-07：第一巡同轮跟打
+        for k in ["follow_dealer", "follow_tile"] {
+            o.insert(k.into(), res.get(k).cloned().unwrap_or(Value::Null));
+        }
+        o.insert(
+            "follow_pay".into(),
+            json!(res.get("follow_pay").and_then(|x| x.as_f64()).unwrap_or(0.0)),
+        );
+
+        // 终局听牌：座位 + 名字 + 各自等待张 + 非平胡牌型
+        let tp: Vec<i64> = arr_i64(res, "tenpai");
+        o.insert("tenpai".into(), json!(tp));
+        o.insert(
+            "tenpai_names".into(),
+            json!(tp
+                .iter()
+                .map(|&p| self.names.get(p as usize).cloned().unwrap_or_default())
+                .collect::<Vec<_>>()),
+        );
+        let winners: Vec<i64> = {
+            let w = arr_i64(res, "winners");
+            if w.is_empty() {
+                res.get("winner").and_then(|x| x.as_i64()).into_iter().collect()
+            } else {
+                w
+            }
+        };
+        let win_tile = res.get("win_tile").and_then(|x| x.as_i64());
+        let drop_for = |p: i64| -> Option<u8> {
+            match win_tile {
+                Some(t) if winners.contains(&p) && (0..27).contains(&t) => Some(t as u8),
+                _ => None,
+            }
+        };
+        let mut waits = Map::new();
+        let mut types = Map::new();
+        for &p in &tp {
+            if !(0..4).contains(&p) {
+                continue;
+            }
+            let (w, tps) = waits_of(g, p as usize, drop_for(p), &self.ft);
+            if !w.is_empty() {
+                waits.insert(p.to_string(), json!(w));
+            }
+            if !tps.is_empty() {
+                types.insert(p.to_string(), json!(tps));
+            }
+        }
+        o.insert("tenpai_waits".into(), Value::Object(waits));
+        o.insert("tenpai_types".into(), Value::Object(types.clone()));
+
+        let labels: Vec<String> = res
+            .get("detail")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .map(|d| {
+                        d.as_array()
+                            .and_then(|x| x.get(1))
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let has = |k: &str| labels.iter().any(|x| x == k);
+        let is_win = res.get("type").and_then(|x| x.as_str()) == Some("win");
+        let win_bigfan = res
+            .get("winners_fan")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter().any(|x| {
+                    let fc = x.get("fan_cn").and_then(|c| c.as_str()).unwrap_or("");
+                    !matches!(fc, "" | "平胡" | "报叫")
+                })
+            })
+            .unwrap_or(false);
+        o.insert(
+            "flags".into(),
+            json!({
+                "chongfeng": has("冲锋鸡"),
+                "ji_discard": has("冲锋鸡") || has("横鸡") || has("幺鸡"),
+                "baoji": has("包鸡"),
+                "tenpai_bigfan": !types.is_empty(),
+                "win_bigfan": win_bigfan,
+                "huang": !is_win,
+                "huang_noten": !is_win && tp.len() < 4,
+                "hint_used": self.hint_used,
+            }),
+        );
+
+        // detail：与线上导出同形 [名字, 标签, 说明, 数值]
+        let detail_export: Vec<Value> = res
+            .get("detail")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .map(|d| {
+                        let arr = d.as_array();
+                        let seat = arr.and_then(|x| x.first()).and_then(|x| x.as_i64()).unwrap_or(-1);
+                        let who = if (0..4).contains(&seat) {
+                            self.names[seat as usize].clone()
+                        } else {
+                            "全场".to_string()
+                        };
+                        json!([
+                            who,
+                            arr.and_then(|x| x.get(1)).and_then(|x| x.as_str()).unwrap_or(""),
+                            arr.and_then(|x| x.get(2)).and_then(|x| x.as_str()).unwrap_or(""),
+                            arr.and_then(|x| x.get(3)).and_then(|x| x.as_f64()).unwrap_or(0.0)
+                        ])
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        o.insert("detail".into(), json!(detail_export));
+
+        if is_win {
+            let w = res.get("winner").and_then(|x| x.as_i64()).unwrap_or(0);
+            let loser = res.get("loser").and_then(|x| x.as_i64());
+            let void = res.get("void_player").and_then(|x| x.as_i64());
+            o.insert("winner".into(), json!(w));
+            o.insert(
+                "winner_name".into(),
+                json!(self.names.get(w as usize).cloned().unwrap_or_default()),
+            );
+            o.insert("winners".into(), json!(winners));
+            o.insert(
+                "winner_names".into(),
+                json!(winners
+                    .iter()
+                    .map(|&x| self.names.get(x as usize).cloned().unwrap_or_default())
+                    .collect::<Vec<_>>()),
+            );
+            o.insert("loser".into(), json!(loser));
+            o.insert(
+                "loser_name".into(),
+                json!(loser.map(|x| self.names.get(x as usize).cloned().unwrap_or_default())),
+            );
+            o.insert(
+                "void_name".into(),
+                json!(void.map(|x| self.names.get(x as usize).cloned().unwrap_or_default())),
+            );
+            o.insert("void_seat".into(), json!(void));
+            for k in ["is_tsumo", "rob_kong"] {
+                o.insert(
+                    k.into(),
+                    json!(res.get(k).and_then(|x| x.as_bool()).unwrap_or(false)),
+                );
+            }
+            for k in ["how", "fan_cn", "fan"] {
+                o.insert(k.into(), res.get(k).cloned().unwrap_or(Value::Null));
+            }
+            let mut hand = Vec::new();
+            if (0..4).contains(&w) {
+                for t in 0..27u8 {
+                    for _ in 0..g.hands[w as usize][t as usize] {
+                        hand.push(t);
+                    }
+                }
+            }
+            o.insert("winner_hand".into(), json!(hand));
+        }
+        o.insert("ji_tiles".into(), json!((0..27u8)
+            .filter(|&t| g.ji_tiles & (1u32 << t) != 0)
+            .collect::<Vec<_>>()));
+        o.insert("fanji".into(), {
+            let d = res.get("detail").and_then(|x| x.as_array());
+            let f = d.and_then(|a| {
+                a.iter().find(|v| {
+                    v.as_array().and_then(|x| x.get(1)).and_then(|x| x.as_str()) == Some("翻鸡")
+                })
+            });
+            f.and_then(|v| v.as_array().and_then(|x| x.get(2)).cloned())
+                .unwrap_or(Value::Null)
+        });
+        Value::Object(o)
+    }
+
+    /// 回放（事件流 + 发牌快照 + 终局快照），字段与线上 `_make_replay` 对齐。
+    fn make_replay(&self, res: &Value, fin: Value) -> Value {
+        let mut evs: Vec<Value> = Vec::with_capacity(self.events.len());
+        for ev in &self.events {
+            // 「本局结算」事件是纯提示，回放里不需要（终局快照已经能画结算页）
+            if ev.get("kind").and_then(|x| x.as_str()) == Some("result") {
+                continue;
+            }
+            evs.push(json!([
+                ev.get("seq").and_then(|x| x.as_u64()).unwrap_or(0),
+                ev.get("kind").and_then(|x| x.as_str()).unwrap_or(""),
+                ev.get("rel").and_then(|x| x.as_i64()).unwrap_or(0),
+                ev.get("tile").and_then(|x| x.as_i64()).unwrap_or(-1),
+                ev.get("ctag").and_then(|x| x.as_str()).unwrap_or(""),
+                ev.get("r").and_then(|x| x.as_i64()).unwrap_or(1),
+                ev.get("hc").cloned().unwrap_or(json!([13, 13, 13, 13])),
+                ev.get("text").and_then(|x| x.as_str()).unwrap_or(""),
+                ev.get("hands").cloned().unwrap_or(json!(["", "", "", ""])),
+            ]));
+        }
+        json!({
+            "hand": self.hand_index,
+            "my_seat": self.me,
+            "names": self.names,
+            "dealer": self.dealer,
+            "type": res.get("type").cloned().unwrap_or(Value::Null),
+            "deal": self.deal_packed,
+            "ji_tiles": (0..27u8)
+                .filter(|&t| self.game.ji_tiles & (1u32 << t) != 0)
+                .collect::<Vec<_>>(),
+            "ev": evs,
+            "final": fin,
+        })
+    }
+
+    /// 终局快照：与 `/api/state` 同口径，剥掉只有实时对局才需要的大块字段
+    /// （事件流 / 记牌器 / 统计 / pending 等），否则 replays.jsonl 会翻倍。
+    fn final_snapshot(&self) -> Value {
+        let mut snap = view::snapshot(&SnapshotCtx {
+            game: &self.game,
+            ft: &self.ft,
+            me: self.me,
+            sid: "offline",
+            names: &self.names,
+            kinds: &self.kinds,
+            hand_index: self.hand_index,
+            cum: &self.cum,
+            dealer_streak: self.dealer_streak,
+            events: &self.events,
+            pending: None,
+            result: self.result.clone(),
+            error: None,
+            stats: &self.stats,
+            opp_think: &self.opp_think,
+        });
+        if let Some(o) = snap.as_object_mut() {
+            for k in [
+                "events", "counter", "stats", "hand", "last_draw", "pending", "my_ting",
+                "error", "sid",
+            ] {
+                o.remove(k);
+            }
+        }
+        snap
+    }
+
+    fn persist_hand(&mut self, res: &Value) {
+        let fin = self.final_snapshot();
+        let rec = self.make_record(res);
+        let rp = self.make_replay(res, fin);
+        crate::records::append(&rec, Some(rp));
     }
 
     /// 覆盖规则配置：`/api/next` 携带新 rules 时调用，**下一局**生效
@@ -411,12 +916,19 @@ impl Session {
         let mut wall = tiles::full_deck();
         Rng::new(self.seed).shuffle(&mut wall);
         self.game = Game::new_with_wall(wall, self.dealer, self.cfg, &self.ft);
+        self.deal_packed = [
+            pack_hand(&self.game.hands[0]),
+            pack_hand(&self.game.hands[1]),
+            pack_hand(&self.game.hands[2]),
+            pack_hand(&self.game.hands[3]),
+        ];
         self.events.clear();
         self.seq = 0;
         self.pending = None;
         self.result = None;
         self.settled = false;
         self.force_end = false;
+        self.hint_used = false;
         self.next_ai_at = Instant::now();
         true
     }
@@ -448,6 +960,18 @@ impl Session {
             self.pending.clone()
         };
         let err = self.error.as_deref();
+        // `stats` 内部按**绝对座位**累加（跨手稳定），但 `players[]` 是相对座位序，
+        // 统计面板「本会话四家」也是按 rel 取的 —— 这里转一次，避免 my_seat≠0 时
+        // 四家的数字整表错位。
+        let mut stats_rel = Map::new();
+        for rel in 0..4usize {
+            let seat = (self.me as usize + rel) % 4;
+            stats_rel.insert(
+                rel.to_string(),
+                self.stats.get(seat.to_string()).cloned().unwrap_or(Value::Null),
+            );
+        }
+        let stats_rel = Value::Object(stats_rel);
         view::snapshot(&SnapshotCtx {
             game: &self.game,
             ft: &self.ft,
@@ -462,7 +986,7 @@ impl Session {
             pending,
             result: self.result.clone(),
             error: err,
-            stats: &self.stats,
+            stats: &stats_rel,
             opp_think: &self.opp_think,
         })
     }
@@ -480,6 +1004,8 @@ impl Session {
         if self.game.phase == actions::PHASE_OVER || self.game.actor() != self.me {
             return json!({"ok": false, "error": "当前不是你的决策点"});
         }
+        // 看过推荐就记一笔：「本人胡牌 / 本人累计」两项统计只算全程没看推荐的局
+        self.hint_used = true;
         let (kind, raw_stem) = strategy.split_once(':').unwrap_or(("model", strategy));
         let stem = canon_stem(raw_stem);
         let is_ting = kind == "ting";
