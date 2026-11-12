@@ -12,8 +12,9 @@
   - **横鸡按牌种独立成轮且可同轮跟打**：某牌种首张非冲锋鸡开轮即横鸡；轮内其他家
     跟打同种鸡也记横鸡；开轮者（或轮内已吃过横鸡者）再次出牌即收口，其后该种鸡
     一律按幺鸡计；
-  - 被碰/杠走的冲锋鸡/横鸡：分数归属碰/杠者，但只由打出者单向赔付
-    （责任鸡，只在两人之间有效）；
+  - 被碰/杠走的冲锋鸡/横鸡：分数归属碰/杠者；另有「责任鸡溢价」只在两位当事人
+    之间结算，**方向取决于碰/杠者终局是否听牌**（2026-11-12 用户口径）：
+    听牌 → 打出者赔碰/杠者；未听牌 → 打出者不赔，改由碰/杠者赔给打出者（同额）；
   - 自摸胡牌 +3 鸡；热炮（杠后第一张被胡）+5 鸡；
   - **点炮牌归属**：点炮/热炮的那张牌归胡牌者（从打出者弃牌区移出并入赢家手牌）；
     该张若为鸡牌，其鸡分也一并转给胡牌者（记「捉炮鸡」，打出者不再计）；
@@ -1088,6 +1089,9 @@ class DushanGame(ZhuojiGame):
         溢价 ×``cfg.jin_ji_multiplier``，四倍金鸡张再 ×2），只是多带**牌面**与
         金鸡标记，供前端把「[五条横鸡金鸡]×2」这种牌图+角标渲染出来。
         ``_claimed_ji_rows`` 由本函数派生，两者不可能跑偏。
+
+        2026-11-12：**方向**（payer/payee）不在这里定 —— 它取决于碰/杠者终局
+        是否听牌，只有结算那一步知道，由 ``_settle_win_multi`` 补写这两个字段。
         """
         cfg: DushanConfig = self.cfg  # type: ignore[assignment]
         gold = {int(t) for t in (gold or ())}
@@ -1173,6 +1177,13 @@ class DushanGame(ZhuojiGame):
                 else:
                     if self.discards[loser] and self.discards[loser][-1] == wt_i:
                         self.discards[loser].pop()
+                        # 2026-11-12 用户口径：这张被点炮/热炮胡走的牌已不属于
+                        # 打出者 —— 牌河原位留一张灰显残牌（与碰/明杠吃走同式样），
+                        # 结算页也不再把它当本家的「打出的鸡牌」
+                        # （它已经在赢家手牌里计鸡，见 dushan.html 的 discHtml）。
+                        cv = self.discard_claimed_view[loser]
+                        if cv:
+                            cv[-1] = True
                     self._transfer_discarded_ji(loser, winners, wt_i)
 
         types_by = {w: self._win_type_set(self.hands[w], self.melds[w],
@@ -1265,8 +1276,19 @@ class DushanGame(ZhuojiGame):
             discard_detail[str(int(void_player))] = []
             capture_detail[str(int(void_player))] = []
         claim_detail = self._claimed_ji_detail(gold_tiles, quad_tiles)
+        # 2026-11-12 用户口径：责任鸡溢价的方向取决于**碰/杠者终局是否听牌**。
+        #   碰/杠者听牌   → 打出者赔碰/杠者（原口径，AB 合计 碰冲锋5/碰横4/…）
+        #   碰/杠者未听牌 → 打出者**不赔**，改由碰/杠者赔给打出者（金额相同）
+        # 方向在这里算成 payer/payee 随载荷下发，前端只按方向渲染，
+        # 不再自己假设「碰者一定收钱」。
+        for d in claim_detail:
+            cl, dsc = int(d["claimer"]), int(d["discarder"])
+            # 正方向 = 打出者(dsc) 赔碰/杠者(cl)；反方向 = 碰/杠者赔打出者
+            d["payer"], d["payee"] = (dsc, cl) if tenpai[cl] else (cl, dsc)
         if void_player is not None:
-            claim_detail = [d for d in claim_detail if int(d["claimer"]) != int(void_player)]
+            # 全烧者自身鸡分作废 → 不够收责任鸡（正反两个方向都以 payee 判定）
+            claim_detail = [d for d in claim_detail
+                            if int(d["payee"]) != int(void_player)]
 
         # ---- 胡牌方式：自摸/杠上开花全场每家付；点炮/热炮/抢杠由放炮者独付 ----
         if is_tsumo:
@@ -1329,31 +1351,20 @@ class DushanGame(ZhuojiGame):
                     pflow(p, q, cfg.kong_chickens, "杠分", info)
                 detail.append((p, "杠分", info, cfg.kong_chickens))
 
-        # ---- 责任鸡溢价：碰/杠走的鸡，打出者单独赔溢价给碰/杠者 ----
-        # （牌面鸡数 碰3/杠4 已计入碰/杠者手中鸡、对所有人有效；
-        #   听牌时 AB 之间合计 = 碰冲锋5 / 碰横4 / 杠冲锋9 / 杠横8）
-        # 例外：碰/杠者自己未听牌（走包鸡）时不再收溢价——改由包鸡那一步
-        # 按「面 + 溢价」赔给打出者，保证 AB 之间合计仍是 4（用户 2026-10-08 例）。
-        unt = {q for q in range(4) if not tenpai[q]}
-        for claimer, discarder, premium, tag in self._claimed_ji_rows(gold_tiles, quad_tiles):
-            if void_player is not None and claimer == void_player:
-                continue        # 全烧者不再获得责任鸡溢价
-            if claimer in unt:
-                continue        # 未听牌者：溢价并入包鸡反向结算
-            pflow(claimer, discarder, premium, "责任鸡", tag)
-            detail.append((claimer, "责任鸡", tag, premium))
+        # ---- 责任鸡溢价：按 payer→payee 结算（方向见 claim_detail 上方的注释）----
+        # 牌面鸡数（碰 3 / 杠 4）始终计入碰/杠者手中鸡、对所有人有效；
+        # 溢价只在两位当事人之间反向流动，不进入「包鸡」那一步。
+        for d in claim_detail:
+            payer, payee = int(d["payer"]), int(d["payee"])
+            prem = float(d["premium"])
+            pflow(payee, payer, prem, "责任鸡", str(d["tag"]))
+            detail.append((payee, "责任鸡", str(d["tag"]), prem))
 
         # ---- 包鸡/包杠：终局未听牌者对自己**已亮明**的鸡、自己的杠负责（开关控制） ----
         # 「已亮明」= ① 自己打出的鸡（打出去就公开了）＋ ② 副露（碰/杠）里的鸡牌。
         # 手里没亮出来的暗牌鸡**不算**（2026-10-08 用户口径）。
-        # 对被自己碰/杠过鸡牌的那家（原打出者），另加该张的溢价（独立成行）：
-        # 例：B 碰走 A 的横鸡共 3 张，B 未听牌 → 其他家各得 3，A 另付溢价 1。
-        # 注意：溢价只归**碰/杠者本人**（keyed by (claimer, discarder)），且只收一次
-        # （2026-10-09 修复：原先按打出者索引，会把溢价错付给任意未听牌者；
-        #   且随「已亮明」明细行数重复收取）。
-        prem_pairs: dict[tuple[int, int], list[tuple[str, float]]] = {}
-        for cl, dsc, prem, tg in self._claimed_ji_rows(gold_tiles, quad_tiles):
-            prem_pairs.setdefault((int(cl), int(dsc)), []).append((tg, float(prem)))
+        # 2026-11-12：被碰/杠走那张的**溢价**从这里移出 —— 它只跟「碰/杠者是否听牌」
+        # 有关，与包鸡开关无关，统一在上一段「责任鸡溢价」里按 payer/payee 结算。
         for p in range(4):
             if tenpai[p]:
                 continue
@@ -1384,17 +1395,6 @@ class DushanGame(ZhuojiGame):
                             continue
                         pflow(q, p, val, "包鸡", tg, who=p)
                     detail.append((p, "包鸡", tg, val))
-                # 被碰/杠走那张的溢价：只由原打出者付给碰/杠者，一次性、独立成行
-                for q in range(4):
-                    if q == p:
-                        continue
-                    prem = prem_pairs.get((p, q))
-                    if not prem:
-                        continue
-                    psum = sum(v for _t, v in prem)
-                    etag = prem[0][0] if len(prem) == 1 else "、".join(t for t, _v in prem)
-                    pflow(q, p, psum, "包鸡", f"{etag}溢价", who=p)
-                    detail.append((p, "包鸡", f"{etag}溢价", psum))
             if cfg.end_baogang:
                 kongs = sum(1 for mt, _, _ in self.melds[p] if meld_is_kong(mt))
                 for _ in range(kongs):

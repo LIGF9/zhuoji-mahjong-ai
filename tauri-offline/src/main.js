@@ -1,6 +1,8 @@
 /* 独山麻将 · 双模式启动页（2026-11-12）
    ① 首屏只给「在线模式 / 离线模式」两个入口，不自动进任一模式；
-   ② 在线模式 = 联网客户端那套：填服务端地址 → 测试连接 → WebView 导航到移动网页版；
+   ② 在线模式 = 联网客户端那套：**地址不再写死**，进面板先自动在局域网内扫描
+      服务端（原生 UDP 广播 + TCP 兜底扫描，见 src-tauri/src/lib.rs::scan_lan），
+      扫到 1 个就直连、扫到多个列出来点选、扫不到才让人手填；
    ③ 离线模式 = 原来的流程：等本地 Rust 引擎就绪 → 导航到 127.0.0.1 的本地服务。
    浏览器预览（没有 Tauri IPC）时：离线只提示，在线直接跳转，便于视觉验收。 */
 
@@ -9,8 +11,8 @@
 
   var invoke = (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke) || null;
   var IN_APP = !!invoke;
-  var DEFAULT_URL = "http://172.26.68.203:8770";
-  var URL_KEY = "zhuoji_online_server";
+  var URL_KEY = "zhuoji_online_server";   // 只记「上次成功连过的地址」，不再是默认值
+  var SCAN_TIMEOUT_MS = 1200;             // UDP 广播等待（Rust 侧 clamp 到 300~4000）
 
   var t0 = Date.now();
   var timer = null;
@@ -18,6 +20,8 @@
   var wantOffline = false;      // 用户已选离线模式，引擎一就绪就进入
   var engineReady = false;
   var bootMs = 0;
+  var scanning = false;         // 扫描进行中（按钮置灰、防重入）
+  var autoEntered = false;      // 本轮扫描已自动进过一次，避免多面板来回切换时反复跳转
 
   function $(id) { return document.getElementById(id); }
   /* 2026-11-12：选择页与两个面板是同一个 URL 的 SPA，安卓返回键原本无从判断
@@ -149,8 +153,9 @@
     if (!/^https?:\/\//i.test(s)) s = "http://" + s;
     return s.replace(/\/+$/, "");
   }
-  function loadUrl() {
-    try { return localStorage.getItem(URL_KEY) || DEFAULT_URL; } catch (e) { return DEFAULT_URL; }
+  /* 上次成功连过的地址：只用作扫描失败时的预填/重试，不再当默认值硬连。 */
+  function lastUrl() {
+    try { return localStorage.getItem(URL_KEY) || ""; } catch (e) { return ""; }
   }
   function saveUrl(u) {
     try { localStorage.setItem(URL_KEY, u); } catch (e) {}
@@ -158,12 +163,87 @@
   function setOnlineBusy(busy) {
     $("btn-test").disabled = busy;
     $("btn-enter").disabled = busy;
-    $("btn-default").disabled = busy;
+    $("btn-scan").disabled = busy;
     $("url").disabled = busy;
+  }
+  /* 扫描结果列表：≥2 个候选时才渲染（1 个直接连，不占空间）。 */
+  var SCAN_FOUND = [];
+  function renderScanList(found) {
+    SCAN_FOUND = found || [];
+    var box = $("scanlist");
+    if (!box) return;
+    box.innerHTML = "";
+    if (SCAN_FOUND.length < 2) { box.hidden = true; return; }
+    SCAN_FOUND.forEach(function (srv, i) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "item" + (i === 0 ? " sel" : "");
+      b.innerHTML = "<code>" + srv.ip + ":" + srv.port + "</code>" +
+                    "<small>" + (srv.latencyMs != null ? srv.latencyMs + "ms" : "") + "</small>";
+      b.addEventListener("click", function () {
+        Array.prototype.forEach.call(box.querySelectorAll(".item"), function (x) {
+          x.classList.remove("sel");
+        });
+        b.classList.add("sel");
+        $("url").value = srv.url;
+        saveUrl(srv.url);
+        setOnlineStatus("已选择 " + srv.url + "，点「进入网页版」", "ok");
+      });
+      box.appendChild(b);
+    });
+    box.hidden = false;
+  }
+  /* 局域网自动发现：原生扫描（UDP 广播 → 失败退化为 /24 TCP 扫描），
+     结果都过了 `/api/meta` 校验。扫到就直连（用户口径：「自动扫描到服务端然后连接上」）。 */
+  async function scanLan(isAuto) {
+    if (scanning) return;
+    if (!IN_APP) {
+      setOnlineStatus("预览模式：自动扫描需在安卓 APP 内运行", "busy");
+      return;
+    }
+    scanning = true;
+    setOnlineBusy(true);
+    renderScanList([]);
+    setOnlineStatus(isAuto ? "正在扫描局域网…" : "正在重新扫描局域网…", "busy");
+    try {
+      var r = await invoke("scan_lan", { timeoutMs: SCAN_TIMEOUT_MS });
+      var found = (r && r.found) || [];
+      if (found.length) {
+        var best = found[0];
+        renderScanList(found);
+        $("url").value = best.url;
+        saveUrl(best.url);
+        if (found.length === 1) {
+          setOnlineStatus("已发现服务端 " + best.url + " · " + best.latencyMs + "ms，正在进入…", "ok");
+          setOnlineBusy(false);
+          scanning = false;
+          autoEntered = true;
+          setTimeout(enterOnline, 550);
+          return;
+        }
+        setOnlineStatus("发现 " + found.length + " 个服务端，默认选中最快的一个（" +
+                        best.ip + ":" + best.port + "），可直接进入或点选其它", "ok");
+      } else {
+        var tail = (r && r.mode === "sweep") ? "（广播被屏蔽，已逐段扫描仍无应答）" : "";
+        var last = lastUrl();
+        if (last) {
+          $("url").value = last;
+          setOnlineStatus("未扫描到服务端" + tail + "，保留上次地址，可点「测试连接」重试", "err");
+        } else {
+          setOnlineStatus("未扫描到服务端" + tail +
+            "。请确认电脑端服务已启动、手机与电脑在同一 Wi-Fi，或手填窗口标题里的地址", "err");
+        }
+      }
+    } catch (e) {
+      setOnlineStatus("扫描失败：" + (e && e.message ? e.message : e), "err");
+    } finally {
+      scanning = false;
+      setOnlineBusy(false);
+    }
   }
   async function testConnection(silent) {
     var raw = normalize($("url").value);
-    if (!raw) { if (!silent) setOnlineStatus("请先填写服务器地址", "err"); return false; }
+    if (!raw) { if (!silent) setOnlineStatus("请先填写服务器地址，或点「扫描」自动发现", "err"); return false; }
     if (!IN_APP) {
       setOnlineStatus("预览模式：请在安卓 APP 内测试连接（浏览器受跨域限制）", "busy");
       return false;
@@ -187,7 +267,7 @@
   }
   async function enterOnline() {
     var raw = normalize($("url").value);
-    if (!raw) { setOnlineStatus("请先填写服务器地址", "err"); return; }
+    if (!raw) { setOnlineStatus("请先填写服务器地址，或点「扫描」自动发现", "err"); return; }
     saveUrl(raw);
     setOnlineBusy(true);
     setOnlineStatus("正在进入 " + raw + " …", "busy");
@@ -207,9 +287,12 @@
   $("btn-online").addEventListener("click", function () {
     wantOffline = false;
     show("online-pane");
-    $("url").value = loadUrl();
-    if (IN_APP) testConnection(true);
-    else {
+    autoEntered = false;
+    $("url").value = lastUrl();          // 上次成功过的地址先填上，扫描成功后会被覆盖
+    renderScanList([]);
+    if (IN_APP) {
+      scanLan(true);                     // 进面板即自动扫描 → 扫到就直连
+    } else {
       $("preview").hidden = false;
       setOnlineStatus("预览模式：填入服务端地址后点「进入网页版」", "");
     }
@@ -225,10 +308,7 @@
   });
   $("btn-test").addEventListener("click", function () { testConnection(false); });
   $("btn-enter").addEventListener("click", enterOnline);
-  $("btn-default").addEventListener("click", function () {
-    $("url").value = DEFAULT_URL;
-    setOnlineStatus("已恢复默认地址，点「测试连接」确认", "");
-  });
+  $("btn-scan").addEventListener("click", function () { scanLan(false); });
   $("url").addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); enterOnline(); }
   });

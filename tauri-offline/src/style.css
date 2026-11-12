@@ -242,6 +242,35 @@ body {
   cursor: pointer;
 }
 
+/* ---- 局域网扫描结果列表（2026-11-12）----
+   扫到 1 个服务端时直接连、不渲染本列表；≥2 个才列出来让用户点选。 */
+.scanlist { display: flex; flex-direction: column; gap: 6px; }
+.scanlist .item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: clamp(6px, 1.1vmin, 9px) clamp(9px, 1.6vmin, 12px);
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .045);
+  color: var(--ink);
+  font-size: clamp(10.5px, 1.7vmin, 14px);
+  text-align: left;
+  cursor: pointer;
+}
+.scanlist .item:active { transform: translateY(1px); }
+.scanlist .item.sel {
+  border-color: rgba(232, 196, 113, .8);
+  background: rgba(232, 196, 113, .14);
+}
+.scanlist .item code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  color: var(--gold-2);
+}
+.scanlist .item small { color: var(--muted); font-size: .86em; letter-spacing: .02em; }
+
 /* ---- 说明 / 页脚 ---- */
 .hint {
   font-size: clamp(9.5px, 1.5vmin, 12px);

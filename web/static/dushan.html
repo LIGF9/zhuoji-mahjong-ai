@@ -3078,6 +3078,10 @@ html:not(.mob) .seat-left, html:not(.mob) .seat-right {
   white-space: nowrap; pointer-events: none; }
 .ava-side:empty, .ava-side > span:empty { display: none; }
 .seat-me   .ava-side { bottom: calc(100% + 1px); left: 50%; transform: translateX(-50%); }
+/* 2026-11-12 用户口径（移动端）：「我的」徽标左缘要与头像左缘对齐。
+   徽标（杠·通行证 / 报叫）通常比 30px 的头像宽，整条居中时两端都会探出，
+   在窄屏上看着像「没贴着头像」。移动端改成左对齐到头像左沿，向右展开。 */
+html.mob .seat-me .ava-side { left: 0; transform: none; }
 .seat-top  .ava-side { top: calc(100% + 3px);    left: 50%; transform: translateX(-50%); }
 .seat-left .ava-side { left: calc(100% + 5px);   top: 50%; transform: translateY(-50%); }
 .seat-right .ava-side { right: calc(100% + 5px); top: 50%; transform: translateY(-50%); }
@@ -3928,8 +3932,8 @@ html.mob .scoregrid input { width: 42px; }
       <div class="setrow">
         <div class="lbl">开局翻鸡<span class="q" data-q="开局翻牌墙尾指示牌（翻出后移出牌墙），本局新增对应鸡牌种">?</span></div>
         <select id="set-kaiju-fanji">
-          <option value="off">关闭（默认）</option>
-          <option value="up">上鸡</option>
+          <option value="off">关闭</option>
+          <option value="up" selected>上鸡（默认）</option>
           <option value="down">下鸡</option>
           <option value="both">上下鸡</option>
         </select>
@@ -4237,8 +4241,8 @@ html.mob .scoregrid input { width: 42px; }
             </select>
             <span title="开局翻牌墙尾指示牌，本局新增对应鸡牌种">开局翻鸡</span>
             <select id="boot-kaiju-fanji">
-              <option value="off">关闭（默认）</option>
-              <option value="up">上鸡</option>
+              <option value="off">关闭</option>
+              <option value="up" selected>上鸡（默认）</option>
               <option value="down">下鸡</option>
               <option value="both">上下鸡</option>
             </select>
@@ -4425,7 +4429,10 @@ const SET = {
   // 白名单见 OPP_OPTIONS，存量配置由 migrateCfgVersion / migrateModelOptions 迁移。
   strategy: localStorage.getItem("dushan_strategy") || "search128:master",
   // ---- 功能开关（与时间设置分离：关闭后其时间设置自动置灰）----
-  hintOn: loadBool("dushan_hinton", true),               // 显示大师推荐
+  /* 2026-11-12 用户口径（全版本统一默认值）：「默认关闭 AI 模型推荐」。
+     推荐总开关关闭时，桌面/操作区都不出现建议与理由；用户在设置里打开后
+     仍按 reasonMode（默认「完整推荐」）展示。存量配置由 localStorage 覆盖。 */
+  hintOn: loadBool("dushan_hinton", false),              // 显示大师推荐（默认关）
   timeoutOn: _timeoutLegacyOff ? false : loadBool("dushan_timeouton", true),
   // ---- 时间参数（仅在对应开关打开时生效）----
   timeout: _timeoutLegacyOff ? 15 : _timeoutVal,
@@ -4461,20 +4468,22 @@ const SET = {
     if (v !== null) return v === "1";
     return localStorage.getItem("dushan_log_hidden") === "0";   // 旧口径：0=展开
   })(),
-  // 记牌器（设置 → 界面显示）：桌面手牌右侧那枚 🧮 的显隐。**默认关**
-  // （2026-10-12 用户口径）；与「浮窗展开态」counterOpen 是两件事。
-  counterOn: loadBool("dushan_counteron", false),
+  // 记牌器（设置 → 界面显示）：桌面手牌右侧那枚 🧮 的显隐。**默认开**
+  // （2026-11-12 用户口径：「记牌器默认打开」；此前 2026-10-12 是默认关）。
+  counterOn: loadBool("dushan_counteron", true),
   // 记牌器浮窗展开态
   counterOpen: localStorage.getItem("dushan_counter") === "1",
-  // 冲锋鸡/横鸡全屏特效时长（秒；2026-10-12 #84 可设置，默认 3；0=关闭特效）
+  // 冲锋鸡/横鸡全屏特效时长（秒；2026-10-12 #84 可设置；0=关闭特效）
+  // 2026-11-12 用户口径：默认 1.5 秒（原 3 秒，拖慢出牌节奏）。
   fxDur: (() => {
     const v = parseFloat(localStorage.getItem("dushan_fx_dur"));
-    return Number.isFinite(v) && v >= 0 ? Math.min(v, 10) : 3;
+    return Number.isFinite(v) && v >= 0 ? Math.min(v, 10) : 1.5;
   })(),
-  // 开局鸡牌提醒特效时长（秒；2026-10-13 用户需求，默认 3；0=关闭特效）
+  // 开局鸡牌提醒特效时长（秒；2026-10-13 用户需求，0=关闭特效）
+  // 2026-11-12 用户口径：默认 1.5 秒（原 3 秒）。
   kaijuFxDur: (() => {
     const v = parseFloat(localStorage.getItem("dushan_kaiju_fx_dur"));
-    return Number.isFinite(v) && v >= 0 ? Math.min(v, 10) : 3;
+    return Number.isFinite(v) && v >= 0 ? Math.min(v, 10) : 1.5;
   })(),
   // 自动开始下一局（秒；2026-10-30：结算面板出现后倒计时归零自动点「下一局」；0=关闭）
   autoNext: clampSetting(localStorage.getItem("dushan_autonext"), 0, 120, 0),
@@ -4500,9 +4509,10 @@ const SET = {
     ? 1 : localStorage.getItem("dushan_vol_voice")),
   sfxVol: clamp01(localStorage.getItem("dushan_vol_sfx") === null
     ? 0.9 : localStorage.getItem("dushan_vol_sfx")),
-  // 规则开关（下一局生效）：结算翻鸡默认上下鸡（可关）；开局翻鸡默认关闭；满堂鸡默认关
+  // 规则开关（下一局生效）：结算翻鸡默认上下鸡（可关）；开局翻鸡**默认上鸡**
+  // （2026-11-12 用户口径：「打开开局翻鸡（上鸡）」）；满堂鸡默认关
   jiesuan: loadFanji("dushan_jiesuan_fanji", "both", ["both", "up", "down", "off"]),
-  kaijuFanji: loadFanji("dushan_kaiju_fanji", "off", ["off", "up", "down", "both"]),
+  kaijuFanji: loadFanji("dushan_kaiju_fanji", "up", ["off", "up", "down", "both"]),
   mantiangji: localStorage.getItem("dushan_mantiangji") === "1",
   // 未听牌包赔开关（下一局生效）
   rule: loadRules(),
@@ -6887,7 +6897,7 @@ function renderRivers(st) {
       const tg = tags[i];
       const dg = tg ? jiDotsFor(t, tg) : (jiSet.has(t) ? jiDotsFor(t, "幺鸡") : "");
       return `<span class="mc${rc}${isLast && !cl ? " last-discard" : ""}${cl ? " claimed" : ""}"` +
-        (cl ? ' title="这张已被碰/杠走（打出者的弃牌历史，牌已归碰/杠者）"' : "") + `>` +
+        (cl ? ' title="这张已被碰/杠/胡走（这只是打出者的弃牌历史，牌已归对方）"' : "") + `>` +
         (isLast && !cl ? indHTML(SET.indColor) : "") +
         `<img src="${tileImg(t)}" alt="">${dg}</span>`;
     }).join(""));
@@ -7290,7 +7300,12 @@ function paintCoach(r) {
     "鸡分": "ji", "得分": "ji", "杠分": "ji", "通行证": "ji" };
   // 2026-11-11 用户口径：离线单机版只有贪心模型，给不出「为什么」——
   // 面板只留动作 + 概率 + 条形，不渲染 tags/lines/reason，也不显示 💡 一句话。
-  const showWhy = !IS_OFFLINE;
+  // 2026-11-12 更新：单机引擎已补上 Rust 版教练解释（offline/src/coach.rs），
+  // 桌面版与网页版理由同源。因此改为**按服务端是否给了理由**决定渲染，
+  // 而不是按「是不是离线」一刀切 —— 旧固件/老接口仍然自适应地只显示概率。
+  const showWhy = !IS_OFFLINE
+    || r.items.some(it => (it.lines && it.lines.length) || (it.tags && it.tags.length))
+    || !!r.tip;
   el("coach-list").innerHTML = r.items.map((it, i) => `
     <div class="hint-item">
       <div class="hint-main">
@@ -8484,10 +8499,18 @@ function playerHandBlock(st, rel, ctx) {
   // 标签行只留「未听/听/碰横鸡/杠」等文字标签，标签内的小牌图也不再点红点。
   // 点标沿用结算手牌口径：责任鸡（已被碰/杠走）= 黄点，其余按 冲锋鸡3/横鸡2/普通1。
   const discCells = [];
+  // 2026-11-12 用户口径：**点炮胡走的那张牌已归胡牌者**（在赢家手牌里计鸡），
+  // 不能再算作放炮者的「打出的鸡牌」—— 旧实现把它渲染在放炮者手牌后面，
+  // 看起来像放炮者手里的鸡牌，但分值其实记给了赢家。
+  // 判定：本家就是放炮者 + 非自摸 + 牌河里最后一张正好是胡牌张。
+  // （一炮多响同一张，同样成立；抢杠那张在副露里、不在牌河，不会命中。）
+  const huTaken = (!res.is_tsumo && Number.isInteger(res.win_tile) &&
+    Number.isInteger(res.loser) && +p.seat === +res.loser) ? res.win_tile : -1;
   (p.discards || []).forEach((t, i) => {
     const tg = (p.discard_tags || [])[i];
     const isJi = !!tg || ctx.jiSet.has(t);       // 只显示本局打出的鸡牌；结算翻鸡种不参与
     if (!isJi) return;
+    if (t === huTaken && i === (p.discards || []).length - 1) return;   // 已被胡走
     const claimed = !!((p.discard_claimed || [])[i]);
     const dots = claimed ? jiDotsHTML(tg, "zr") : jiDotsFor(t, tg);
     const zrTip = claimed ? "（责任鸡：这张已被碰/杠走）" : "";
@@ -8741,11 +8764,16 @@ function renderPairs(st) {
         `${tagCn} ${cnOf(e.tile)}：打出 ${e.n} 张，共 ${e.val} 分`);
     }).join("");
   };
-  /* 责任鸡：某家碰/杠走对家的那张鸡，逐张给出「牌图（+ 冲/横 + 金鸡）×溢价分」 */
-  const zrChips = (claimer, discarder) => {
+  /* 责任鸡：某家碰/杠走对家的那张鸡，逐张给出「牌图（+ 冲/横 + 金鸡）×溢价分」。
+     2026-11-12 用户口径：溢价**方向**由引擎按「碰/杠者是否听牌」定，载荷里的
+     payer/payee 才是真方向（碰者未听牌时反向：碰者赔打出者）。旧归档数据没有
+     这两个字段 → 回落到「碰者收」的老方向。 */
+  const zrPayer = c => +(c.payer != null ? c.payer : c.claimer);
+  const zrPayee = c => +(c.payee != null ? c.payee : c.discarder);
+  const zrChips = (payer, payee) => {
     const m = new Map();
     for (const c of claimRows) {
-      if (+c.claimer !== claimer || +c.discarder !== discarder) continue;
+      if (zrPayer(c) !== payer || zrPayee(c) !== payee) continue;
       const k = c.tag + "|" + c.tile;
       const e = m.get(k) || { tag: c.tag, tile: +c.tile, prem: 0, gold: !!c.gold };
       e.prem = r2(e.prem + num(c.premium));
@@ -8771,25 +8799,25 @@ function renderPairs(st) {
     }
     return out;
   };
-  /* 责任鸡行（第三类）：某家碰/杠走对家的那张鸡 → 打出者按溢价赔给碰/杠者。
+  /* 责任鸡行（第三类）：某家碰/杠走对家的那张鸡 → 按 payer/payee 结算。
      这一项**天然只发生在两家之间**，所以它进不了「每家各一份」的共享段，
      只能落在那一对对手的块里（用户 2026-10-13 口径：「对责任鸡玩家的结算」另加一行）。
      ⚠️ 2026-10-13 修复：zrChips 之前只是定义、**从未被调用** → 责任鸡一类根本不出现在结算页。
-     现在按 (claimer ← discarder) 逐方向取分量行，并把引擎 pair_detail 里的同名纯文本行剔除，
-     避免同一笔溢价出现两遍。sign 从视角玩家出发：我碰走别人的鸡 → 收（+1），
-     别人碰走我的鸡 → 付（−1）。 */
-  const zrPrem = (claimer, discarder) => r2(claimRows
-    .filter(c => +c.claimer === claimer && +c.discarder === discarder)
+     现在按 (payer → payee) 逐方向取分量行，并把引擎 pair_detail 里的同名纯文本行剔除，
+     避免同一笔溢价出现两遍。sign 从视角玩家出发：我收（+1）/ 我付（−1）。 */
+  const zrPrem = (payer, payee) => r2(claimRows
+    .filter(c => zrPayer(c) === payer && zrPayee(c) === payee)
     .reduce((s, c) => s + num(c.premium), 0));
-  const zrRow = (claimer, discarder, sign) => {
-    const h = zrChips(claimer, discarder);
+  const zrRow = (payer, payee) => {
+    const h = zrChips(payer, payee);
     if (!h) return null;
-    return { label: "责任鸡", val: r2(sign * zrPrem(claimer, discarder)),
-      who: sign > 0 ? claimer : discarder, chk: true,
+    const sign = payee === v ? 1 : -1;      // 收款方是我 → 我收；否则我付
+    return { label: "责任鸡", val: r2(sign * zrPrem(payer, payee)),
+      who: payee, chk: true,
       html: `<span class="jcnts">${h}</span>` };
   };
   /* 视角玩家与某一家之间的责任鸡（两个方向各自可能有一条） */
-  const zrRows = (o) => [zrRow(o, v, -1), zrRow(v, o, 1)].filter(Boolean);
+  const zrRows = (o) => [zrRow(o, v), zrRow(v, o)].filter(Boolean);
 
   // 共享判定：某个分项在**每一个**对手清单里都恰好出现一次 → 它对每家的作用完全相同，
   // 属于「对所有人都生效」的项。（只出现在部分对手那里、或同一家出现两次的，一律留在逐家里。）

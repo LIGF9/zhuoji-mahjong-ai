@@ -61,3 +61,7 @@ web/*.bak-*
 
 # 蒸馏学生中间检查点（TA / S1，本地保留）
 models/slim_*.pt
+
+# 桌面版图标生成的中间产物（由 desktop/app-icon.png 重新生成）
+desktop/build/
+desktop/dist/

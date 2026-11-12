@@ -438,6 +438,13 @@ pub fn settle_win(g: &mut Game, ft: &FanTable) -> Value {
                 let dl = &mut g.discards[loser as usize];
                 if dl.last() == Some(&t) {
                     dl.pop();
+                    // 2026-11-12 用户口径：这张**被点炮胡走**的牌已不属于打出者 ——
+                    // 牌河里原位留一张灰显残牌（与碰/杠吃走完全同式样），结算页也
+                    // 不再把它算作打出者的「打出的鸡牌」（它已经在赢家手牌里计鸡）。
+                    // 逻辑 `discards` 照旧 pop（记牌器/结算都读逻辑视图）。
+                    if let Some(last) = g.discard_claimed_view[loser as usize].last_mut() {
+                        *last = true;
+                    }
                 }
                 // 捉炮鸡转移已在 settle_win_multi 完成
             }
@@ -601,6 +608,9 @@ pub fn settle_win(g: &mut Game, ft: &FanTable) -> Value {
         capture_detail.insert(vp.to_string(), Value::Array(Vec::new()));
     }
     // 责任鸡明细（对齐 _claimed_ji_detail）
+    // 2026-11-12 用户口径：溢价**方向**取决于碰/杠者终局是否听牌 ——
+    //   听牌   → 打出者赔碰/杠者（原口径）；未听牌 → 碰/杠者赔给打出者（同额）。
+    // 方向直接算成 payer/payee 下发，前端不再自己假设「碰者一定收钱」。
     let mut claim_detail: Vec<Value> = Vec::new();
     for ev in &g.claimed_ji {
         let (discarder, claimer, tag, _mg, tile) = *ev;
@@ -617,8 +627,16 @@ pub fn settle_win(g: &mut Game, ft: &FanTable) -> Value {
             premium_base
         };
         if premium > 0.0 {
+            // 正方向 = 打出者(discarder) 赔碰/杠者(claimer)；
+            // 反方向（碰/杠者未听牌）= 碰/杠者赔打出者，金额相同。
+            let (payer, payee) = if tenpai[claimer as usize] {
+                (discarder, claimer)
+            } else {
+                (claimer, discarder)
+            };
             claim_detail.push(json!({
                 "claimer": claimer as i64, "discarder": discarder as i64,
+                "payer": payer as i64, "payee": payee as i64,
                 "tile": tile as i64, "tag": ji_tag_cn(tag),
                 "premium": (premium * 1000.0).round() / 1000.0,
                 "gold": is_gold,
@@ -626,7 +644,8 @@ pub fn settle_win(g: &mut Game, ft: &FanTable) -> Value {
         }
     }
     if let Some(vp) = void_player {
-        claim_detail.retain(|d| d["claimer"].as_i64() != Some(vp as i64));
+        // 全烧者自身鸡分作废 → 正反两个方向都不再收（以 payee 判定）
+        claim_detail.retain(|d| d["payee"].as_i64() != Some(vp as i64));
     }
 
     // ---- 胡牌方式 ----
@@ -746,38 +765,21 @@ pub fn settle_win(g: &mut Game, ft: &FanTable) -> Value {
         }
     }
 
-    // ---- 责任鸡溢价 ----
-    let unt: Vec<usize> = (0..4).filter(|&q| !tenpai[q]).collect();
+    // ---- 责任鸡溢价：按 payer→payee 结算（方向已在 claim_detail 里定好）----
+    // 牌面鸡数（碰 3 / 杠 4）始终计入碰/杠者手中鸡、对所有人有效；
+    // 溢价只在两位当事人之间反向流动，与包鸡开关无关。
     for d in &claim_detail.clone() {
-        let claimer = d["claimer"].as_u64().unwrap() as usize;
-        let discarder = d["discarder"].as_u64().unwrap() as usize;
+        let payer = d["payer"].as_u64().unwrap() as usize;
+        let payee = d["payee"].as_u64().unwrap() as usize;
         let premium = d["premium"].as_f64().unwrap();
         let tag = d["tag"].as_str().unwrap().to_string();
-        if Some(claimer as u8) == void_player {
-            continue;
-        }
-        if unt.contains(&claimer) {
-            continue;
-        }
-        pflow(claimer, discarder, premium, "责任鸡", &tag, None, &mut pair, &mut pdet);
-        detail.push((claimer as i64, "责任鸡".into(), tag, premium));
+        pflow(payee, payer, premium, "责任鸡", &tag, None, &mut pair, &mut pdet);
+        detail.push((payee as i64, "责任鸡".into(), tag, premium));
     }
 
     // ---- 包鸡 / 包杠 ----
-    let prem_pairs_src: Vec<(usize, usize, f64, String)> = claim_detail.iter()
-        .map(|d| (d["claimer"].as_u64().unwrap() as usize,
-                  d["discarder"].as_u64().unwrap() as usize,
-                  d["premium"].as_f64().unwrap(),
-                  d["tag"].as_str().unwrap().to_string()))
-        .collect();
-    let mut prem_pairs: Vec<([usize; 2], Vec<(String, f64)>)> = Vec::new();
-    for (cl, dsc, prem, tg) in &prem_pairs_src {
-        if let Some(e) = prem_pairs.iter_mut().find(|(k, _)| k == &[*cl, *dsc]) {
-            e.1.push((tg.clone(), *prem));
-        } else {
-            prem_pairs.push(([*cl, *dsc], vec![(tg.clone(), *prem)]));
-        }
-    }
+    // 2026-11-12：被碰/杠走那张的**溢价**从这一段移出 —— 它只跟「碰/杠者是否听牌」
+    // 有关，与包鸡开关无关，已在上一段「责任鸡溢价」里按 payer/payee 结算。
     for p in 0..4usize {
         if tenpai[p] {
             continue;
@@ -823,24 +825,6 @@ pub fn settle_win(g: &mut Game, ft: &FanTable) -> Value {
                     }
                 }
                 detail.push((p as i64, "包鸡".into(), tg.clone(), *val));
-            }
-            // 被碰/杠走那张的溢价：原打出者付给碰/杠者（一次性独立成行）
-            for q in 0..4usize {
-                if q == p {
-                    continue;
-                }
-                if let Some(e) = prem_pairs.iter().find(|(k, _)| k == &[p, q]) {
-                    let psum: f64 = e.1.iter().map(|(_, v)| v).sum();
-                    let etag = if e.1.len() == 1 {
-                        e.1[0].0.clone()
-                    } else {
-                        e.1.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>().join("、")
-                    };
-                    pflow(q, p, psum, "包鸡", &format!("{}溢价", etag), Some(p as i64),
-                          &mut pair, &mut pdet);
-                    detail.push((p as i64, "包鸡".into(),
-                                 format!("{}溢价", etag), psum));
-                }
             }
         }
         if cfg.end_baogang {

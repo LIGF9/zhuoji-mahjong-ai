@@ -21,6 +21,7 @@ use serde_json::{json, Map, Value};
 use crate::policy::{self, Net};
 use crate::search::{self, Cfg};
 use crate::view::{self, SnapshotCtx, PAGE_VER};
+use crate::coach;
 
 /// 三张网的注册表（键 = ONNX 的 stem）。
 ///
@@ -530,26 +531,29 @@ impl Session {
         let max_q = top.first().map(|x| x.0).unwrap_or(0.0);
         let exps: Vec<f64> = top.iter().map(|x| (x.0 - max_q).exp()).collect();
         let z: f64 = exps.iter().sum::<f64>().max(1e-9);
-        let reason = match engine {
-            "tract-pimc" => format!("离线 PIMC {} 路推演推荐", kind.trim_start_matches("search")),
-            "rule-ting" => "速听：向听数与进张优先".to_string(),
-            "rule-fallback" => "规则兜底推荐".to_string(),
-            _ => "离线版模型贪心推荐".to_string(),
-        };
+        // 2026-11-12 用户口径：桌面版/单机版的推荐要与网页版一致 —— 每个候选都带
+        // 完整教学理由（tags 彩色标签 + lines 多行讲解 + reason 摘要），再加面板
+        // 顶部的 situation 与底部的一句话 tip。生成器见 `crate::coach`（移植自
+        // web/coach.py + zhuoji/reason.py），只用公开信息，不读牌墙与别家暗手。
+        let me = self.me as usize;
         let items: Vec<Value> = top
             .iter()
             .enumerate()
-            .map(|(i, (q, a))| json!({
-                "label": a.label(),
-                "kind": actions::KIND_NAMES[a.kind as usize],
-                "tile": if a.tile == 255 { -1 } else { a.tile as i64 },
-                "prob": round3(exps[i] / z),
-                "q": round2(*q),
-                "reason": reason,
-                "tags": [],
-                "lines": [],
-            }))
+            .map(|(i, (_q, a))| {
+                let ex = coach::explain_action_full(&self.game, me, a, &self.ft);
+                json!({
+                    "label": a.label(),
+                    "kind": actions::KIND_NAMES[a.kind as usize],
+                    "tile": if a.tile == 255 { -1 } else { a.tile as i64 },
+                    "prob": round3(exps[i] / z),
+                    "reason": ex.reason,
+                    "tags": ex.tags,
+                    "lines": ex.lines,
+                })
+            })
             .collect();
+        let situation = coach::situation_summary(&self.game, me, &self.ft);
+        let tip = coach::one_line(&items, &self.game, me, &self.ft);
         let model_name = if is_ting { "ting:fast" } else { stem };
 
         json!({
@@ -558,13 +562,8 @@ impl Session {
             "head": if engine == "tract-pimc" { kind } else { "model" },
             "value": round2(top.first().map(|x| x.0).unwrap_or(0.0)),
             "items": items,
-            "situation": {"tenpai": false, "calls": [], "shanten": 0,
-                          "ji_held": 0, "baojiao": false, "has_kong": false, "note": ""},
-            "tip": match engine {
-                "tract-pimc" => "离线单机：设备端 PIMC 推演给出推荐".to_string(),
-                "rule-ting" => "离线单机：速听规则给出推荐".to_string(),
-                _ => "离线单机：已用设备端模型给出推荐".to_string(),
-            },
+            "situation": situation,
+            "tip": tip,
             "note": "",
             "elapsed_ms": t0.elapsed().as_millis() as u64,
             "src": {"stem": if is_ting { "ting" } else { stem },
@@ -705,15 +704,74 @@ impl Session {
 pub fn ting_payload(g: &mut Game, me: usize, ft: &FanTable) -> Value {
     let n = tiles::counts_sum(&g.hands[me]) as i32;
     let expect = (4 - g.melds[me].len() as i32) * 3 + 1;
-    let pack = |waits: &[u8]| -> Value {
-        json!({"tiles": waits.iter().map(|&t| json!({"t": t, "left": 4})).collect::<Vec<_>>(),
-               "types": []})
+    // 2026-11-12 用户反馈：「听牌计算器没扣我自己手上的牌」——
+    // 例：2345 筒听 2/5 筒，手里各有一张，应显示各剩 3 张，旧实现硬编码 4。
+    // 剩余张数 = 4 − 已见，已见 = 四家弃牌 + 四家副露（碰 3 / 杠 4）+ 我的暗手
+    // （`drop` 那张若已打掉则少算一张）。与 Python `remaining_unseen` 同式同口径。
+    let mut pub_used = [0i32; 27];
+    for p in 0..4 {
+        for &t in g.discards[p].iter() {
+            if (t as usize) < 27 {
+                pub_used[t as usize] += 1;
+            }
+        }
+        for m in g.melds[p].iter() {
+            if (m.1 as usize) < 27 {
+                pub_used[m.1 as usize] += if dushan_engine::fan::meld_is_kong(m.0) { 4 } else { 3 };
+            }
+        }
+    }
+    let hand_now = g.hands[me];
+    let left_of = |w: u8, drop: Option<u8>| -> i64 {
+        let mut seen = pub_used[w as usize] + hand_now[w as usize] as i32;
+        if drop == Some(w) {
+            seen -= 1;
+        }
+        (4 - seen).max(0) as i64
+    };
+    // 听的是不是「值钱牌型」：与推荐理由同源（平胡不列，只在没有其他牌型时兜底）
+    let types_of = |waits: &[u8], drop: Option<u8>| -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for &w in waits {
+            let mut h = hand_now;
+            if let Some(d) = drop {
+                // 这一张已经被打出去，不在手上了
+                h[d as usize] = h[d as usize].saturating_sub(1);
+            }
+            h[w as usize] = h[w as usize].saturating_add(1);
+            for tp in dushan_engine::fan::win_type_set(&h, &g.melds[me], Some(w), ft) {
+                if tp == dushan_engine::fan::PING_HU {
+                    continue;
+                }
+                let cn = match tp {
+                    dushan_engine::fan::DA_DUI_ZI => "大对子",
+                    dushan_engine::fan::QI_DUI => "小七对",
+                    dushan_engine::fan::LONG_QI_DUI => "龙七对",
+                    dushan_engine::fan::QING_YI_SE => "清一色",
+                    dushan_engine::fan::DAN_DIAO => "单吊",
+                    _ => tp,
+                }
+                .to_string();
+                if !names.contains(&cn) {
+                    names.push(cn);
+                }
+            }
+        }
+        names
+    };
+    let pack = |waits: &[u8], drop: Option<u8>| -> Value {
+        json!({
+            "tiles": waits.iter()
+                .map(|&t| json!({"t": t, "left": left_of(t, drop)}))
+                .collect::<Vec<_>>(),
+            "types": types_of(waits, drop),
+        })
     };
     let mut cur = Value::Null;
     if n == expect {
         let waits = g.winning_tiles(me, ft);
         if !waits.is_empty() {
-            cur = pack(&waits);
+            cur = pack(&waits, None);
         }
     }
     let mut map = Map::new();
@@ -726,7 +784,7 @@ pub fn ting_payload(g: &mut Game, me: usize, ft: &FanTable) -> Value {
             let waits = g.winning_tiles(me, ft);
             g.hands[me][t as usize] += 1;
             if !waits.is_empty() {
-                map.insert(t.to_string(), pack(&waits));
+                map.insert(t.to_string(), pack(&waits, Some(t)));
             }
         }
     }
@@ -784,5 +842,37 @@ mod tests {
         let v = ting_payload(&mut g, 0, &ft);
         assert!(v["cur"].is_null());
         assert!(v["map"].as_object().unwrap().is_empty());
+    }
+
+    /// 2026-11-12 用户反馈：「听牌计算器没扣我手上的牌」。
+    /// 111 222 333 万 + 44 条 + 55 筒 → 听 4 条 / 5 筒，两门手里各有 2 张 ⇒ 各剩 2。
+    #[test]
+    fn ting_left_subtracts_own_hand() {
+        let ft = FanTable::build();
+        let mut g = hand_of(&[0, 0, 0, 1, 1, 1, 2, 2, 2, 12, 12, 22, 22]);
+        let v = ting_payload(&mut g, 0, &ft);
+        let arr = v["cur"]["tiles"].as_array().expect("13 张听牌要有 cur");
+        let left = |t: u64| arr.iter()
+            .find(|x| x["t"].as_u64() == Some(t))
+            .map(|x| x["left"].as_u64().unwrap());
+        assert_eq!(left(12), Some(2), "4 条手里 2 张 → 剩 2：{arr:?}");
+        assert_eq!(left(22), Some(2), "5 筒手里 2 张 → 剩 2：{arr:?}");
+    }
+
+    /// 牌河/副露也要扣：牌河已各现 1 张 → 4 条/5 筒各剩 1；再被碰走 3 张则归零。
+    #[test]
+    fn ting_left_subtracts_discards_and_melds() {
+        let ft = FanTable::build();
+        let mut g = hand_of(&[0, 0, 0, 1, 1, 1, 2, 2, 2, 12, 12, 22, 22]);
+        g.discards[1].push(12);
+        g.discards[2].push(22);
+        g.melds[3].push((dushan_engine::fan::MELD_PONG, 12, 0));
+        let v = ting_payload(&mut g, 0, &ft);
+        let arr = v["cur"]["tiles"].as_array().unwrap();
+        let left = |t: u64| arr.iter()
+            .find(|x| x["t"].as_u64() == Some(t))
+            .map(|x| x["left"].as_u64().unwrap());
+        assert_eq!(left(12), Some(0), "手里 2 + 牌河 1 + 副露 3 = 6 已见（封顶 0）：{arr:?}");
+        assert_eq!(left(22), Some(1), "手里 2 + 牌河 1 = 3 已见 → 剩 1：{arr:?}");
     }
 }

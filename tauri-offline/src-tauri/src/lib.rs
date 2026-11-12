@@ -21,7 +21,7 @@
 
 use std::{
     io::{Read, Write},
-    net::{TcpStream, ToSocketAddrs},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -33,8 +33,14 @@ use tauri::WebviewWindow;
 /// 端口是 localStorage 的 origin 一部分，必须固定，设置才不会每次启动清零。
 const FIXED_PORT: u16 = 8791;
 
-/// 「在线模式」首次启动的默认地址（当前机器的局域网地址，见 docs/手机访问.md）。
-/// 用户可在启动页改，改动存在启动页自己的 localStorage 里。
+/// 「在线模式」扫描端口清单（2026-11-12 用户口径：地址不再写死，改为局域网自动发现）。
+///   * 8770 = `web/dushan_server.py` 默认端口（网页版与桌面版共用的服务端）；
+///   * 8771 = 桌面版（`desktop/`）内嵌服务端端口。
+/// 两者都是「手机开网页版」的合法入口，都扫。
+const SCAN_PORTS: [u16; 2] = [8770, 8771];
+
+/// 兜底地址：扫描全失败且用户从没存过地址时，输入框里给一个「历史默认」提示。
+/// 只作为**预填/提示**，不再作为硬连接目标（用户要求「不定死地址」）。
 const DEFAULT_SERVER: &str = "http://172.26.68.203:8770";
 const CHECK_TIMEOUT_MS: u64 = 2500;
 
@@ -126,6 +132,42 @@ fn enter_game(window: WebviewWindow, engine: tauri::State<'_, Arc<Engine>>) -> R
     Ok(game_url)
 }
 
+/// 明文 TCP 探测 `GET {base}/api/meta`，返回 `(是否 200, 状态行, 耗时ms)`。
+///
+/// 抽出来是因为**连通性校验**与**局域网扫描后的候选校验**必须同一口径：
+/// 扫描能「连上」不代表对端是独山麻将服务端（任何占用 8770 的进程都连得上），
+/// 而 `/api/meta` 是本服务端独有的公开接口。
+fn probe_meta(host: &str, port: u16, base: &str) -> (bool, String, u128) {
+    let addr = format!("{host}:{port}");
+    let sock = match addr.to_socket_addrs() {
+        Ok(mut it) => match it.next() {
+            Some(a) => a,
+            None => return (false, String::new(), 0),
+        },
+        Err(_) => return (false, String::new(), 0),
+    };
+    let t0 = Instant::now();
+    let mut stream = match TcpStream::connect_timeout(&sock, Duration::from_millis(CHECK_TIMEOUT_MS)) {
+        Ok(s) => s,
+        Err(_) => return (false, String::new(), t0.elapsed().as_millis()),
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(CHECK_TIMEOUT_MS)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(CHECK_TIMEOUT_MS)));
+    let base = base.trim_end_matches('/');
+    let req = format!(
+        "GET {base}/api/meta HTTP/1.1\r\nHost: {addr}\r\nUser-Agent: ZhuojiOffline/1.2\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(req.as_bytes()).is_err() {
+        return (false, String::new(), t0.elapsed().as_millis());
+    }
+    let mut buf = Vec::new();
+    let _ = stream.read_to_end(&mut buf);  // 读超时是预期内的，用已收到的字节判断状态行
+    let text = String::from_utf8_lossy(&buf);
+    let status = text.lines().next().unwrap_or("").trim().to_string();
+    let ok = status.contains(" 200 ");
+    (ok, status, t0.elapsed().as_millis())
+}
+
 /// 「在线模式」连通性探测：只用 std 明文 TCP 请求公开的 `GET /api/meta`，
 /// 不读取任何对局数据。HTTPS 不做明文探测，直接放行（std 没有 TLS）。
 #[tauri::command]
@@ -145,45 +187,181 @@ fn check_online(url: String) -> serde_json::Value {
     }
     let host = parsed.host_str().unwrap_or("").to_string();
     let port = parsed.port_or_known_default().unwrap_or(8770);
-    let addr = format!("{host}:{port}");
-    let sock = match addr.to_socket_addrs() {
-        Ok(mut it) => match it.next() {
-            Some(a) => a,
-            None => return serde_json::json!({"ok": false, "status": "", "latencyMs": 0,
-                                             "error": "无法解析主机地址"}),
-        },
-        Err(e) => return serde_json::json!({"ok": false, "status": "", "latencyMs": 0,
-                                            "error": format!("无法解析主机地址：{e}")}),
-    };
-    let t0 = Instant::now();
-    let mut stream = match TcpStream::connect_timeout(&sock, Duration::from_millis(CHECK_TIMEOUT_MS)) {
-        Ok(s) => s,
-        Err(e) => return serde_json::json!({"ok": false, "status": "", "latencyMs": 0,
-            "error": format!("连不上 {host}:{port}（{e}）。请确认电脑端服务已启动、手机与电脑在同一 Wi-Fi。")}),
-    };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(CHECK_TIMEOUT_MS)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(CHECK_TIMEOUT_MS)));
-    let base = parsed.path().trim_end_matches('/');
-    let req = format!(
-        "GET {base}/api/meta HTTP/1.1\r\nHost: {addr}\r\nUser-Agent: ZhuojiOffline/1.2\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
-    );
-    if let Err(e) = stream.write_all(req.as_bytes()) {
+    // 先做一次 DNS/地址解析，失败时要给「连不上/无法解析」这两种不同口径的文案。
+    if host.parse::<IpAddr>().is_err() && format!("{host}:{port}").to_socket_addrs().is_err() {
         return serde_json::json!({"ok": false, "status": "", "latencyMs": 0,
-                                  "error": format!("发送请求失败：{e}")});
+                                  "error": format!("无法解析主机地址 {host}")});
     }
-    let mut buf = Vec::new();
-    let _ = stream.read_to_end(&mut buf);  // 读超时是预期内的，用已收到的字节判断状态行
-    let text = String::from_utf8_lossy(&buf);
-    let status = text.lines().next().unwrap_or("").trim().to_string();
-    let latency_ms = t0.elapsed().as_millis();
-    let ok = status.contains(" 200 ");
+    let (ok, status, latency_ms) = probe_meta(&host, port, parsed.path());
+    let status_text = if status.is_empty() { "服务端无响应".to_string() } else { status.clone() };
+    let error_text = if ok {
+        String::new()
+    } else if status.is_empty() {
+        format!("连不上 {host}:{port}。请确认电脑端服务已启动、手机与电脑在同一 Wi-Fi。")
+    } else {
+        "服务端未返回 HTTP 200，请检查地址与端口（默认 8770）".to_string()
+    };
     serde_json::json!({
         "ok": ok,
-        "status": if status.is_empty() { "服务端无响应".to_string() } else { status },
+        "status": status_text,
         "latencyMs": latency_ms,
-        "error": if ok { "" } else { "服务端未返回 HTTP 200，请检查地址与端口（默认 8770）" },
+        "error": error_text,
     })
 }
+
+/* ---------------- 局域网自动发现（2026-11-12） ----------------
+   用户口径：「app 的网页在线版本链接能不能不定死地址，而是在局域网内自动扫描？
+   自动扫描到服务端然后连接上。」
+
+   两级发现，都跑在 Rust 侧（WebView 里发 UDP 广播会被 CORS/CSP 与
+   Android WebView 的混合内容策略拦掉，只能由原生做）：
+
+   ① **UDP 广播**（首选，<1.2 s）：向 `255.255.255.255:{8770,8771}` 发
+      `DUSHAN?`，服务端（`offline/src/http.rs::serve_on` 与
+      `web/dushan_server.py::start_discovery`）回 `DUSHAN1 <port>`。
+      应答包的**来源 IP** 就是服务端 IP（不用自己拼网段），端口以报文为准。
+   ② **TCP 扫描**（兜底，仅在①全空时跑）：部分家用路由/手机厂商 ROM 会丢弃
+      受限广播（255.255.255.255）。这时用「本机 IP 所在 /24」逐个连
+      `8770/8771`，48 个 worker 并发、单连接 220 ms 超时，最坏 ~2 s。
+
+   两个阶段的结果都要过 `probe_meta`（`/api/meta` 必须 200）才认定为服务端 ——
+   任何占用 8770 的进程都能 TCP 连上，只有独山麻将服务端能答 `/api/meta`。 */
+
+/// 本机局域网 IPv4：UDP connect 只让内核选路，不发包；无默认路由时返回 None。
+fn local_ipv4() -> Option<Ipv4Addr> {
+    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    match sock.local_addr().ok()?.ip() {
+        IpAddr::V4(v) => Some(v),
+        IpAddr::V6(_) => None,
+    }
+}
+
+/// 解析 `DUSHAN1 <port>\n`。端口缺失/非法时退回 `peer_port`（应答包的来源端口，
+/// 服务端的 UDP 与 HTTP 同端口，所以它本身也是对的）。
+fn parse_discovery_reply(msg: &str, peer_port: u16) -> Option<u16> {
+    let rest = msg.trim().strip_prefix("DUSHAN1")?;
+    Some(rest.trim().parse::<u16>().unwrap_or(peer_port))
+}
+
+/// ① UDP 广播发现。`wait` 是总等待时间，期间每 200 ms 重发一次探测
+/// （UDP 会丢包，单发一次在弱信号下命中率很低）。
+fn udp_discover(ports: &[u16], wait: Duration) -> Vec<(String, u16)> {
+    let mut out: Vec<(String, u16)> = Vec::new();
+    let sock = match UdpSocket::bind("0.0.0.0:0") {
+        Ok(s) => s,
+        Err(_) => return out,
+    };
+    if sock.set_broadcast(true).is_err() {
+        return out;
+    }
+    let _ = sock.set_read_timeout(Some(Duration::from_millis(120)));
+    let deadline = Instant::now() + wait;
+    let mut next_send = Instant::now();
+    let mut buf = [0u8; 256];
+    while Instant::now() < deadline {
+        if Instant::now() >= next_send {
+            for &p in ports {
+                let _ = sock.send_to(b"DUSHAN?", ("255.255.255.255", p));
+            }
+            next_send = Instant::now() + Duration::from_millis(200);
+        }
+        match sock.recv_from(&mut buf) {
+            Ok((n, peer)) => {
+                let msg = String::from_utf8_lossy(&buf[..n]);
+                if let Some(port) = parse_discovery_reply(&msg, peer.port()) {
+                    let ip = peer.ip().to_string();
+                    if !out.iter().any(|(i, p)| *i == ip && *p == port) {
+                        out.push((ip, port));
+                    }
+                }
+            }
+            Err(_) => { /* 读超时/被拒：继续到 deadline，别把整轮扫描打断 */ }
+        }
+    }
+    out
+}
+
+/// ② TCP 扫描兜底：本机 IP 所在 /24 × 端口清单，worker 池并发。
+fn tcp_sweep(ports: &[u16], per_timeout: Duration, workers: usize) -> Vec<(String, u16)> {
+    let own = match local_ipv4() {
+        Some(ip) => ip,
+        None => return Vec::new(),
+    };
+    let o = own.octets();
+    let mut targets: Vec<SocketAddr> = Vec::new();
+    for h in 1u8..=254 {
+        let cand = Ipv4Addr::new(o[0], o[1], o[2], h);
+        if cand == own {
+            continue;
+        }
+        for &p in ports {
+            targets.push(SocketAddr::from((cand, p)));
+        }
+    }
+    let queue = Arc::new(Mutex::new(targets));
+    let hits: Arc<Mutex<Vec<(String, u16)>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut handles = Vec::new();
+    for _ in 0..workers.max(1) {
+        let q = queue.clone();
+        let h = hits.clone();
+        handles.push(std::thread::spawn(move || loop {
+            let next = { q.lock().unwrap().pop() };
+            let addr = match next {
+                Some(a) => a,
+                None => break,
+            };
+            if TcpStream::connect_timeout(&addr, per_timeout).is_ok() {
+                h.lock().unwrap().push((addr.ip().to_string(), addr.port()));
+            }
+        }));
+    }
+    for h in handles {
+        let _ = h.join();
+    }
+    let out = hits.lock().unwrap().clone();
+    out
+}
+
+/// 启动页「扫描局域网」：返回可用服务端列表（按延迟升序）。
+///
+/// 载荷：`{ok, found:[{url,ip,port,latencyMs,status}], mode:"udp"|"sweep",
+///        udpHits, elapsedMs, ports:[...]}`
+#[tauri::command]
+fn scan_lan(timeout_ms: Option<u64>) -> serde_json::Value {
+    let t0 = Instant::now();
+    let wait = Duration::from_millis(timeout_ms.unwrap_or(1200).clamp(300, 4000));
+    let mut cands = udp_discover(&SCAN_PORTS, wait);
+    let udp_hits = cands.len();
+    let mut mode = "udp";
+    if cands.is_empty() {
+        mode = "sweep";
+        cands = tcp_sweep(&SCAN_PORTS, Duration::from_millis(220), 48);
+    }
+    let mut found: Vec<serde_json::Value> = Vec::new();
+    for (ip, port) in cands {
+        let (ok, status, latency_ms) = probe_meta(&ip, port, "");
+        if !ok {
+            continue;
+        }
+        found.push(serde_json::json!({
+            "url": format!("http://{ip}:{port}"),
+            "ip": ip, "port": port,
+            "latencyMs": latency_ms,
+            "status": status,
+        }));
+    }
+    found.sort_by_key(|v| v["latencyMs"].as_u64().unwrap_or(u64::MAX));
+    serde_json::json!({
+        "ok": !found.is_empty(),
+        "found": found,
+        "mode": mode,
+        "udpHits": udp_hits,
+        "elapsedMs": t0.elapsed().as_millis(),
+        "ports": SCAN_PORTS,
+    })
+}
+
 
 /// 「在线模式」：把 WebView 导航到移动网页版。游戏资源一字不改，
 /// 只补 `?touch=1`（Android WebView 不命中 pointer:coarse 媒体查询）。
@@ -261,6 +439,7 @@ pub fn run() {
             engine_status,
             enter_game,
             check_online,
+            scan_lan,
             enter_online,
             app_info
         ])
@@ -306,5 +485,26 @@ mod tests {
         let r = check_online("not a url".into());
         assert_eq!(r["ok"], false);
         assert!(!r["error"].as_str().unwrap_or("").is_empty());
+    }
+
+    #[test]
+    fn discovery_reply_is_parsed() {
+        assert_eq!(parse_discovery_reply("DUSHAN1 8770\n", 9), Some(8770));
+        assert_eq!(parse_discovery_reply("DUSHAN1 8771", 9), Some(8771));
+        // 端口段缺失/非法 → 退回来源端口
+        assert_eq!(parse_discovery_reply("DUSHAN1", 8770), Some(8770));
+        assert_eq!(parse_discovery_reply("DUSHAN1 abc", 8770), Some(8770));
+        // 不是本协议的报文一律忽略（网段里别的广播不能被当成服务端）
+        assert_eq!(parse_discovery_reply("HELLO 1", 8770), None);
+        assert_eq!(parse_discovery_reply("", 8770), None);
+    }
+
+    #[test]
+    fn scan_reports_shapes_even_when_empty() {
+        // 300 ms 内没应答也必须返回结构完整的 JSON（前端直接读 found/mode）。
+        let r = scan_lan(Some(300));
+        assert!(r["found"].is_array());
+        assert!(r["ports"].is_array());
+        assert_eq!(r["ok"], !r["found"].as_array().unwrap().is_empty());
     }
 }

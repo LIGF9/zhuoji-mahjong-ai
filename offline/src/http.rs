@@ -364,6 +364,30 @@ pub fn serve(port: u16, app: Arc<Mutex<App>>) -> std::io::Result<u16> {
 pub fn serve_on(host: &str, port: u16, app: Arc<Mutex<App>>) -> std::io::Result<u16> {
     let listener = TcpListener::bind((host, port))?;
     let actual = listener.local_addr()?.port();
+    // UDP 发现应答（2026-11-12 用户口径：手机端不要写死地址，要能自动找到服务端）。
+    // 与 TCP 同端口不冲突（不同协议栈）；手机广播 `DUSHAN?` → 这里回 `DUSHAN1 <port>`。
+    // 绑不上（端口被占 / 平台禁用广播接收）只打日志，HTTP 服务照常。
+    match std::net::UdpSocket::bind((host, actual)) {
+        Ok(udp) => {
+            std::thread::Builder::new().name("offline-discovery".into()).spawn(move || {
+                let mut buf = [0u8; 128];
+                loop {
+                    match udp.recv_from(&mut buf) {
+                        Ok((n, peer)) => {
+                            let msg = String::from_utf8_lossy(&buf[..n]);
+                            if msg.trim().starts_with("DUSHAN?") {
+                                let reply = format!("DUSHAN1 {actual}\n");
+                                let _ = udp.send_to(reply.as_bytes(), peer);
+                            }
+                        }
+                        Err(_) => std::thread::sleep(Duration::from_millis(150)),
+                    }
+                }
+            })
+            .ok();   // 线程起不来不影响 HTTP 服务
+        }
+        Err(e) => eprintln!("[offline] UDP 发现端口 {host}:{actual} 绑定失败（不影响对局）：{e}"),
+    }
     std::thread::Builder::new()
         .name("offline-http".into())
         .spawn(move || {

@@ -39,32 +39,35 @@
       <div class="status" id="chooser-status" role="status" aria-live="polite">正在检测本地引擎…</div>
     </section>
 
-    <!-- ② 在线模式：与联网客户端同一口径，地址可改、可测、会记住 -->
+    <!-- ② 在线模式：地址不写死 —— 进面板先自动扫描局域网，扫到就直连；
+         扫不到才让人手填（见 main.js::scanLan）。 -->
     <section class="pane" id="online-pane" hidden>
       <div class="pane-head">
         <!-- 2026-11-12 用户口径：在线模式不再放「‹ 返回」按钮，统一由系统返回键回选择页 -->
         <h2>在线模式 · 移动网页版</h2>
       </div>
       <div class="field">
-        <label for="url">对局服务端地址</label>
+        <label for="url">对局服务端地址（自动发现，可手改）</label>
         <div class="input-row">
           <input id="url" type="text" inputmode="url" autocomplete="off" autocapitalize="off"
-                 spellcheck="false" placeholder="http://172.26.68.203:8770">
-          <button id="btn-default" class="ghost" type="button" title="恢复默认地址">默认</button>
+                 spellcheck="false" placeholder="正在扫描局域网…">
+          <button id="btn-scan" class="ghost" type="button" title="重新扫描局域网">扫描</button>
         </div>
       </div>
-      <div class="status" id="online-status" role="status" aria-live="polite">填写电脑端服务地址后进入网页版</div>
+      <!-- 扫到多个服务端时列出候选，点一条即选中（单个时自动直连、不显示） -->
+      <div class="scanlist" id="scanlist" hidden></div>
+      <div class="status" id="online-status" role="status" aria-live="polite">正在扫描局域网…</div>
       <div class="actions">
         <button id="btn-test" class="secondary" type="button">测试连接</button>
         <button id="btn-enter" class="primary" type="button">进入网页版</button>
       </div>
       <div class="hint">
-        <strong>使用前</strong>：电脑上双击运行<strong>独山麻将</strong>桌面版
-        （窗口标题会显示手机访问地址），或执行
-        <code>python web/dushan_server.py --port 8770 --host 0.0.0.0</code>；
-        手机与电脑连同一 Wi-Fi，地址填窗口/日志里显示的局域网地址。
+        <strong>使用前</strong>：电脑上双击运行<strong>独山麻将</strong>桌面版（或
+        <code>python web/dushan_server.py --port 8770 --host 0.0.0.0</code>），
+        手机与电脑连同一 Wi-Fi。地址无需手填 —— 本页会自动在局域网内广播发现；
+        若网络屏蔽了广播，会退化为逐段扫描，仍找不到时再手填窗口标题里的地址。
       </div>
-      <div class="preview" id="preview" hidden>预览模式（未在 APP 内运行）：连接测试不可用，「进入网页版」将在浏览器中打开。</div>
+      <div class="preview" id="preview" hidden>预览模式（未在 APP 内运行）：连接测试与自动扫描不可用，「进入网页版」将在浏览器中打开。</div>
     </section>
 
     <!-- ③ 离线模式：本地 Rust 引擎加载进度 -->

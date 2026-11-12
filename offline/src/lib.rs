@@ -15,6 +15,7 @@
 pub mod view;
 pub mod policy;
 pub mod ting;
+pub mod coach;
 pub mod search;
 pub mod rules_cfg;
 pub mod session;

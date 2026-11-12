@@ -3245,6 +3245,45 @@ def _lan_urls(port: int) -> list:
     return out
 
 
+def start_discovery(host: str, port: int) -> None:
+    """UDP 局域网发现应答（2026-11-12）。
+
+    手机 APP 的「在线模式」不再写死服务端地址：进面板就向
+    `255.255.255.255:{8770,8771}` 广播 `DUSHAN?`，在听的独山麻将服务端回
+    `DUSHAN1 <port>\\n`，客户端拿**应答包的来源 IP** 当服务端地址直连。
+    协议与 Rust 侧 `offline/src/http.rs::serve_on` 的应答线程逐字节一致，
+    所以桌面版（内嵌 Rust 服务）与 `python web/dushan_server.py` 都能被扫到。
+
+    UDP 与 HTTP 同端口不冲突（不同协议栈）。绑定失败只打一行日志 ——
+    自动发现是便利功能，绝不能因为它起不来导致对局服务起不来。
+    """
+    bind_host = "0.0.0.0" if host in ("", "::", "0.0.0.0") else host
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((bind_host, port))
+    except OSError as e:
+        print(f"   UDP 自动发现未启用（{e}）；手机端手填地址仍可用", flush=True)
+        return
+    reply = f"DUSHAN1 {port}\n".encode()
+
+    def loop() -> None:
+        while True:
+            try:
+                data, peer = s.recvfrom(256)
+            except OSError:
+                continue
+            if data.strip().startswith(b"DUSHAN?"):
+                try:
+                    s.sendto(reply, peer)
+                except OSError:
+                    pass
+
+    threading.Thread(target=loop, name="udp-discovery", daemon=True).start()
+    print(f"   UDP 自动发现已就绪 {bind_host}:{port}（手机 APP 在线模式可直接扫到）",
+          flush=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="0.0.0.0",
@@ -3282,6 +3321,8 @@ def main() -> int:
     else:
         print(f"   --host {args.host}：仅该地址可访问（局域网设备连不上）", flush=True)
     print(f"大师模型: {resolve_model_stem('master')}", flush=True)
+    # 手机 APP「在线模式」的局域网自动发现应答（UDP，与 HTTP 同端口）
+    start_discovery(args.host, args.port)
     # 后台预热 ORT 前向后端：第一次点「推荐」不再等建会话编译
     # （Rust 路径已覆盖三档搜索，Python 进程池只在 Rust 异常时兜底，不再预热省内存）
     warm_ort_backend()
