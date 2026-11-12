@@ -573,26 +573,10 @@ impl Session {
         })
     }
 
-    /// `/api/ting`：当前听牌张（map 结构前端兼容）。
+    /// `/api/ting`：局中任意时刻都能判定听牌（2026-11-12 用户反馈）。
     pub fn ting(&mut self, mode_now: bool) -> Value {
-        let tiles: Vec<u8> = self.game.winning_tiles(self.me as usize, &self.ft);
-        if mode_now {
-            let cur = if tiles.is_empty() {
-                Value::Null
-            } else {
-                json!({"tiles": tiles.iter().map(|&t| json!({"t": t, "left": 4})).collect::<Vec<_>>(),
-                       "types": []})
-            };
-            json!({"ok": true, "cur": cur})
-        } else {
-            let mut map = Map::new();
-            for t in &tiles {
-                map.insert(t.to_string(), json!({
-                    "tiles": [{"t": t, "left": 4}], "types": []
-                }));
-            }
-            json!({"ok": true, "map": map})
-        }
+        let _ = mode_now;   // 两种模式共用同一份载荷（见 ting_payload 注释）
+        ting_payload(&mut self.game, self.me as usize, &self.ft)
     }
 
     /// 把 `settle.rs` 的 JSON 转成 Python `_result_payload` 的字段形状。
@@ -699,5 +683,106 @@ impl Session {
         }
         o.insert("page_ver".into(), json!(PAGE_VER));
         Value::Object(o)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 听牌载荷（2026-11-12）
+// ---------------------------------------------------------------------------
+/// `/api/ting` 的统一载荷。抽成自由函数，便于用构造手牌做确定性单测。
+///
+/// 旧实现只调 `Game::winning_tiles()`，而它要求手牌正好是「听牌张数」
+/// `(4-副露数)*3+1`（13/10/7/4/1）；而玩家真正的出牌决策点是 **14 张**，
+/// 所以按钮在自己回合永远答「未听牌」，只有等别人出牌的 13 张状态才碰巧有效。
+///
+/// 现在按张数分两路，**两个字段始终同时下发**：
+///   * `cur`  —— `n == expect`（13 张等，等别人出牌 / 别人回合）→ 直接给等待张，
+///     空表示未听牌。右下角听牌按钮读这个。
+///   * `map`  —— `n == expect + 1`（14 张等，自己的出牌决策点）→ 逐张试打，
+///     给「打这张后听什么」，与线上 Python `ting_hint()` 同口径。
+///     选牌上浮提示读这个。
+/// 两者都不改对局状态（试打后立刻把手牌还原）。
+pub fn ting_payload(g: &mut Game, me: usize, ft: &FanTable) -> Value {
+    let n = tiles::counts_sum(&g.hands[me]) as i32;
+    let expect = (4 - g.melds[me].len() as i32) * 3 + 1;
+    let pack = |waits: &[u8]| -> Value {
+        json!({"tiles": waits.iter().map(|&t| json!({"t": t, "left": 4})).collect::<Vec<_>>(),
+               "types": []})
+    };
+    let mut cur = Value::Null;
+    if n == expect {
+        let waits = g.winning_tiles(me, ft);
+        if !waits.is_empty() {
+            cur = pack(&waits);
+        }
+    }
+    let mut map = Map::new();
+    if n == expect + 1 {
+        for t in 0..27u8 {
+            if g.hands[me][t as usize] == 0 {
+                continue;
+            }
+            g.hands[me][t as usize] -= 1;
+            let waits = g.winning_tiles(me, ft);
+            g.hands[me][t as usize] += 1;
+            if !waits.is_empty() {
+                map.insert(t.to_string(), pack(&waits));
+            }
+        }
+    }
+    json!({"ok": true, "cur": cur, "map": map})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hand_of(tiles: &[u8]) -> dushan_engine::state::Game {
+        let mut g = Game::blank();
+        for &t in tiles {
+            g.hands[0][t as usize] += 1;
+        }
+        g
+    }
+
+    /// 门清 13 张听牌：111 222 333 44 55 → 至少听 4 / 5（索引 3、4）。
+    /// 这正是「13 张手牌也应该能判定听牌」的场景。
+    /// 注：引擎对这类「对子待补」牌型的可胡张比直觉更宽（还会接受 1/2/3/6），
+    /// 这是结算同源逻辑，测试只校验「确实判出听牌且包含 4/5」。
+    #[test]
+    fn ting_thirteen_tiles_reports_waits() {
+        let ft = FanTable::build();
+        let mut g = hand_of(&[0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 4]);
+        let v = ting_payload(&mut g, 0, &ft);
+        assert!(!v["cur"].is_null(), "13 张听牌必须给出 cur");
+        let tiles: Vec<u8> = v["cur"]["tiles"].as_array().unwrap()
+            .iter().map(|x| x["t"].as_u64().unwrap() as u8).collect();
+        assert!(!tiles.is_empty());
+        assert!(tiles.contains(&3) && tiles.contains(&4), "应包含 4/5 两门: {tiles:?}");
+        assert!(v["map"].as_object().unwrap().is_empty(), "13 张不该有逐张候选");
+    }
+
+    /// 同一手牌多摸一张（14 张）→ 打出多余的那张仍在听，`map` 要给出候选。
+    #[test]
+    fn ting_fourteen_tiles_reports_discard_map() {
+        let ft = FanTable::build();
+        let mut g = hand_of(&[0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 4, 5]);
+        let v = ting_payload(&mut g, 0, &ft);
+        assert!(v["cur"].is_null(), "14 张不是等待态，cur 应为空");
+        let mp = v["map"].as_object().unwrap();
+        let hit = mp.get("5").expect("打出 6 之后应当听牌");
+        let tiles: Vec<u8> = hit["tiles"].as_array().unwrap()
+            .iter().map(|x| x["t"].as_u64().unwrap() as u8).collect();
+        assert!(tiles.contains(&3) && tiles.contains(&4), "应包含 4/5 两门: {tiles:?}");
+    }
+
+    /// 散牌 13 张未听 → 两个字段都应为空（不能误报「听」）。
+    #[test]
+    fn ting_not_ready_reports_empty() {
+        let ft = FanTable::build();
+        let mut g = hand_of(&[0, 3, 6, 9, 12, 15, 18, 21, 24, 1, 5, 10, 20]);
+        let v = ting_payload(&mut g, 0, &ft);
+        assert!(v["cur"].is_null());
+        assert!(v["map"].as_object().unwrap().is_empty());
     }
 }

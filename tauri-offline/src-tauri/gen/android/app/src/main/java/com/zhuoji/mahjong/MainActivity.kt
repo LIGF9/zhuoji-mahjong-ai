@@ -8,6 +8,8 @@ import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
 import android.view.WindowManager
+import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -26,11 +28,16 @@ import androidx.core.view.WindowInsetsControllerCompat
  *     临时放开为 `UNSPECIFIED`（固定方向的 Activity 在小窗里会被 letterbox，
  *     这是「横屏游戏开不了小窗」的根因），退出多窗口再锁回横屏。
  *  4. 不复制、不修改任何游戏 HTML/CSS/JS：WebView 内容仍由服务端（或离线内核）提供。
+ *  5. **返回键回选择页**（2026-11-12 用户反馈）：`TauriActivity` 把
+ *     `handleBackNavigation` 关成 false，Wry 不注册返回键回调，安卓返回键会
+ *     直接 finish Activity。这里自己注册回调：在游戏页/在线页时回到
+ *     `tauri.localhost` 的「选择模式」首屏，已经在首屏才退出应用。
  */
 class MainActivity : TauriActivity() {
 
     private val idleHandler = Handler(Looper.getMainLooper())
     private var screenOnFlagged = false
+    private var gameWebView: WebView? = null
 
     private val clearScreenOn = Runnable {
         if (screenOnFlagged) {
@@ -45,6 +52,33 @@ class MainActivity : TauriActivity() {
         applyImmersive()
         applyOrientation(isInMultiWindowMode)
         touchKeepScreenOn()
+
+        // TauriActivity.handleBackNavigation=false → 系统返回键默认直接 finish。
+        // 自己接一层：只要当前不在选择页，就把 WebView 导回选择页。
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val wv = gameWebView
+                val url = wv?.url.orEmpty()
+                val onChooser = url.isEmpty() ||
+                    url.contains("tauri.localhost") ||
+                    url.startsWith("about:blank")
+                if (!onChooser && wv != null) {
+                    wv.loadUrl(CHOOSER_URL)
+                    wv.clearHistory()
+                } else {
+                    // 已在首屏 → 交给系统默认（退出应用）
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                    isEnabled = true
+                }
+            }
+        })
+    }
+
+    /** Wry 在 WebView 建好时回调；保存引用供返回键导航使用。 */
+    override fun onWebViewCreate(webView: WebView) {
+        super.onWebViewCreate(webView)
+        gameWebView = webView
     }
 
     override fun onResume() {
@@ -113,5 +147,6 @@ class MainActivity : TauriActivity() {
 
     private companion object {
         const val IDLE_TIMEOUT_MS = 5 * 60 * 1000L
+        const val CHOOSER_URL = "http://tauri.localhost/"
     }
 }

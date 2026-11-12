@@ -3088,7 +3088,7 @@ html:not(.mob) .seat-left, html:not(.mob) .seat-right {
 .ava-side { position: absolute; z-index: 6; display: flex; gap: 4px;
   white-space: nowrap; pointer-events: none; }
 .ava-side:empty, .ava-side > span:empty { display: none; }
-.seat-me   .ava-side { bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); }
+.seat-me   .ava-side { bottom: calc(100% + 1px); left: 50%; transform: translateX(-50%); }
 .seat-top  .ava-side { top: calc(100% + 3px);    left: 50%; transform: translateX(-50%); }
 .seat-left .ava-side { left: calc(100% + 5px);   top: 50%; transform: translateY(-50%); }
 .seat-right .ava-side { right: calc(100% + 5px); top: 50%; transform: translateY(-50%); }
@@ -3537,17 +3537,18 @@ html.mob .scoregrid input { width: 42px; }
       <span class="avatar-wrap">
         <img class="avatar" id="me-avatar" src="/assets/avatar/boy/云天明.jpg" alt="我">
         <span class="wind-corner" id="me-wind" style="display:none"><img src="/assets/table/east.png" alt="庄"></span>
+        <!-- 徽标唯一出口：与三位对手一样挂进 .avatar-wrap，以头像为锚居中
+             并紧贴头像卡上沿。2026-11-12 实机反馈「我的 tag 没对齐贴着显示区」：
+             此前挂在 .seat-me 整卡层，left:50% 按「头像+名字」整卡算，
+             比头像中心右偏约 20px，且 bottom:100%+6px 让它浮到牌河里。 -->
+        <span class="ava-side" id="me-side">
+          <span id="me-abadges"></span><span id="me-badges"></span>
+        </span>
       </span>
       <div class="pinfo">
         <div class="pname" id="me-name">你</div>
         <div class="pscore"><span id="me-score">0</span></div>
       </div>
-      <!-- 徽标唯一出口（2026-11-04 第十七轮）：杠·通行证 / 报叫 全部走 .ava-side
-           —— 以「头像+名字」整卡为锚居中，修掉此前重复 id="me-abadges" 导致
-           标签只对齐头像、与信息牌错位的 bug -->
-      <span class="ava-side" id="me-side">
-        <span id="me-abadges"></span><span id="me-badges"></span>
-      </span>
     </div>
     <div id="me-melds"></div>
     <div id="hand"></div>
@@ -4650,23 +4651,39 @@ function jiDotsFor(t, tag, zr) {
   return jiDotsHTML(tag, cls);
 }
 /* 结算翻鸡牌种：全 UI 唯一真源（2026-11-12）。
-   优先用服务端 res.fanji_tiles；旧服务端 / 旧回放没下发这一字段时，按指示牌
-   + 结算翻鸡模式回推（与 Rust state::fanji_mask 同源：上鸡 +1、下鸡 −1、九回一，
-   指示牌本身不算翻鸡牌）。此前只有「结算信息条」做了回推，手牌红点直接读
-   res.fanji_tiles —— 字段一缺就出现「信息条显示四六条、手里只有六条带红点」。 */
+   真源 = 显式 res.fanji_tiles ∪ 结算明细里**真的按翻鸡计过分**的牌种
+   （res.fanji_detail 每家的 [牌种, 张数]）；两者都缺时才按指示牌 + 模式回推。
+   2026-11-12 二次修订：实机反馈「翻到五条 → 四、六条都参与结算，手牌却只有
+   六条带红点」。只信单一字段时，字段缺一张 / 模式写成数字或中文别名都会漏标；
+   并入结算明细后，点标口径与「参与了结算」逐位一致。
+   模式兼容：off/up/down/both、上鸡/下鸡/上下鸡，以及后端数值 1/2/3。 */
 function fanjiTilesOf(res) {
-  if (!res || res.type !== "win" || res.fanji_flip == null) return [];
-  const explicit = [...new Set((res.fanji_tiles || []).map(Number))]
-    .filter(t => Number.isInteger(t) && t >= 0 && t < 27).sort((a, b) => a - b);
-  if (explicit.length) return explicit;
-  const mode = res.jiesuan_fanji;
-  if (!mode || mode === "off") return [];
+  if (!res || res.type !== "win") return [];
+  const out = new Set();
+  const add = t => {
+    const n = Number(t);
+    if (Number.isInteger(n) && n >= 0 && n < 27) out.add(n);
+  };
+  (Array.isArray(res.fanji_tiles) ? res.fanji_tiles : []).forEach(add);
+  const bd = res.fanji_detail;
+  if (bd && typeof bd === "object") {
+    Object.values(bd).forEach(arr => (Array.isArray(arr) ? arr : []).forEach(e => {
+      if (Array.isArray(e)) add(e[0]);
+      else if (e && typeof e === "object") add(e.tile != null ? e.tile : e.t);
+    }));
+  }
+  if (out.size) return [...out].sort((a, b) => a - b);
+  if (res.fanji_flip == null) return [];
+  const raw = res.jiesuan_fanji;
+  const mode = (typeof raw === "number") ? raw
+    : ({ up: 1, "上鸡": 1, down: 2, "下鸡": 2, both: 3, "上下鸡": 3 }[String(raw)] || 0);
+  if (!mode) return [];
   const flip = Number(res.fanji_flip);
   if (!Number.isInteger(flip) || flip < 0 || flip >= 27) return [];
-  const s = Math.floor(flip / 9), r0 = flip % 9, out = [];
-  if (mode === "both" || mode === "up") out.push(s * 9 + (r0 + 1) % 9);
-  if (mode === "both" || mode === "down") out.push(s * 9 + (r0 + 8) % 9);
-  return [...new Set(out)].filter(t => t !== flip).sort((a, b) => a - b);
+  const s = Math.floor(flip / 9), r0 = flip % 9, fb = [];
+  if (mode === 3 || mode === 1) fb.push(s * 9 + (r0 + 1) % 9);
+  if (mode === 3 || mode === 2) fb.push(s * 9 + (r0 + 8) % 9);
+  return [...new Set(fb.filter(t => t !== flip))].sort((a, b) => a - b);
 }
 /* 当前帧的**本局鸡牌种**（结算帧优先用传入的 st，支持回放；局中用 LAST_STATE）。
    2026-11-06：副露/标签里「普通鸡牌」常常没有 m.ji 丝带标记，只靠牌种判断，
@@ -4684,7 +4701,11 @@ function activeJiSet(st) {
    这份集合绝不能用于弃牌墙、副露或结算页的「打出的鸡牌」列表。 */
 function handJiSet(st) {
   const s = st || (typeof RES_SRC !== "undefined" && RES_SRC) || LAST_STATE;
-  const extra = s && s.result ? fanjiTilesOf(s.result) : [];
+  // 结算帧偶尔只把 result 挂在 RES_SRC / LAST_STATE 上（回放、视角切换），
+  // 这里逐级回落，避免翻鸡种退化成空集、只剩本局鸡种被点标。
+  const src = (typeof RES_SRC !== "undefined" && RES_SRC) || LAST_STATE;
+  const res = (s && s.result) || (src && src.result);
+  const extra = res ? fanjiTilesOf(res) : [];
   return new Set([...activeJiSet(st), ...extra].map(Number));
 }
 
@@ -6487,7 +6508,7 @@ const RIVER_ROT = { 1: " rot rotr", 3: " rot" };
 /* 副露格子化：rc 为座位旋转类；type2/3 的横置杠牌在我/对家侧用 rot（底对齐），左右家侧与组内同向。
    mirror=该座位面板在屏幕上是「镜像」显示（右家竖列、对家横行的组首都画在屏幕左/上），
    横置牌位置需反转，使横牌始终位于组内靠近来源玩家的一端（指向来源）。 */
-function meldCells(m, rc, ownerSeat, mirror, dots, st) {
+function meldCells(m, rc, ownerSeat, mirror, dots, st, jiSet) {
   // fc = 真牌面格（牌背图用 MELD_BACK）：左右两家的牌面朝向与牌背相反，
   // 由 CSS 的 `.seat-*.mc.fc img` 负责再转 180°（2026-11-02 v6 用户口径）
   const c = (src, extra = "") =>
@@ -6506,9 +6527,12 @@ function meldCells(m, rc, ownerSeat, mirror, dots, st) {
   // 副露吃进冲锋鸡/横鸡：真实牌面 + 统一角标（冲=红/横=蓝）；普通幺鸡/开局翻鸡鸡牌用普通牌面
   // 2026-11-06：普通鸡牌（幺鸡/开局翻鸡种）常常没有 m.ji 丝带标签，
   // 只按牌种判断；否则碰杠中的这些鸡牌会是光板（用户报「漏加点」）。
-  // 2026-11-12：调用方把当前帧的 st 传进来；副露只认**本局鸡种**，
-  // 结算翻出的鸡牌种不参与（用户口径：翻鸡牌只对手牌有效）。
-  const isJi = !!m.ji || activeJiSet(st).has(+m.tile);
+  // 2026-11-12：调用方把当前帧的 st 传进来；副露默认只认**本局鸡种**。
+  // 2026-11-12 二次修订：结算帧改由调用方传 `jiSet = handJiSet(st)` ——
+  //   副露是「我手里参与结算的牌」，翻鸡算分时它也算（例如翻五条 → 碰掉的
+  //   4 条 3 张全计鸡），所以必须和手牌同口径打点。
+  //   牌河 / 弃牌墙仍然只用 activeJiSet —— 那里的牌已经打出去，不参与结算。
+  const isJi = !!m.ji || (jiSet || activeJiSet(st)).has(+m.tile);
   // dots = true（结算页）：牌小，丝带看不清 → 与结算手牌同款红点（2026-11-02 v4 口径）
   const jiCell = (extra = "") =>       // 鸡牌格：冲/横/金=丝带；普通鸡/翻鸡种=1 点标
     // 注意：横置指示格不带座位旋转类 rc（左右家组内横置牌=竖立的牌，见 .mc.vz）
@@ -6558,13 +6582,13 @@ function meldCells(m, rc, ownerSeat, mirror, dots, st) {
   }
   return c(MELD_BACK) + c(normal) + c(normal) + c(MELD_BACK);
 }
-function meldHTML(m, rc, ownerSeat, mirror, dots, st) {
+function meldHTML(m, rc, ownerSeat, mirror, dots, st, jiSet) {
   // 不加「点碰者」小标：横置牌的垂直方向 + 组内位置（指向来源玩家的一端）已能指示来源；
   // 总览另有文字说明（结算页副露说明列）
   // 2026-11-04 用户口径：移动端副露牌只有 17×26，丝带角标看不清 →
   // 与结算小牌同款红点（冲锋鸡 3 点 / 横鸡 2 点 / 普通鸡·翻鸡 1 点）
   const useDots = dots || document.documentElement.classList.contains("mob");
-  return `<div class="meld">${meldCells(m, rc, ownerSeat, mirror, useDots, st)}</div>`;
+  return `<div class="meld">${meldCells(m, rc, ownerSeat, mirror, useDots, st, jiSet)}</div>`;
 }
 function renderOpp(rel, p, st) {
   const box = seatEl(rel);
@@ -6588,7 +6612,7 @@ function renderOpp(rel, p, st) {
   fan += `<span class="mc${rc} ghost"></span>`.repeat(Math.max(0, slots - p.hand_count));
   // 右家/对家的面板在屏幕上是镜像显示（组首画在屏幕上/左端）→ 横置牌位置需反转，
   // 使横牌始终位于组内靠近来源玩家的一端（左家与我方为正向，无需镜像）
-  const melds = p.melds.map(m => meldHTML(m, rc, p.seat, rel === 1 || rel === 2, false, st)).join("");
+  const melds = p.melds.map(m => meldHTML(m, rc, p.seat, rel === 1 || rel === 2, false, st, handJiSet(st))).join("");
   const cls = "player seat-" + ["", "right", "top", "left"][rel] +
     (st.turn === p.seat && !st.over ? " active" : "");
   if (box.className !== cls) box.className = cls;
@@ -6682,7 +6706,8 @@ function fitSeatTiles() {
 }
 
 function renderMyMelds(melds, ownerSeat, st) {
-  setHTML(el("me-melds"), melds.map(m => meldHTML(m, "", ownerSeat, false, false, st)).join(""));
+  // 副露与手牌同口径：本局鸡种 ∪ 结算翻鸡种（碰掉的翻鸡牌也计鸡，必须打点）
+  setHTML(el("me-melds"), melds.map(m => meldHTML(m, "", ownerSeat, false, false, st, handJiSet(st))).join(""));
 }
 
 /* 我的一行（头像信息 + 副露 + 手牌 + 记牌器）宽度精算：
@@ -8504,7 +8529,7 @@ function playerHandBlock(st, rel, ctx) {
   // 翻鸡之后翻出的牌种也是鸡牌，一并标记 → 一眼看出结算时手里有多少鸡；
   // 2026-11-04 第十六轮：点色 绿=鸡牌 / 红=金鸡 / 四倍金鸡 4 红点
   const meldsHtml = (p.melds && p.melds.length)
-    ? `<span class="ovmelds">${p.melds.map(m => meldHTML(m, "", p.seat, false, true, st)).join("")}</span>` : "";
+    ? `<span class="ovmelds">${p.melds.map(m => meldHTML(m, "", p.seat, false, true, st, ctx.handJiSet)).join("")}</span>` : "";
   // 2026-11-12：结算页手牌走 ctx.handJiSet（本局鸡种 + 结算翻鸡种），
   // 打出的鸡牌走 ctx.jiSet（只本局鸡种），两者口径不能再混用。
   const tileCell = t => {
