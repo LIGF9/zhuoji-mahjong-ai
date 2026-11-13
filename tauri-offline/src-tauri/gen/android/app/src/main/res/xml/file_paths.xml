@@ -2,4 +2,9 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
   <external-path name="my_images" path="." />
   <cache-path name="my_cache_images" path="." />
+  <!-- 对局记录导出（2026-11-12）：文件写在 app_data_dir()/history/exports/，
+       安卓上就是 /data/user/0/<包名>/files/... —— 属于内部 files 目录，
+       分享面板要能读它必须在这里显式开放。 -->
+  <files-path name="app_files" path="." />
+  <external-files-path name="app_ext_files" path="." />
 </paths>

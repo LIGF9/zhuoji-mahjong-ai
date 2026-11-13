@@ -25,6 +25,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 static DIR: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+/// 导出文件的落盘目录（与历史目录分开配置）。
+/// 安卓上历史目录在 `/data/data/<包名>/history`（Tauri 的 app_data_dir 就是
+/// `/data/data/<包名>`），**不在 FileProvider 的 `<files-path>` 覆盖范围内**；
+/// 而 `getCacheDir()` 正好是 `<cache-path>`，所以外壳会把导出目录单独指到缓存目录。
+static EXPORT_DIR: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 static REPLAY_CACHE: OnceLock<Mutex<VecDeque<(String, Value)>>> = OnceLock::new();
 static REPLAY_READY: AtomicBool = AtomicBool::new(false);
 
@@ -42,6 +47,24 @@ fn cache_cell() -> &'static Mutex<VecDeque<(String, Value)>> {
 /// 外壳（安卓 / 桌面 Tauri）启动服务前指定可写目录。
 pub fn set_dir(p: impl Into<PathBuf>) {
     *dir_cell().lock().unwrap() = Some(p.into());
+}
+
+/// 导出目录单独指定（见 [`EXPORT_DIR`] 的注释：安卓要落在 FileProvider 覆盖的
+/// 缓存目录里，否则分享面板拿不到 `content://` URI）。
+pub fn set_export_dir(p: impl Into<PathBuf>) {
+    *export_dir_cell().lock().unwrap() = Some(p.into());
+}
+
+fn export_dir_cell() -> &'static Mutex<Option<PathBuf>> {
+    EXPORT_DIR.get_or_init(|| Mutex::new(None))
+}
+
+/// 导出目录：外壳指定优先，否则 `<历史目录>/exports`。
+pub fn export_dir() -> PathBuf {
+    if let Some(p) = export_dir_cell().lock().unwrap().clone() {
+        return p;
+    }
+    data_dir().join("exports")
 }
 
 /// 当前历史目录。
@@ -468,6 +491,54 @@ pub fn export(fmt: &str) -> (Vec<u8>, &'static str, String) {
     )
 }
 
+/// 把导出内容**落盘**，返回文件路径（2026-11-12「先写文件再分享」）。
+///
+/// 目录固定在 `<历史目录>/exports/`（外壳可用 [`set_export_dir`] 改指到别处）：
+///   * 安卓 → 外壳指向 `getCacheDir()/exports`，在 FileProvider 的
+///     `<cache-path>` 覆盖范围内，分享面板能拿到 content:// URI；
+///   * 桌面 → 记录目录旁的 exports/，Finder 侧同样可访问。
+/// 文件名与下载附件同名（`dushan_records_<时间戳>.<ext>`），用户一眼能对上是哪次导出。
+pub fn export_file(fmt: &str) -> std::io::Result<PathBuf> {
+    let (body, _ctype, name) = export(fmt);
+    let dir = export_dir();
+    fs::create_dir_all(&dir)?;
+    prune_exports(&dir, 20);
+    let p = dir.join(&name);
+    fs::write(&p, &body)?;
+    Ok(p)
+}
+
+/// 导出目录只保留最近 `keep` 个文件（按修改时间）。
+///
+/// 安卓上导出目录在缓存目录里，用户每点一次「导出」就多一个文件，
+/// 不清理会一直长；分享用的文件只需活到用户选完目标应用。
+fn prune_exports(dir: &std::path::Path, keep: usize) {
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    let rd = match fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if !p.is_file() {
+            continue;
+        }
+        let name = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        if !name.starts_with("dushan_records_") {
+            continue;
+        }
+        let t = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+        files.push((t, p));
+    }
+    if files.len() <= keep {
+        return;
+    }
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_t, p) in files.into_iter().skip(keep) {
+        let _ = fs::remove_file(p);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 删除 / 清空
 // ---------------------------------------------------------------------------
@@ -811,6 +882,42 @@ mod tests {
         let c = clear();
         assert_eq!(c["removed_rec"], 3);
         assert_eq!(stats()["all_time"]["games"], 0);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// 「先写文件再分享」：导出必须真的落到 `<历史目录>/exports/`，
+    /// 文件名带时间戳，CSV 带 BOM（Excel 直接双击不乱码）。
+    #[test]
+    fn export_file_lands_in_exports_dir() {
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = tmp_dir("export");
+        set_dir(d.clone());
+        append(
+            &serde_json::json!({"time": "2026-11-12 22:00:00", "rid": "rx", "type": "win",
+                                "my_seat": 0, "fan": 2, "deltas": [2.0, -1.0, -1.0, 0.0]}),
+            None,
+        );
+        let p = export_file("csv").expect("必须能写出 CSV");
+        assert!(p.starts_with(d.join("exports")), "导出目录不对：{}", p.display());
+        assert_eq!(p.extension().unwrap(), "csv");
+        assert!(p.file_name().unwrap().to_string_lossy().starts_with("dushan_records_"));
+        let bytes = fs::read(&p).unwrap();
+        assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]), "CSV 必须带 UTF-8 BOM");
+        let text = String::from_utf8_lossy(&bytes[3..]).to_string();
+        assert!(text.starts_with("时间,"), "表头不对：{}", &text[..text.len().min(40)]);
+        assert!(text.contains("rx"));
+
+        let j = export_file("json").expect("必须能写出 JSON");
+        assert_eq!(j.extension().unwrap(), "json");
+        let v: Value = serde_json::from_slice(&fs::read(&j).unwrap()).unwrap();
+        assert_eq!(v["count"], 1);
+
+        // 外壳可以把导出目录改指到别处（安卓指向 FileProvider 覆盖的缓存目录）
+        let cache = tmp_dir("export_cache");
+        set_export_dir(cache.join("exports"));
+        let c = export_file("csv").expect("必须能写到指定导出目录");
+        assert!(c.starts_with(cache.join("exports")), "导出目录没被覆盖：{}", c.display());
+        let _ = fs::remove_dir_all(&cache);
         let _ = fs::remove_dir_all(&d);
     }
 }

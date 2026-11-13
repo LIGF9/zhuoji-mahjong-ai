@@ -3591,6 +3591,8 @@ dependencies = [
 name = "tauri-app"
 version = "1.2.0"
 dependencies = [
+ "jni",
+ "ndk-context",
  "offline-core",
  "serde",
  "serde_json",

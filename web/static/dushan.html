@@ -7639,16 +7639,63 @@ el("histdel-ok").onclick = async () => {
     toast((r && r.error) || "删除失败");
   }
 };
-/* 导出对局记录（2026-10-13）：服务端直接回 Content-Disposition 附件，
-   这里只负责触发一次下载；导出的是**全量**记录（不只是列表里这 30 局）。 */
-function histExport(fmt) {
+/* 导出对局记录（2026-10-13 首版；2026-11-12 用户口径「先写文件再用系统分享面板打开」）。
+   旧实现直接 `a.href = /api/history_export` 靠浏览器下载 —— 在离线版 / 桌面版的
+   **WebView 里什么都不会弹**（Android WebView 忽略 download 属性，WKWebView 也
+   不会给出任何反馈），用户点了按钮以为坏掉。
+
+   现在统一走 `&share=1`：
+     * 离线内核（App 内）→ 服务端先落盘（安卓在应用缓存目录的 exports/，
+       桌面在记录目录旁），再由外壳调系统分享面板，回 JSON
+       `{ok, path, filename, shared}`（**不带 Content-Disposition**）；
+     * 浏览器 / 网页版（python 服务端不认识 share 参数）→ 回 CSV 附件，
+       前端拿到 blob 后用临时 <a download> 触发下载，行为与旧版一致。
+   两条路都用 fetch 发起，按 **Content-Disposition 里有没有 attachment** 分流，
+   不需要预先知道自己在哪个外壳里（网页版导 JSON 时 Content-Type 也是
+   application/json，只看类型会误判）。 */
+function fileNameFromDisposition(cd, fmt) {
+  const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd || "");
+  if (m && m[1]) { try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; } }
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  const st = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  return `dushan_records_${st}.${fmt}`;
+}
+async function histExport(fmt) {
+  toast(fmt === "csv" ? "正在导出 CSV（Excel 可直接打开）…" : "正在导出 JSON…", 4000);
+  let r;
+  try {
+    r = await fetch(`/api/history_export?format=${encodeURIComponent(fmt)}&share=1`);
+  } catch (e) {
+    toast("导出失败：" + (e && e.message ? e.message : e));
+    return;
+  }
+  const ctype = (r.headers.get("Content-Type") || "").toLowerCase();
+  // 判据是**有没有 Content-Disposition: attachment**，不能只看 Content-Type：
+  // 网页版（python）导 JSON 时 Content-Type 也是 application/json，但它是附件下载，
+  // 只看类型会把导出文件的 JSON 当成「接口返回的 JSON」去解析，然后提示导出失败。
+  const isAttachment = /attachment/i.test(r.headers.get("Content-Disposition") || "");
+  if (!isAttachment && ctype.includes("application/json")) {
+    let j = null;
+    try { j = await r.json(); } catch (e) {}
+    if (!j || !j.ok) { toast((j && j.error) || "导出失败"); return; }
+    const name = j.filename || fileNameFromDisposition("", fmt);
+    if (j.shared) toast(`已导出 ${name}，请在分享面板中选择应用`, 4200);
+    else if (j.supported === false) toast(`已保存到 ${j.path}（可直接用文件管理器打开）`, 5000);
+    else toast(`已导出到 ${j.path}${j.error ? "（分享面板没打开：" + j.error + "）" : ""}`, 5000);
+    return;
+  }
+  if (!r.ok) { toast(`导出失败（HTTP ${r.status}）`); return; }
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = "/api/history_export?format=" + encodeURIComponent(fmt);
+  a.href = url;
+  a.download = fileNameFromDisposition(r.headers.get("Content-Disposition"), fmt);
   a.rel = "noopener";
   document.body.appendChild(a);
   a.click();
-  setTimeout(() => a.remove(), 0);
-  toast(fmt === "csv" ? "正在导出 CSV（Excel 可直接打开）…" : "正在导出 JSON…");
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
+  toast(fmt === "csv" ? "已开始下载 CSV" : "已开始下载 JSON");
 }
 el("hist-export-json").onclick = () => histExport("json");
 el("hist-export-csv").onclick = () => histExport("csv");

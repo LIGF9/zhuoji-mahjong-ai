@@ -19,3 +19,10 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# 导出 → 系统分享面板（2026-11-12）：
+# MainActivity.shareFile 只被 Rust 侧通过 JNI 调用（loadClass + CallStaticObjectMethod），
+# Java/Kotlin 代码里没有任何引用 → R8 在 release 包里把它当死代码删掉，运行时
+# 直接 NoSuchMethodError（实测 APK 的 classes.dex 里搜不到 shareFile）。
+-keepclassmembers class com.zhuoji.mahjong.MainActivity {
+    public static java.lang.String shareFile(android.content.Context, java.lang.String);
+}

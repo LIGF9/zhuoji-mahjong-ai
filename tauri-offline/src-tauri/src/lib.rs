@@ -395,6 +395,94 @@ fn app_info(app: tauri::AppHandle, engine: tauri::State<'_, Arc<Engine>>) -> ser
     })
 }
 
+/* ---------------- 导出文件 → 系统分享面板（2026-11-12） ----------------
+   用户口径：「先写文件再用系统分享面板打开」。
+
+   内核（`offline-core`）收到 `/api/history_export?...&share=1` 时先把 CSV/JSON
+   落到应用私有目录，再回调这里注册的实现。WebView 里 `<a download>` 在安卓
+   WebView 上是**静默失败**的（不弹下载、不给任何提示），所以这条路必须由原生走。
+
+   安卓实现 = JNI 调 `MainActivity.shareFile(Context, String)` → ACTION_SEND
+   + createChooser（Kotlin 侧构造 FileProvider content:// URI）。
+   注意 native 线程的 `FindClass` 只有 boot class loader，找不到应用自己的类，
+   所以要先拿 `context.getClassLoader()` 再 `loadClass("com.zhuoji.mahjong.MainActivity")`。 */
+
+#[cfg(target_os = "android")]
+fn share_file_android(path: &std::path::Path) -> Result<(), String> {
+    use jni::objects::{JClass, JObject, JString, JValue};
+
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
+        .map_err(|e| format!("取 JavaVM 失败：{e}"))?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|e| format!("attach 到 JVM 失败：{e}"))?;
+
+    // 所有 JNI 步骤包在一层闭包里：**无论哪一步失败**，下面都会
+    // `exception_clear()`。这一步不是可选的 —— 遗留 pending 异常在线程 detach 时
+    // 会以「FATAL EXCEPTION: Thread-N」把整个进程带崩（实测 NoSuchMethodError）。
+    let out = (|| -> Result<String, String> {
+        // context() 是外壳在 JNI_OnLoad 时保存的 jobject（应用 Context/Activity）。
+        let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+        let loader = env
+            .call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
+            .map_err(|e| format!("取 ClassLoader 失败：{e}"))?
+            .l()
+            .map_err(|e| format!("取 ClassLoader 失败：{e}"))?;
+        let cls_name = env
+            .new_string("com.zhuoji.mahjong.MainActivity")
+            .map_err(|e| format!("构造类名失败：{e}"))?;
+        let cls = env
+            .call_method(
+                &loader,
+                "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;",
+                &[JValue::Object(&cls_name)],
+            )
+            .map_err(|e| format!("找 MainActivity 失败：{e}"))?
+            .l()
+            .map_err(|e| format!("找 MainActivity 失败：{e}"))?;
+        let cls: JClass = cls.into();
+
+        let p = env
+            .new_string(path.to_string_lossy().to_string())
+            .map_err(|e| format!("构造路径失败：{e}"))?;
+        let ret = env
+            .call_static_method(
+                cls,
+                "shareFile",
+                "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
+                &[JValue::Object(&context), JValue::Object(&p)],
+            )
+            .map_err(|e| format!("调用 shareFile 失败：{e}"))?;
+
+        let obj = ret.l().map_err(|e| format!("返回类型异常：{e}"))?;
+        if obj.is_null() {
+            return Ok(String::new());
+        }
+        let js = JString::from(obj);
+        Ok(env
+            .get_string(&js)
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default())
+    })();
+
+    // 先把 pending 异常的栈打进 logcat（便于现场排查），再清掉它。
+    let _ = env.exception_describe();
+    let _ = env.exception_clear();
+    match out {
+        Ok(msg) if msg.is_empty() => Ok(()),
+        Ok(msg) => Err(msg),
+        Err(e) => Err(e),
+    }
+}
+
+/// 外壳启动时注册分享实现（目前只有安卓客户端需要）。
+fn register_share() {
+    #[cfg(target_os = "android")]
+    offline_core::share::set_handler(Box::new(share_file_android));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let engine = Arc::new(Engine::default());
@@ -403,6 +491,8 @@ pub fn run() {
     tauri::Builder::default()
         .manage(engine)
         .setup(move |app_handle| {
+            // 导出 → 系统分享面板（必须先于起服务注册，否则第一次导出拿不到实现）
+            register_share();
             // 对局记录 / 回放要落到**应用私有目录**（安卓没有 $HOME，内核自己
             // 猜不出可写路径）。必须在起服务之前设好，否则第一手结算就可能
             // 写到不可写目录、记录直接丢。
@@ -415,6 +505,14 @@ pub fn run() {
                         println!("[offline] 对局记录目录 {}", hist.display());
                     }
                     Err(e) => eprintln!("[offline] 取应用数据目录失败（记录可能不可用）：{e}"),
+                }
+                // 导出目录必须是 FileProvider 覆盖的根：安卓的 app_data_dir 是
+                // `/data/data/<包名>`，**不在** `<files-path>` 里（FileProvider 会报
+                // 「Failed to find configured root」），而 getCacheDir() 正是
+                // `<cache-path>`，所以导出单独指到缓存目录。
+                match app_handle.path().app_cache_dir() {
+                    Ok(dir) => offline_core::records::set_export_dir(dir.join("exports")),
+                    Err(e) => eprintln!("[offline] 取缓存目录失败（导出分享可能不可用）：{e}"),
                 }
             }
             // 后台线程：加载两个 ONNX（tract 优化 + 编译）→ 绑定 127.0.0.1:0 → 起服务。

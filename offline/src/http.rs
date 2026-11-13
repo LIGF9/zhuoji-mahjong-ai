@@ -145,8 +145,31 @@ fn route(app: &Arc<Mutex<App>>, method: &str, path: &str, q: &str, body: &Value)
             "/api/history_export" => {
                 let fmt = query_get(q, "format").unwrap_or_else(|| "json".into());
                 let fmt = if fmt.eq_ignore_ascii_case("csv") { "csv" } else { "json" };
-                let (body, ctype, fname) = records::export(fmt);
-                Resp::Download(body, ctype, fname)
+                // `share=1`（2026-11-12）：WebView 里 `<a download>` 不会弹任何东西，
+                // 所以改成「先落盘 → 交给系统分享面板」，再用 JSON 把路径回给前端。
+                // 不带这个参数时仍走附件下载，浏览器网页版（python 服务端）保持原行为。
+                let want_share = matches!(query_get(q, "share").as_deref(), Some("1") | Some("true"));
+                if !want_share {
+                    let (body, ctype, fname) = records::export(fmt);
+                    return Resp::Download(body, ctype, fname);
+                }
+                match records::export_file(fmt) {
+                    Ok(p) => {
+                        let shared = crate::share::share(&p);
+                        Resp::Json(200, json!({
+                            "ok": true,
+                            "path": p.display().to_string(),
+                            "filename": p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+                            "bytes": std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0),
+                            "supported": crate::share::available(),
+                            "shared": shared.is_ok(),
+                            "error": shared.err().unwrap_or_default(),
+                        }))
+                    }
+                    Err(e) => Resp::Json(500, json!({
+                        "ok": false, "error": format!("导出文件写入失败：{e}")
+                    })),
+                }
             }
             "/api/replay" => {
                 let rid = query_get(q, "rid").unwrap_or_default();

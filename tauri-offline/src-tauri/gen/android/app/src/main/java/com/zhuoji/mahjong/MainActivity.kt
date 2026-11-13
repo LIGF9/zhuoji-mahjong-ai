@@ -1,5 +1,8 @@
 package com.zhuoji.mahjong
 
+import android.content.ClipData
+import android.content.Context
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Build
@@ -14,9 +17,11 @@ import android.view.WindowManager
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
+import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import java.io.File
 
 /**
  * 全屏横屏游戏宿主。
@@ -211,9 +216,61 @@ class MainActivity : TauriActivity() {
         super.onDestroy()
     }
 
-    private companion object {
-        const val TAG = "DushanBack"
-        const val IDLE_TIMEOUT_MS = 5 * 60 * 1000L
-        const val CHOOSER_URL = "http://tauri.localhost/"
+    companion object {
+        private const val TAG = "DushanBack"
+        private const val IDLE_TIMEOUT_MS = 5 * 60 * 1000L
+        private const val CHOOSER_URL = "http://tauri.localhost/"
+
+        /**
+         * 导出文件 → 系统分享面板（2026-11-12 用户口径：「先写文件再用系统分享面板打开」）。
+         *
+         * WebView 里 `<a download>` 在安卓上**完全不工作**（不会弹任何东西），所以
+         * 「对局记录 → 导出 CSV/JSON」改由内核先写文件，再经 JNI 调到这里起
+         * `ACTION_SEND` + `Intent.createChooser`：用户可以发微信/邮件/存网盘，
+         * 也可以选「保存到文件」。
+         *
+         * 为什么是**静态方法 + Context 参数**：Rust 侧是在 HTTP 工作线程里调 JNI，
+         * native 线程的 `FindClass` 只有 boot class loader，找不到应用自己的类，
+         * 唯一可靠的路子是「拿 context.getClassLoader() → loadClass()」再调静态方法；
+         * 这样也不依赖 Activity 实例是否还活着（旋转/重建后 Activity 会换）。
+         *
+         * @return 空串 = 已弹出分享面板；否则是给用户看的失败原因。
+         */
+        @JvmStatic
+        fun shareFile(context: Context, path: String): String {
+            return try {
+                val f = File(path)
+                if (!f.exists()) return "文件不存在：$path"
+                // targetSdk ≥ 24 起不能再用 file:// URI（FileUriExposedException），
+                // 必须走 FileProvider 的 content:// + 授权读。
+                val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", f)
+                val mime = when (f.extension.lowercase()) {
+                    "csv" -> "text/csv"
+                    "json" -> "application/json"
+                    else -> "*/*"
+                }
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = mime
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, f.name)
+                    // ClipData 不是可选的：系统分享面板（intentresolver）要靠它拿到
+                    // 读权限，否则 logcat 里全是「Permission Denial: opening provider
+                    // androidx.core.content.FileProvider ... not exported」，
+                    // 预览图/元数据读不到，个别接收方也拿不到文件。
+                    clipData = ClipData.newUri(context.contentResolver, f.name, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val chooser = Intent.createChooser(send, "导出对局记录").apply {
+                    // 用 Application context 起 Activity 必须带 NEW_TASK
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(chooser)
+                ""
+            } catch (e: Throwable) {
+                Log.w(TAG, "shareFile 失败 path=$path", e)
+                e.message ?: e.toString()
+            }
+        }
     }
 }
