@@ -4637,7 +4637,8 @@ const SET = {
    值（例如把特效调成 0 关闭、开局翻鸡选了下鸡）一律保留，并把新默认同步
    写回 localStorage —— 否则没点过「保存」的设备下次启动又会读回旧值。
    不再动 SET.strategy：用户手选过的 AI 档位必须保留。旧 v3 迁移函数
-   （migrateCfgVersion）从未被调用，这里一并前移并重写，避免两处版本号打架。 */
+   （migrateCfgVersion）已整体删除 —— 删除时必须同步删掉文件末尾「启动」段
+   的调用点（2026-11-13 曾漏删，顶层 ReferenceError 直接中断 boot）。 */
 const CFG_VER = 4;
 (function migrateDefaultsV4() {
   const cur = parseInt(localStorage.getItem("dushan_cfg_ver"), 10) || 1;
@@ -10191,12 +10192,16 @@ el("hand").onclick = (ev) => {
 };
 
 /* ================= 启动 ================= */
-/* 配置迁移必须早于第一次回填：v1→v2 升到深算 n32、v2→v3 升到极算 n128，
-   再把所有已下线档位（教师/随机/bc/s7/简算 n8）收敛进白名单。
-   两个迁移都要跑，不能短路（|| 会让第二个被跳过）。 */
-const _cfgMig1 = migrateCfgVersion();
-const _cfgMig2 = migrateModelOptions();
-if (_cfgMig1 || _cfgMig2) saveSet();
+/* 配置迁移必须早于第一次回填：
+   · v4 出厂默认迁移（migrateDefaultsV4）已在 SET 构造之后立即执行；
+   · 这里只跑「旧档位收敛」（migrateModelOptions），把 localStorage 里
+     已下线的档位挪进白名单，再回填设置面板。
+   2026-11-13 第八轮踩坑：旧 v3 迁移函数被整体删除后，这里还留着它的
+   顶层调用（`const _cfgMig1 = …()`）—— 顶层 ReferenceError 会让整段主脚本当场中断：boot() 不执行（/api/meta、
+   开局页「玩家与模型」、首屏回填全哑），点击开始游戏也只剩一个不推进的
+   空牌桌。删掉调用点即可，别再留任何「定义已删、调用仍在」的顶层调用。 */
+const _cfgDirty = migrateModelOptions();
+if (_cfgDirty) saveSet();
 fillSetSelects();
 /* ===================== 移动端：视口自适应 =====================
    桌面端完全不动：只有「最小边 ≤ 620」或「宽 ≤ 900」才挂 html.mob。

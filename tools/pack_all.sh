@@ -49,6 +49,7 @@ if [[ "$TARGET" == "all" || "$TARGET" == "android" ]]; then
         "$AND/target/aarch64-linux-android/release/deps/libdushan_engine"*.so
   # 旧的同名产物也清掉，避免把上一版误当成这次的结果
   mkdir -p "$ROOT/tauri-offline/dist"
+  rm -f "$ROOT"/tauri-offline/dist/独山麻将-v*-arm64.apk
 
   echo "-- 构建 APK（tauri android build --apk --target aarch64）"
   if [[ -d "$HOME/jdks/jdk-21.0.2.jdk/Contents/Home" ]]; then
@@ -77,8 +78,25 @@ fi
 
 # ---------------------------------------------------------------- 桌面 .app
 if [[ "$TARGET" == "all" || "$TARGET" == "desktop" ]]; then
+  # 2026-11-13：桌面版同样把 web/static/dushan.html 通过 include_dir! 编进
+  # offline-core，而 cargo 的 .fingerprint 对目录内容变化不敏感 —— 只改前端时
+  # tauri build 会直接复用旧 rlib，.app 里仍是上一版页面（曾导致首屏脚本报错
+  # 却「看起来打包成功」）。出包前强制清掉这两个指纹，让 cargo 重新展开资源。
+  echo "-- 清理桌面旧指纹与产物"
+  rm -rf "$ROOT"/desktop/src-tauri/target/release/.fingerprint/offline-core-* \
+         "$ROOT"/desktop/src-tauri/target/release/.fingerprint/dushan-engine-*
+  rm -f "$ROOT"/desktop/src-tauri/target/release/deps/liboffline_core-*.rlib \
+        "$ROOT"/desktop/src-tauri/target/release/deps/liboffline_core-*.rmeta
+  mkdir -p "$ROOT/desktop/dist"
+  rm -rf "$ROOT"/desktop/dist/独山麻将-v*.app
   echo "-- 构建桌面版（tauri build --bundles app）"
   export PATH="$HOME/.cargo/bin:$PATH"
+  if ! command -v tauri >/dev/null 2>&1; then
+    for d in "$HOME"/.workbuddy/binaries/node/versions/*/bin; do
+      if [[ -x "$d/tauri" ]]; then export PATH="$d:$PATH"; break; fi
+    done
+  fi
+  command -v tauri >/dev/null 2>&1 || { echo "!! 找不到 tauri CLI" >&2; exit 1; }
   ( cd "$ROOT/desktop" && tauri build --bundles app )
 
   APPSRC="$ROOT/desktop/src-tauri/target/release/bundle/macos/独山麻将.app"
