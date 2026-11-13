@@ -1326,6 +1326,18 @@ html.mob .jirow { flex-direction: column; gap: 4px; }
 .setpanes::-webkit-scrollbar-thumb { background: rgba(232,184,75,.4); border-radius: 2px; }
 .setpanes section { display: none; }
 .setpanes section.on { display: block; }
+/* ---- 设置 → 玩法规则（2026-11-13）：纯文字长文，沿用 .setpanes 自身滚动 ---- */
+.guidebox { font-size: 13px; line-height: 1.78; color: #e2ddcc; padding: 0 2px 10px; }
+.guidebox h5 { font-size: 13px; color: var(--gold); font-weight: 600; letter-spacing: 1px;
+  margin: 15px 0 5px; padding-bottom: 3px; border-bottom: 1px solid rgba(232,184,75,.18); }
+.guidebox ul { margin: 0 0 4px; padding-left: 19px; }
+.guidebox li { margin: 4px 0; }
+.guidebox b { color: var(--gold); font-weight: 600; }
+.guidebox .guidelead { margin: 6px 0 10px; padding: 9px 11px; line-height: 1.7;
+  border-left: 3px solid var(--gold); background: rgba(232,184,75,.08); border-radius: 0 7px 7px 0; }
+.guidebox .guidefoot { margin-top: 16px; font-size: 12px; line-height: 1.6; opacity: .7; }
+.guidebox code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #cfd8c5; }
+html.mob .guidebox { font-size: 14px; line-height: 1.85; }
 
 /* ============ 两两结算 ============ */
 .viewtabs { display: flex; gap: 8px; justify-content: center; margin: 4px 0 12px; flex-wrap: wrap; }
@@ -3647,6 +3659,7 @@ html.mob .scoregrid input { width: 42px; }
         <button data-pane="sound">音效与音量</button>
         <button data-pane="rule">规则开关</button>
         <button data-pane="score">分值表</button>
+        <button data-pane="guide">玩法规则</button>
       </nav>
       <div class="btnrow">
         <button class="primary" id="btn-set-save">保存</button>
@@ -3807,11 +3820,11 @@ html.mob .scoregrid input { width: 42px; }
         <div class="lbl">全局流水面板<span class="q" data-q="屏幕右上角的牌局流水（可拖动、右下角可调大小）；关闭即整块隐藏">?</span></div>
         <input type="checkbox" id="set-logshow" class="switch">
       </div>
-      <!-- 2026-10-12 #84：冲锋鸡/横鸡全屏特效时长可设置（默认 3 秒；0=关闭特效） -->
+      <!-- 2026-10-12 #84：冲锋鸡/横鸡全屏特效时长可设置（默认 1.5 秒；0=关闭特效） -->
       <div class="setrow">
         <div class="lbl">冲锋鸡/横鸡动画<span class="q" data-q="打出冲锋鸡或横鸡时全屏特效的时长；0=关闭特效（此时改弹文字提示）；改动立即生效">?</span></div>
         <span class="numrow">
-          <input id="set-fxdur" type="number" min="0" max="10" step="0.5" value="3">
+          <input id="set-fxdur" type="number" min="0" max="10" step="0.5" value="1.5">
           <span class="unit">秒</span>
           <span class="chips">
             <button type="button" class="chip" data-for="set-fxdur" data-v="0">关</button>
@@ -3826,7 +3839,7 @@ html.mob .scoregrid input { width: 42px; }
       <div class="setrow">
         <div class="lbl">开局鸡牌提醒<span class="q" data-q="每局开始时全屏提示本局的鸡牌有哪些；时长可设置，0=关闭提醒；改动立即生效">?</span></div>
         <span class="numrow">
-          <input id="set-kaiju-fxdur" type="number" min="0" max="10" step="0.5" value="3">
+          <input id="set-kaiju-fxdur" type="number" min="0" max="10" step="0.5" value="1.5">
           <span class="unit">秒</span>
           <span class="chips">
             <button type="button" class="chip" data-for="set-kaiju-fxdur" data-v="0">关</button>
@@ -3946,10 +3959,10 @@ html.mob .scoregrid input { width: 42px; }
         </select>
       </div>
       <div class="setrow">
-        <div class="lbl">开局翻鸡<span class="q" data-q="开局翻牌墙尾指示牌（翻出后移出牌墙），本局新增对应鸡牌种">?</span></div>
+        <div class="lbl">开局翻鸡<span class="q" data-q="开局翻牌墙尾指示牌（只翻开查看、不移出牌墙，本局仍可摸到），按模式新增对应鸡牌种">?</span></div>
         <select id="set-kaiju-fanji">
-          <option value="off">关闭</option>
-          <option value="up" selected>上鸡（默认）</option>
+          <option value="off" selected>关闭（默认）</option>
+          <option value="up">上鸡</option>
           <option value="down">下鸡</option>
           <option value="both">上下鸡</option>
         </select>
@@ -4037,6 +4050,75 @@ html.mob .scoregrid input { width: 42px; }
       <label><span class="sname">金鸡倍率</span><input id="sc-jinji" type="number" min="0" step="1"></label>
       <label><span class="sname">每个杠</span><input id="sc-kong" type="number" min="0" step="1"></label>
     </div>
+        </section>
+        <!-- ===== 玩法规则指引（2026-11-13 用户口径：设置页最后一个板块）=====
+             只写本玩法特有规则，不重复麻将基础。口径以 zhuoji/dushan.py 与
+             rust_engine/src/settle.rs 为准（两者逐字段对拍），所有分值均为出厂默认、
+             可在「规则开关 / 分值表」里调整。 -->
+        <section data-pane="guide">
+          <h4 class="setsec">独山麻将 · 玩法规则指引<span class="sechint">仅本玩法规则</span></h4>
+          <div class="guidebox">
+            <p class="guidelead">本玩法用 <b>108 张万／条／筒</b>（无字牌、无花牌），<b>不能吃</b>；
+              唯一计分单位是「<b>鸡</b>」。终局<b>只有听牌者</b>计鸡，四家两两按鸡数差互付。
+              下面分值均为出厂默认，可在「规则开关 / 分值表」里改，改动下一局生效。</p>
+
+            <h5>1 · 哪些牌算鸡</h5>
+            <ul>
+              <li><b>幺鸡（1 条）永远是鸡</b>，不可取消。</li>
+              <li>「开局翻鸡」<b>默认关闭</b>，打开后按指示牌新增本局鸡种；「追加鸡牌」可手动加鸡种（如贵阳的 8 筒）。两者与幺鸡<b>完全同权</b>。</li>
+              <li><b>上鸡</b> = 指示牌同花色点数 +1（9 回 1），<b>下鸡</b> = −1（1 回 9），上下鸡两者都算；<b>指示牌本身不算</b>。</li>
+              <li>开局翻牌墙尾的牌<b>只翻开查看、不移出牌墙</b>，本局仍可能被摸到；胡牌后再翻牌墙顶，定「翻鸡牌」。</li>
+            </ul>
+
+            <h5>2 · 打出的鸡：冲锋鸡 / 横鸡 / 普通鸡</h5>
+            <ul>
+              <li><b>冲锋鸡（默认 3）</b>：<b>每家自己</b>打出的第一张鸡牌，每家最多 1 只、全场最多 4 只。不是「全局第一张幺鸡」。</li>
+              <li><b>横鸡（默认 2）</b>：某鸡种全场第一张「非冲锋鸡」打出时开轮，轮内其他家跟打同种鸡也记横鸡；<b>按鸡种各自独立成轮</b>。开轮者或轮内已吃过横鸡者再出牌即收口，收口那一手按普通鸡算，此后该种再打一律普通鸡。</li>
+              <li><b>普通鸡（默认 1）</b>：其余打出的鸡。<b>打出的鸡全部计分</b>。</li>
+            </ul>
+
+            <h5>3 · 手中鸡、翻鸡牌与金鸡</h5>
+            <ul>
+              <li>只有听牌者计：手牌 + 副露（碰 3 张 / 杠 4 张）里的鸡每张 1；结算翻出的翻鸡牌在手中／副露每张再 +1，<b>已经打出去的不算</b>。「满堂鸡」打开才把弃牌区里的翻鸡牌也算进来（默认关）。</li>
+              <li><b>金鸡</b>：结算翻鸡牌与本局鸡种重合的牌种（含开局就已确定的金鸡），该种<b>一切相关分 ×2</b>；不限幺鸡。</li>
+              <li><b>四倍金鸡</b>：开局已知金鸡、结算又再次翻出幺鸡时，幺鸡在 ×2 基础上再 ×2（结算页四个红点标记）。</li>
+            </ul>
+
+            <h5>4 · 碰／杠走别人打出的鸡：责任鸡溢价</h5>
+            <ul>
+              <li>该张鸡的鸡分从打出者抵消，按副露张数<b>转移到碰／杠者</b>名下。</li>
+              <li>溢价 = 这张打出的分值 − 手中鸡单值（冲锋 2、横鸡 1、普通鸡 0），<b>只在两人之间</b>结算。</li>
+              <li><b>方向看碰／杠者终局是否听牌</b>：听牌 → 打出者赔碰／杠者；<b>未听牌 → 反过来由碰／杠者赔打出者</b>（同额）。金鸡/四倍金鸡的溢价同样翻倍。</li>
+            </ul>
+
+            <h5>5 · 胡走的那张牌、热炮与抢杠</h5>
+            <ul>
+              <li>点炮／热炮胡走的那张牌从打出者牌河移出、<b>归胡牌者</b>；牌河原位留半透明残牌，结算页也不再算作打出者的鸡。若是鸡牌，鸡分一并转给胡牌者，记「<b>捉炮鸡</b>」。</li>
+              <li>一张牌可同时点炮给多家（<b>一炮多响</b>），各赢家都得到这张牌并各自结算。</li>
+              <li><b>抢杠只限补杠</b>；热炮 = 杠后第一张弃牌被胡。热炮放炮者 / 被抢杠者自身鸡分<b>全部作废</b>（全烧），但仍要照付他人。</li>
+            </ul>
+
+            <h5>6 · 通行证、报叫与牌型</h5>
+            <ul>
+              <li>点胡需「<b>通行证</b>」：有杠、已报叫、<b>这张胡牌张</b>凑成非平胡牌型、热炮、抢杠、报叫家的弃牌、首巡四家同轮跟打——满足任一即可。过胡后摸牌前不能再胡同张（过水）。</li>
+              <li>首张打出后已听牌会<b>自动报叫</b>；报叫后禁止碰／杠，胡牌额外 +10。</li>
+              <li>牌型分值<b>叠加</b>（默认）：大对子 5、七对 10（设置里叫「小七对」）、清一色 10、单吊 10（设置里叫「独钓」）、龙七对 20；龙七对须由胡牌张凑成第四张；平胡 0。</li>
+            </ul>
+
+            <h5>7 · 结算怎么算</h5>
+            <ul>
+              <li><b>鸡数池</b>：每家一个鸡数（未听牌记 0），两两互减，差值由少的一方付给多的一方。</li>
+              <li><b>直接分项</b>（不进池）：自摸 3（每家付）、点炮 3（点炮者付）、杠上开花 5、热炮 5、每个杠 3、责任鸡溢价、包赔等。</li>
+              <li><b>包赔</b>：未听牌者对自己「<b>已亮明</b>」的鸡（自己打出的 + 副露里的）向其他每家赔付；手里没亮出的暗牌不算。有人胡牌 / 流局各自的包鸡包杠另有独立开关。</li>
+              <li><b>黄庄（荒牌流局）</b>：鸡与杠<b>一律不结算</b>，只由未听牌者向听牌者赔「自摸分 + 该听者可达的最大牌型分」。</li>
+              <li><b>首巡同轮跟打</b>：庄家第一张被三家跟打同种牌（四家各第一张、中间无碰杠），庄家赔每家 3 鸡，这 4 张成为庄家通行证并算作庄家手中的 4 只鸡；胡牌 / 流局都照赔（设置可关）。</li>
+            </ul>
+
+            <p class="guidefoot">口径来源：规则引擎 <code>zhuoji/dushan.py</code> 与
+              <code>rust_engine/src/settle.rs</code>（逐字段对拍）。「设置 → 规则开关 / 分值表」
+              改过的项以本局下发值为准；开局翻鸡、结算翻鸡、追加鸡牌种、满堂鸡、
+              包赔与首巡同轮跟打都能单独开关。</p>
+          </div>
         </section>
       </div>
     </div>
@@ -4257,8 +4339,8 @@ html.mob .scoregrid input { width: 42px; }
             </select>
             <span title="开局翻牌墙尾指示牌，本局新增对应鸡牌种">开局翻鸡</span>
             <select id="boot-kaiju-fanji">
-              <option value="off">关闭</option>
-              <option value="up" selected>上鸡（默认）</option>
+              <option value="off" selected>关闭（默认）</option>
+              <option value="up">上鸡</option>
               <option value="down">下鸡</option>
               <option value="both">上下鸡</option>
             </select>
@@ -4442,14 +4524,16 @@ const _timeoutLegacyOff = _timeoutRaw !== null && _timeoutVal === 0
   && localStorage.getItem("dushan_timeouton") === null;
 const SET = {
   // 推荐策略（= 「我」的模型）。2026-11-06 用户口径：默认「极算 · 128 路推演」；
-  // 白名单见 OPP_OPTIONS，存量配置由 migrateCfgVersion / migrateModelOptions 迁移。
+  // 白名单见 OPP_OPTIONS；出厂默认迁移见 migrateDefaultsV4，旧档收敛见 migrateModelOptions。
   strategy: localStorage.getItem("dushan_strategy") || "search128:master",
   // ---- 功能开关（与时间设置分离：关闭后其时间设置自动置灰）----
   /* 2026-11-12 用户口径（全版本统一默认值）：「默认关闭 AI 模型推荐」。
      推荐总开关关闭时，桌面/操作区都不出现建议与理由；用户在设置里打开后
      仍按 reasonMode（默认「完整推荐」）展示。存量配置由 localStorage 覆盖。 */
   hintOn: loadBool("dushan_hinton", false),              // 显示大师推荐（默认关）
-  timeoutOn: _timeoutLegacyOff ? false : loadBool("dushan_timeouton", true),
+  /* 2026-11-13 用户口径：默认关闭「超时自动操作」（此前默认开、15 秒）。
+     倒计时仍照常显示，只是到点不再自动替你出牌。存量配置由 v4 迁移处理。 */
+  timeoutOn: _timeoutLegacyOff ? false : loadBool("dushan_timeouton", false),
   // ---- 时间参数（仅在对应开关打开时生效）----
   timeout: _timeoutLegacyOff ? 15 : _timeoutVal,
   // 推荐延迟：轮到我后等 N 秒才显示推荐（0=立即）。
@@ -4525,10 +4609,11 @@ const SET = {
     ? 1 : localStorage.getItem("dushan_vol_voice")),
   sfxVol: clamp01(localStorage.getItem("dushan_vol_sfx") === null
     ? 0.9 : localStorage.getItem("dushan_vol_sfx")),
-  // 规则开关（下一局生效）：结算翻鸡默认上下鸡（可关）；开局翻鸡**默认上鸡**
-  // （2026-11-12 用户口径：「打开开局翻鸡（上鸡）」）；满堂鸡默认关
+  // 规则开关（下一局生效）：结算翻鸡默认上下鸡（可关）；
+  // 2026-11-13 用户口径：开局翻鸡**默认关闭**（覆盖 2026-11-12 的「上鸡」口径），
+  // 与 Python / Rust 引擎默认一致；满堂鸡默认关。
   jiesuan: loadFanji("dushan_jiesuan_fanji", "both", ["both", "up", "down", "off"]),
-  kaijuFanji: loadFanji("dushan_kaiju_fanji", "up", ["off", "up", "down", "both"]),
+  kaijuFanji: loadFanji("dushan_kaiju_fanji", "off", ["off", "up", "down", "both"]),
   mantiangji: localStorage.getItem("dushan_mantiangji") === "1",
   // 未听牌包赔开关（下一局生效）
   rule: loadRules(),
@@ -4543,6 +4628,37 @@ const SET = {
   // 分值表（下一局生效）
   score: loadScores(),
 };
+/* ---- 出厂默认一次性迁移（2026-11-13 用户口径，v4）----------------------
+   本次统一四项的出厂默认：关闭 AI 推荐 / 关闭超时自动操作 / 关闭开局翻鸡 /
+   两个鸡牌动画都 1.5 秒。旧设备早已把**旧默认**写进 localStorage，
+   只改代码里的默认值救不回来，故按版本号迁移一次。
+
+   原则：只重置「键不存在」或「值仍等于旧出厂默认」的项；用户主动改过的
+   值（例如把特效调成 0 关闭、开局翻鸡选了下鸡）一律保留，并把新默认同步
+   写回 localStorage —— 否则没点过「保存」的设备下次启动又会读回旧值。
+   不再动 SET.strategy：用户手选过的 AI 档位必须保留。旧 v3 迁移函数
+   （migrateCfgVersion）从未被调用，这里一并前移并重写，避免两处版本号打架。 */
+const CFG_VER = 4;
+(function migrateDefaultsV4() {
+  const cur = parseInt(localStorage.getItem("dushan_cfg_ver"), 10) || 1;
+  if (cur >= CFG_VER) return;
+  const legacy = [
+    // [键, 判定「仍是旧出厂默认」, 新默认值, 同步 SET]
+    /* hintOn 的出厂默认在 2026-11-12 就已经改成「关」：只有 cur<3 的
+       老设备里 "1" 才可能是旧默认；cur>=3 还存 "1" 一定是用户主动打开的
+       推荐，必须保留（实测用例抓到过误重置）。 */
+    ["dushan_hinton",       v => cur < 3 && v === "1", "0", () => { SET.hintOn = false; }],
+    ["dushan_timeouton",    v => v === "1",       "0",    () => { SET.timeoutOn = false; }],
+    ["dushan_kaiju_fanji",  v => v === "up",      "off",  () => { SET.kaijuFanji = "off"; }],
+    ["dushan_fx_dur",       v => Number(v) === 3, "1.5",  () => { SET.fxDur = 1.5; }],
+    ["dushan_kaiju_fx_dur", v => Number(v) === 3, "1.5",  () => { SET.kaijuFxDur = 1.5; }],
+  ];
+  legacy.forEach(([key, isLegacy, val, apply]) => {
+    const v = localStorage.getItem(key);
+    if (v === null || isLegacy(v)) { localStorage.setItem(key, val); apply(); }
+  });
+  localStorage.setItem("dushan_cfg_ver", String(CFG_VER));
+})();
 /* 兼容旧调用点：SET.coach 读写都映射到「推荐总开关 + 推荐理由形态」 */
 Object.defineProperty(SET, "coach", {
   get() { return SET.hintOn && SET.reasonMode === "full"; },
@@ -5814,7 +5930,10 @@ el("ji-mask").addEventListener("click", (ev) => {
    训练产物通过 models/champions.json 只增不替，详见 registerChampionOptions()。 */
 /* 2026-11-11 离线版四档：**全部贪心**，由宿主注入 `window.__DUSHAN_TIERS`
    （见 offline/src/assets.rs）。联网版不注入 → 仍是下面三项搜索档。
-   四档的强度与差距见 reports/离线版-四档强度矩阵.md。 */
+   四档的强度与差距见 reports/离线版-四档强度矩阵.md。
+   2026-11-13 决策：曾给桌面/在线端试加 N32 深算档，但 1600 副配对评测
+   无强度收益（见 reports/N32档与传奇分差-2026-11-13.md），按用户口径
+   **不动 AI 模型选项**，本表与上一版完全一致。 */
 const OFFLINE_TIERS = (typeof window !== "undefined" && Array.isArray(window.__DUSHAN_TIERS))
   ? window.__DUSHAN_TIERS.filter(t => t && t.v && t.label)
   : null;
@@ -5917,17 +6036,8 @@ function migrateModelOptions() {
   });
   return dirty;
 }
-/* 配置版本迁移（一次性）。默认值只改代码救不了已把旧值写进 localStorage 的存量设备，
-   必须用版本号强制迁移一次；迁移标记写入后，用户手动改回其它档位不会再被覆盖。
-   v2 → v3（2026-11-06）：推荐默认由深算 n32 升到极算 n128。 */
-const CFG_VER = 3;
-function migrateCfgVersion() {
-  const cur = parseInt(localStorage.getItem("dushan_cfg_ver"), 10) || 1;
-  if (cur >= CFG_VER) return false;
-  SET.strategy = DEFAULT_STRATEGY;
-  localStorage.setItem("dushan_cfg_ver", String(CFG_VER));
-  return true;
-}
+/* 配置版本迁移已前移到 SET 构造之后立即执行（migrateDefaultsV4，见上），
+   这里不再重复定义 CFG_VER / migrateCfgVersion，避免两处版本号打架。 */
 /* 服务端给出的模型身份（线别/版本号/规模），权重换代后自动跟随 */
 function modelIdent(stem) {
   const list = (META && META.models) || [];
@@ -7383,7 +7493,7 @@ async function openStats() {
       ["自摸", pct(all.zimo, all.games), "你自摸胡牌的局数占全部对局的比值"],
       ["送胡", pct(all.songhu_games, all.games),
        "这一局有玩家不是自摸胡（点炮 / 抢杠 / 热炮…）的局占率。整局视角：只看这局有没有人「接别人的牌」胡，不看是谁赢谁输"],
-      ["冲锋鸡", pct(all.chongfeng_games, all.games), "该局出现过冲锋鸡（第一轮打出的幺鸡）的局占率"],
+      ["冲锋鸡", pct(all.chongfeng_games, all.games), "该局出现过冲锋鸡（某家自己打出的第一张鸡牌，每家最多 1 只／全场最多 4 只）的局占率"],
       ["出鸡", pct(all.ji_discard_games, all.games),
        "该局有玩家打出过鸡牌（冲锋鸡 / 横鸡 / 幺鸡）的局占率"],
       ["包鸡", pct(all.baoji_games, all.games), "该局结算里出现过「包鸡」赔付的局占率"],
@@ -7406,7 +7516,7 @@ async function openStats() {
       <th title="这家自摸胡牌的次数">自摸</th>
       <th title="这家打出的牌被别人胡掉的次数">送胡</th>
       <th title="这家打出冲锋鸡的次数">冲锋鸡</th>
-      <th title="这家横鸡（碰鸡后打出的鸡）的次数">横鸡</th>
+      <th title="这家打出横鸡（某鸡种首张非冲锋鸡开轮，轮内跟打同种鸡也记）的次数">横鸡</th>
       <th title="这家因包鸡赔付的次数">包鸡</th>
       <th title="这家在本会话的累计得分">得分</th></tr>
     ${(st.stats ? [0, 1, 2, 3].map(rel => {
@@ -9982,9 +10092,9 @@ function applySettings() {
   if (SID && speedWas !== SET.speed) api("/api/speed", { sid: SID, speed: SET.speed }).catch(() => {});
   checkOppSpeedLink();       // 节奏改动后重校验对手模型冲突（2026-11-02）
   // 冲锋鸡/横鸡特效时长（#84；0=关闭特效；立即生效，无需下一局）
-  SET.fxDur = clampSetting(el("set-fxdur").value, 0, 10, 3);
+  SET.fxDur = clampSetting(el("set-fxdur").value, 0, 10, 1.5);
   // 开局鸡牌提醒特效时长（2026-10-13；0=关闭；立即生效）
-  SET.kaijuFxDur = clampSetting(el("set-kaiju-fxdur").value, 0, 10, 3);
+  SET.kaijuFxDur = clampSetting(el("set-kaiju-fxdur").value, 0, 10, 1.5);
   // 自动开始下一局倒计时（2026-10-30；0=关闭；立即生效）
   SET.autoNext = clampSetting(el("set-autonext").value, 0, 120, 0);
   // 关闭推荐 / 切换理由形态：立刻更新展示

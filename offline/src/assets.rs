@@ -42,6 +42,12 @@ const DEFAULT_STRATEGY: &str = "model:champ_slim_s";
 
 /// 注入到页面里的四档表。前端只在存在该全局量时才替换下拉选项，
 /// 联网版不注入 → 仍是「大师 / 深算 / 极算」，两边行为不分叉。
+///
+/// 2026-11-13 决策留痕：曾按「桌面/在线端加 N32 推理档」的口径做过
+/// `cfg(target_os)` 分叉（非安卓多一档 `search32:champ_slim_s`），但
+/// `reports/N32档与传奇分差-2026-11-13.md` 用 1600 副配对评测证明
+/// N32 相对传奇贪心无可测强度优势（−0.072 分/副，CI 跨 0），用户据此
+/// 决定**不动 AI 模型选项**，故分叉整体撤回，各端档位与上一版完全一致。
 const TIERS_JSON: &str = concat!(
     r#"[{"v":"ting:fast","label":"🐣 入门"},"#,
     r#"{"v":"model:expert_s7","label":"🙂 进阶"},"#,
@@ -62,8 +68,8 @@ fn page_html() -> &'static [u8] {
             .expect("web/static/dushan.html 缺失")
             .contents();
         let src = String::from_utf8_lossy(raw);
-        // 只注入一个全局量，不碰 localStorage：页面自己的 migrateCfgVersion
-        // 会用 DEFAULT_STRATEGY 覆盖存储值，靠写 localStorage 抢先是没有用的
+        // 只注入全局量，不碰 localStorage：页面按 OPP_ALLOWED 校验/收敛档位
+        // （migrateModelOptions / renderPickers），靠写 localStorage 抢先是没有用的
         // （踩过：注入生效但界面仍显示「极算」）。
         let boot = format!(
             "<script>/*offline-boot*/window.__DUSHAN_DEFAULT_STRATEGY='{DEFAULT_STRATEGY}';\
