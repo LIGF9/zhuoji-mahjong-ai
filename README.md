@@ -9,14 +9,17 @@
 
 | 平台 | 文件 | 说明 |
 | --- | --- | --- |
-| Android | `独山麻将-Android-arm64.apk` | 断网可玩，规则 / 模型 / 素材全部编进 APK |
-| macOS | `独山麻将-macOS-arm64.zip` | Apple Silicon；解压后把 `.app` 拖进「应用程序」 |
-| Windows | `独山麻将-Windows-x64-Setup.exe` | NSIS 安装包，首次运行会引导安装 WebView2 Runtime |
+| Android | `dushan-mahjong-android-arm64.apk` | 断网可玩，规则 / 模型 / 素材全部编进 APK |
+| macOS | `dushan-mahjong-macos-arm64.zip` | Apple Silicon；解压后把 `独山麻将.app` 拖进「应用程序」 |
+| Windows | `dushan-mahjong-windows-x64-setup.exe` | NSIS 安装包，首次运行会引导安装 WebView2 Runtime |
 
 > 桌面版的形态是「电脑上跑引擎，窗口当屏幕」：启动后在本机 **8771** 端口起服务，
 > 同一 Wi-Fi 下手机浏览器打开 `http://<电脑IP>:8771/?touch=1` 也能连上来当远程屏幕。
 > 所有连到这台电脑的设备看到的是同一局（刻意设计，不是多人独立对局）。
 > Windows 首次启动若弹防火墙提示，允许「专用网络」即可。
+>
+> Release 资产用 ASCII 文件名（GitHub 会把非 ASCII 资产名折叠成 `-`），
+> 说明表格与 App 内部标题仍是中文。
 >
 > Release 里的包**没有代码签名**：macOS 首次打开若提示「无法验证开发者」，
 > 右键 →「打开」，或执行 `xattr -dr com.apple.quarantine /Applications/独山麻将.app`；

@@ -63,7 +63,7 @@ jobs:
           $setup = Get-ChildItem -Path desktop/src-tauri/target/release/bundle/nsis `
               -Filter *.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($setup) {
-            Copy-Item $setup.FullName 'release-assets/dushan-windows-x64-setup.exe'
+            Copy-Item $setup.FullName 'release-assets/dushan-mahjong-windows-x64-setup.exe'
           } else {
             # 二进制名取决于 Tauri 的 mainBinaryName 策略（可能是 dushan-desktop.exe，
             # 也可能被重命名成 productName），这里按两者都找，找不到就报错退出。
@@ -72,7 +72,7 @@ jobs:
                 Where-Object { $_.Name -in @('dushan-desktop.exe', '独山麻将.exe') } |
                 Select-Object -First 1
             if (-not $bin) { Write-Error '既没有 NSIS 安装包也没有主程序 exe'; exit 1 }
-            Copy-Item $bin.FullName 'release-assets/dushan-windows-x64.exe'
+            Copy-Item $bin.FullName 'release-assets/dushan-mahjong-windows-x64.exe'
           }
           Get-ChildItem release-assets | Format-Table Name, Length
       - uses: actions/upload-artifact@v4
@@ -105,7 +105,7 @@ jobs:
           mkdir -p release-assets
           cd desktop/src-tauri/target/release/bundle/macos
           ditto -c -k --sequesterRsrc --keepParent "独山麻将.app" \
-            "$GITHUB_WORKSPACE/release-assets/dushan-macos-arm64.zip"
+            "$GITHUB_WORKSPACE/release-assets/dushan-mahjong-macos-arm64.zip"
           ls -lh "$GITHUB_WORKSPACE/release-assets"
       - uses: actions/upload-artifact@v4
         with:
@@ -181,7 +181,7 @@ jobs:
           APK="$(find tauri-offline/src-tauri/gen/android/app/build/outputs/apk \
                 -name '*.apk' -type f | head -1)"
           test -n "$APK" || { echo "::error::没找到 APK"; exit 1; }
-          cp "$APK" 'release-assets/dushan-android-arm64.apk'
+          cp "$APK" 'release-assets/dushan-mahjong-android-arm64.apk'
           ls -lh release-assets
       - uses: actions/upload-artifact@v4
         with:
@@ -205,33 +205,20 @@ jobs:
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           ls -lh assets
-          # upload-artifact 会丢掉文件名里的非 ASCII 字符（中文前缀被削成开头的
-          # 连字符），所以构建端统一用 ASCII 名，到这里再恢复成中文下载名。
-          declare -A MAP=(
-            [dushan-android-arm64.apk]="独山麻将-Android-arm64.apk"
-            [dushan-macos-arm64.zip]="独山麻将-macOS-arm64.zip"
-            [dushan-windows-x64-setup.exe]="独山麻将-Windows-x64-Setup.exe"
-            [dushan-windows-x64.exe]="独山麻将-Windows-x64.exe"
-          )
-          files=()
-          for src in "${!MAP[@]}"; do
-            if [ -f "assets/$src" ]; then
-              cp "assets/$src" "assets/${MAP[$src]}"
-              rm -f "assets/$src"
-              files+=("assets/${MAP[$src]}")
-            fi
-          done
-          if [ ${#files[@]} -eq 0 ]; then echo "::error::没有任何产物"; exit 1; fi
-          ls -lh assets
+          # GitHub 会把 Release 资产名的非 ASCII 字符折叠成 '-'（实测
+          # 「独山麻将-Android-arm64.apk」变成「-Android-arm64.apk」），
+          # 所以资产统一用 ASCII 名，中文只出现在说明表格与 App 内部。
+          files=(assets/*)
+          ls -lh "${files[@]}"
 
           cat > notes.md <<'EOF'
           三端安装包由 GitHub Actions 从本标签源码自动构建，可直接下载：
 
           | 平台 | 文件 | 说明 |
           | --- | --- | --- |
-          | Android | `独山麻将-Android-arm64.apk` | arm64 真机；CI 临时密钥签名，覆盖安装时需先卸载旧包 |
-          | macOS | `独山麻将-macOS-arm64.zip` | Apple Silicon；解压后把 `独山麻将.app` 拖进「应用程序」 |
-          | Windows | `独山麻将-Windows-x64-Setup.exe` | NSIS 安装包，首次运行会引导安装 WebView2 Runtime |
+          | Android | `dushan-mahjong-android-arm64.apk` | 独山麻将 · arm64 真机；CI 临时密钥签名，覆盖安装时需先卸载旧包 |
+          | macOS | `dushan-mahjong-macos-arm64.zip` | 独山麻将 · Apple Silicon；解压后把 `独山麻将.app` 拖进「应用程序」 |
+          | Windows | `dushan-mahjong-windows-x64-setup.exe` | 独山麻将 · NSIS 安装包，首次运行会引导安装 WebView2 Runtime |
 
           **未签名提示**：CI 产物没有代码签名证书。macOS 首次打开若提示
           「无法验证开发者」，右键 →「打开」，或在终端执行
