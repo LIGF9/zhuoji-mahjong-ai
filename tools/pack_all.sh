@@ -17,6 +17,9 @@
 #   tools/pack_all.sh            # APK + 桌面
 #   tools/pack_all.sh android    # 只出 APK
 #   tools/pack_all.sh desktop    # 只出桌面
+# Windows 端不在本机（macOS）交叉编译：由 .github/workflows/release.yml 的
+# windows-latest runner 用 tauri.windows.conf.json 原生构建 NSIS 安装包，
+# push 一个 v* 标签即自动发布到 GitHub Release。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

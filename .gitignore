@@ -18,8 +18,12 @@ Thumbs.db
 # 项目工作区数据（重要：不是缓存，绝不删除；也不进 git）
 .workbuddy/
 
-# 运行时导出的 ONNX（首次启动自动生成）
-models/onnx/
+# 离线端编译期用 include_bytes! 嵌入的 3 个 ONNX 必须入库（CI 三端构建要用）；
+# 其余训练 / 实验导出的 ONNX 只在本地保留，不进仓库。
+models/onnx/*
+!models/onnx/champ_slim_s.onnx
+!models/onnx/dushan_master.onnx
+!models/onnx/expert_s7.onnx
 
 # Rust 构建产物
 rust_engine/target/
@@ -58,6 +62,22 @@ rust_engine/target_oracle/
 
 # 编辑备份
 web/*.bak-*
+
+# 本地编译产物 / 运行时日志 / 签名密钥（都不进仓库）
+dushan_engine.so
+reports/exit_log.md
+*.keystore
+ci-debug.keystore
+*.zip
+*.dmg
+
+# 已从远端移除、本地仍保留的旧工程 / 生成资源 / 实验归档（2026-11-14 精简）
+# tauri-app 是已被 tauri-offline 取代的 v1.1 局域网联机客户端；
+# ios/ 图标对 Android 工程无用；两个 gz 是训练评估数据归档。
+tauri-app/
+tauri-offline/src-tauri/icons/ios/
+docs/*.txt.gz
+reports/*.tar.gz
 
 # 蒸馏学生中间检查点（TA / S1，本地保留）
 models/slim_*.pt

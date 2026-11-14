@@ -9,6 +9,10 @@
 //!   * 桌面版绑 `0.0.0.0` —— 本机窗口玩宽屏版的同时，同一 Wi-Fi 下的手机
 //!     浏览器打开 `http://<本机IP>:8771/?touch=1` 就是移动版后端。
 //!
+//! 2026-11-14 起支持 Windows：同一份 Rust 内核 + `tauri.windows.conf.json`
+//! （NSIS 安装包 / WebView2 引导）。Windows 首次启动绑 0.0.0.0 时防火墙
+//! 可能询问，允许「专用网络」即可；只想本机玩可在防火墙里拒绝入站。
+//!
 //! 启动顺序：先在当前线程起 HTTP 服务（模型按需惰性加载），再开窗口。
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -98,7 +102,23 @@ fn register_share(handle: tauri::AppHandle) {
     }));
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows 没有系统分享面板：导出完成后在资源管理器里**选中**那个文件，
+/// 与 macOS 面板失败时的 `open -R` 回退同一口径（文件已经落盘，用户能
+/// 直接拖走 / 另存）。不用 Tauri IPC，纯命令行即可，Windows 子系统模式下
+/// 也不会弹出控制台窗口。
+#[cfg(target_os = "windows")]
+fn register_share(_handle: tauri::AppHandle) {
+    offline_core::share::set_handler(Box::new(|path| {
+        let target = path.to_path_buf();
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", target.to_string_lossy()))
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("打开资源管理器失败：{e}"))
+    }));
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn register_share(_handle: tauri::AppHandle) {}
 
 #[cfg(target_os = "macos")]

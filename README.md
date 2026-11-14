@@ -1,93 +1,91 @@
 # 独山麻将 AI
 
-一个能陪你打贵州独山麻将的本地 AI：网页对局 + AI 教练提示。
-全部在本机运行，无需联网、无需注册。
+贵州独山麻将的本地对局与 AI 教练：网页版、Android 离线版、macOS / Windows 桌面版。
+规则、结算与 AI 推理全部在本机完成，不需要联网、不需要账号。
 
-## 环境要求
+## 下载（推荐）
 
-- Python **3.10+**（开发环境为 3.13）
-- macOS / Linux / Windows 均可
-- Apple Silicon 或独立显卡会自动启用加速；纯 CPU 也能玩
+到 [GitHub Releases](https://github.com/LIGF9/zhuoji-mahjong-ai/releases/latest) 直接下载：
 
-## 安装
+| 平台 | 文件 | 说明 |
+| --- | --- | --- |
+| Android | `独山麻将-Android-arm64.apk` | 断网可玩，规则 / 模型 / 素材全部编进 APK |
+| macOS | `独山麻将-macOS-arm64.zip` | Apple Silicon；解压后把 `.app` 拖进「应用程序」 |
+| Windows | `独山麻将-Windows-x64-Setup.exe` | NSIS 安装包，首次运行会引导安装 WebView2 Runtime |
+
+> 桌面版的形态是「电脑上跑引擎，窗口当屏幕」：启动后在本机 **8771** 端口起服务，
+> 同一 Wi-Fi 下手机浏览器打开 `http://<电脑IP>:8771/?touch=1` 也能连上来当远程屏幕。
+> 所有连到这台电脑的设备看到的是同一局（刻意设计，不是多人独立对局）。
+> Windows 首次启动若弹防火墙提示，允许「专用网络」即可。
+>
+> Release 里的包**没有代码签名**：macOS 首次打开若提示「无法验证开发者」，
+> 右键 →「打开」，或执行 `xattr -dr com.apple.quarantine /Applications/独山麻将.app`；
+> Windows SmartScreen 提示时点「更多信息 → 仍要运行」。
+
+## 从源码跑网页版
 
 ```bash
 git clone https://github.com/LIGF9/zhuoji-mahjong-ai.git
 cd zhuoji-mahjong-ai
-
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-## 启动
-
-```bash
 python web/dushan_server.py --port 8770
 ```
 
-然后浏览器打开 **http://127.0.0.1:8770** 即可开始对局。
+浏览器打开 `http://127.0.0.1:8770`。常用参数：`--host 0.0.0.0`（局域网可访问）、
+`--threads 8`、`--verbose`。
 
-常用参数：
+Rust 加速内核是可选的：先 `cd rust_engine && ./build.sh`，
+生成的 `dushan_engine.so` 不入库；不编译也能玩，服务端会自动回落到纯 Python 搜索，
+只是同档位下思考慢一些。
 
-| 参数 | 说明 |
-|---|---|
-| `--port 8770` | 监听端口（默认 8770） |
-| `--host 0.0.0.0` | 监听地址；只想本机访问可改 `127.0.0.1` |
-| `--threads 4` | 服务端线程数 |
-| `--verbose` | 打印请求日志 |
+## 从源码构建各端
 
-## 关于 Rust 加速内核
+| 端 | 命令 | 产物 |
+| --- | --- | --- |
+| Android（需 Android SDK/NDK + JDK 17） | `cd tauri-offline && npm run android:build` | `gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk` |
+| macOS 桌面 | `cd desktop && tauri build --bundles app` | `src-tauri/target/release/bundle/macos/独山麻将.app` |
+| Windows 桌面 | 在 Windows 上 `cd desktop && tauri build --config src-tauri/tauri.windows.conf.json` | `bundle/nsis/*.exe` |
+| 本机一键出包（macOS） | `tools/pack_all.sh all` | `tauri-offline/dist/` 与 `desktop/dist/`，文件名带打包时间 |
 
-仓库已附带 macOS（Apple Silicon）预编译的 `dushan_engine.so`，开箱即用。
+三端共用同一份前端页面 `web/static/dushan.html`；离线端把它和 3 个 ONNX 模型
+在**编译期**嵌进二进制，所以改完前端必须重编对应端，光换磁盘文件不会生效。
+四档难度（全部贪心、无搜索）：🐣 入门·速听 / 🙂 进阶·小网 / 🤖 大师·主力 / 👑 传奇。
 
-其他平台（Intel Mac / Linux / Windows）需要自己编译一次：
+## 发布新版本
 
 ```bash
-cd rust_engine
-./build.sh
-cd ..
+git tag v1.2.0 && git push origin v1.2.0
 ```
 
-产物会被复制为仓库根目录的 `dushan_engine.so`。需要 Rust 工具链（https://rustup.rs）。
-即使不编译也能玩：服务端在 Rust 内核不可用时会自动回落到纯 Python 搜索，只是同档位下 AI 思考慢一些。
+推送 `v*` 标签会触发 `.github/workflows/release.yml`：Windows / macOS / Android
+三个 runner 各自原生构建，最后自动创建 Release 并上传三端安装包。
+全程不需要本机 GitHub Token，也可以在 Actions 页面手动 `workflow_dispatch` 触发。
 
 ## 目录结构
 
 ```
-web/                 联机版服务端与前端（dushan_server.py、coach.py、static/）
-zhuoji/              Python 规则引擎、编码器、神经网络、搜索与 AI 智能体
-rust_engine/         Rust 搜索内核源码（编译后可大幅提速）
-offline/             离线版内核（Rust）：规则 + tract 推理 + 极简 HTTP
-tauri-offline/       离线版 Android 外壳（APK，断网可玩）
-tauri-app/           联机版 Android 外壳（局域网直连，v1.1.0）
-dushan_engine.so     预编译内核（macOS arm64）
-models/              对局 AI 权重 + 冠军注册表
-tools/               训练、评测、闸门、出包等脚本
-docs/                方案与协议文档（结构总览见 docs/仓库结构-2026-11-12.md）
+web/             网页版服务端 + 前端（dushan_server.py、static/）
+zhuoji/          Python 规则引擎、编码器、网络、搜索
+rust_engine/     Rust 搜索内核源码（可选加速）
+offline/         离线版内核：规则 + tract 推理 + 极简 HTTP（编译期嵌资源）
+tauri-offline/   离线版 Android 外壳
+desktop/         macOS / Windows 桌面外壳
+models/          AI 权重；onnx/ 下 3 个文件是离线端构建必需
+tools/           训练、评测、出包脚本
+docs/ reports/   方案、历次修复与评测报告
 ```
 
-> 详细的分层、数据流与「看着没人用但删不得」清单，见
-> [`docs/仓库结构-2026-11-12.md`](docs/仓库结构-2026-11-12.md)。
+## 规则与文档
 
-## 离线单机版（Android）
-
-不打服务端、不联网，模型与素材全部编进 APK。
-
-```bash
-cd tauri-offline
-npm run android:build
-# 产物：src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
-```
-
-四档难度（全部贪心、无搜索）：🐣 入门·速听 / 🙂 进阶·小网 / 🤖 大师·主力 / 👑 传奇·学生。
-强度差与实测耗时见 `reports/离线版-四档强度矩阵.md`。
+- **玩法规则**：任一版本「设置 → 玩法规则」（最后一个板块），只讲本玩法特有规则。
+- 实现方案与历次修复：`docs/离线版-可行性与实施方案.md`
+- 四档难度强度：`reports/离线版-四档强度矩阵.md`
+- 仓库分层说明：`docs/仓库结构-2026-11-12.md`
 
 ## 常见问题
 
-**端口被占用**：换一个端口，例如 `--port 8771`。
-
-**AI 思考慢**：把页面右上角的 AI 档位从「极算」调到「简算」；或在 Apple Silicon 上安装
-`onnxruntime` 后以 `DUSHAN_SEARCH_DEVICE=ort` 启动服务端。
-
-**想清空历史对局**：删除 `web/history/` 目录即可，服务端会自动重建。
+- **端口被占用**：网页版换 `--port 8771`；桌面版固定 8771，先关掉已在跑的实例。
+- **AI 思考慢**：把 AI 档位调低；或在 Apple Silicon 上装 `onnxruntime` 后以
+  `DUSHAN_SEARCH_DEVICE=ort` 启动服务端。
+- **想清空历史对局**：删除 `web/history/`，服务端会自动重建。
