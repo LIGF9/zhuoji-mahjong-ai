@@ -237,14 +237,20 @@ jobs:
             gh release create "$TAG" --target "$GITHUB_SHA" \
               --title "独山麻将 $TAG" --notes-file notes.md
           fi
-          # 清掉旧资产（例如上一版命名规则留下的 -Android-arm64.apk）
-          while read -r name; do
-            [ -z "$name" ] && continue
+          # 清掉旧资产（例如上一版命名规则留下的 -Android-arm64.apk）。
+          # 用 REST DELETE 按 id 删：gh release delete-asset 的确认参数在
+          # 不同版本里不一致，失败又容易被 || true 吞掉，删不干净。
+          gh api "repos/$GH_REPO/releases/tags/$TAG"             --jq '.assets[] | "\(.id) \(.name)"' > stale.txt || true
+          while read -r id name; do
+            [ -z "$id" ] && continue
             keep=0
             for f in "${files[@]}"; do
               if [ "$(basename "$f")" = "$name" ]; then keep=1; fi
             done
-            if [ $keep -eq 0 ]; then gh release delete-asset "$TAG" "$name" -y || true; fi
-          done < <(gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[].name' 2>/dev/null || true)
+            if [ $keep -eq 0 ]; then
+              echo "删除旧资产 $name (#$id)"
+              gh api -X DELETE "repos/$GH_REPO/releases/assets/$id"
+            fi
+          done < stale.txt
           for f in "${files[@]}"; do gh release upload "$TAG" "$f" --clobber; done
           gh release view "$TAG" --json url,assets --jq '.url, (.assets[] | "\(.name)  \(.size)")'
